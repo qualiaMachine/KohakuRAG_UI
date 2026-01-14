@@ -55,7 +55,7 @@ flowchart TB
 ## Related Resources
 
 - [KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG) - Core RAG engine
-- [WattBot 2025 Competition](https://www.kaggle.com/competitions/wattbot-2025) - Original challenge
+- [WattBot 2025 Competition](https://www.kaggle.com/competitions/WattBot2025/overview) - Original challenge
 - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/) - Managed LLM service
 
 ## Team
