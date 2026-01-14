@@ -1,103 +1,84 @@
-# KohakuRAG UI - WattBot Chatbot Interface
+# WattBot RAG User Interface
 
-> **Research Cyberinfrastructure Exploration Project**  
-> Building a RAG-powered chatbot for sustainable AI research using the WattBot corpus
+A Streamlit-based chat interface for the KohakuRAG pipeline, enabling interactive Q&A over the WattBot research corpus on sustainable AI.
 
-## 🎯 Project Overview
+## Project Context
 
-This project builds a user-friendly chatbot interface for the [KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG) pipeline—the #1 solution from the 2025 WattBot Challenge. The chatbot answers questions about environmental impacts of AI using a curated corpus of energy and sustainability research papers.
+This repository supports the **Research Cyberinfrastructure Exploration** initiative at UW-Madison. The goal is to build a long-running chatbot that answers questions about the environmental impacts of AI using a curated corpus of energy and sustainability research papers.
 
-### Team
+The project leverages [KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG), the top-ranked solution from the 2025 WattBot Challenge, as the core retrieval engine. This repository focuses on:
 
-| Member | Role | Branch |
-|--------|------|--------|
-| **Chris** | Research Supervisor | - |
-| **Blaise** | Local/On-Prem Development | `local` |
-| **Nils** | AWS Bedrock Integration | `bedrock` |
+1. Building a user-facing Streamlit interface
+2. Deploying the system on AWS using Bedrock for LLM inference
+3. Comparing managed cloud deployment against self-hosted alternatives
 
-### Goals
+## Architecture
 
-- ✅ Create a Streamlit-based chat interface for non-technical users
-- ✅ Deploy on AWS using Bedrock for on-demand LLM access (low idle cost)
-- ✅ Compare with self-hosted options (GB10, campus GPU cluster)
-- ✅ Serve as a reference deployment for future RCI consultations
-
----
-
-## 📁 Repository Structure
+The system follows a standard RAG (Retrieval-Augmented Generation) architecture:
 
 ```
-KohakuRAG_UI/
-├── README.md                 # This file
+User Query
+    |
+    v
++-------------------+
+|   Streamlit UI    |  <-- Chat interface
++-------------------+
+    |
+    v
++-------------------+
+|   RAG Pipeline    |  <-- Query planning, retrieval, answer generation
++-------------------+
+    |         |
+    v         v
++-------+  +------------------+
+| Jina  |  | Vector Store     |  <-- Embeddings + SQLite
++-------+  +------------------+
+    |
+    v
++-------------------+
+|  LLM Backend      |  <-- AWS Bedrock (managed) or local models
++-------------------+
+```
+
+### Deployment Options
+
+| Approach | LLM Backend | Use Case |
+|----------|-------------|----------|
+| AWS Bedrock | Managed foundation models via API | Production, on-demand usage |
+| Local | Small models (< 1B params) | Development, on-prem deployment |
+
+## Repository Structure
+
+```
+.
 ├── docs/
-│   └── bedrock-integration-proposal.md   # Nils' Bedrock design proposal
-├── src/                      # (Future) Streamlit app code
-├── configs/                  # (Future) Configuration files
-└── .env.example             # Environment variable template
+│   └── bedrock-integration-proposal.md   # AWS Bedrock design document
+├── src/                                  # Application source code
+├── configs/                              # Pipeline configuration
+├── .env.example                          # Environment template
+└── README.md
 ```
 
----
+## Development Branches
 
-## 🔗 Related Resources
+- **main**: Stable releases and documentation
+- **bedrock**: AWS Bedrock integration (Nils)
+- **local**: Local/on-prem LLM support (Blaise)
 
-- **KohakuRAG Core**: [github.com/KohakuBlueleaf/KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG)
-- **WattBot Competition**: [Kaggle WattTime Challenge](https://www.kaggle.com/competitions/wattbot-2025)
-- **AWS Console**: [uw-madison-dlt3.awsapps.com](https://uw-madison-dlt3.awsapps.com/start/#/console?account_id=183295408236&role_name=ml-bedrock-183295408236sagemaker)
+## Related Resources
 
----
+- [KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG) - Core RAG engine
+- [WattBot 2025 Competition](https://www.kaggle.com/competitions/wattbot-2025) - Original challenge
+- [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/) - Managed LLM service
 
-## 🚀 Getting Started
+## Team
 
-### Prerequisites
+| Name | Role |
+|------|------|
+| Chris | Research Supervisor |
+| Blaise | Local deployment |
+| Nils | AWS Bedrock integration |
 
-- Python 3.10+
-- AWS CLI (for Bedrock branch)
-- Access to the WattBot corpus and KohakuRAG artifacts
+## License
 
-### Quick Start
-
-```bash
-# Clone the repository
-git clone https://github.com/matteso1/KohakuRAG_UI.git
-cd KohakuRAG_UI
-
-# (Coming soon) Install dependencies
-pip install -r requirements.txt
-
-# (Coming soon) Run the Streamlit app
-streamlit run src/app.py
-```
-
----
-
-## 📋 Branch Overview
-
-### `bedrock` Branch (Nils)
-
-**Status**: 🟡 Planning Phase
-
-The Bedrock branch integrates AWS Bedrock for managed LLM inference. See [docs/bedrock-integration-proposal.md](docs/bedrock-integration-proposal.md) for the full design proposal.
-
-### `local` Branch (Blaise)
-
-**Status**: 🟡 In Development
-
-The local branch uses a small local LLM (< 1B parameters) for development and on-prem deployment.
-
----
-
-## 📝 Meeting Notes
-
-### Week 1 (1/13/2026)
-
-- Introductions completed
-- Tasks assigned:
-  - **Nils**: Begin planning Bedrock integration, create workflow diagram
-  - **Blaise**: Get local chatbot working in Streamlit
-  - **Chris**: Provide AWS Bedrock access
-
----
-
-## 📄 License
-
-This project is part of the UW-Madison Research Cyberinfrastructure Exploration initiative.
+Research project under UW-Madison Research Cyberinfrastructure.

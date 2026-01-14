@@ -1,43 +1,41 @@
 # AWS Bedrock Integration Proposal
 
-> **Author**: Nils  
-> **Date**: January 14, 2026  
-> **Status**: 📋 Awaiting Review from Chris  
-> **Branch**: `bedrock`
+**Author**: Nils  
+**Date**: January 14, 2026  
+**Status**: Draft - Awaiting Review  
+**Branch**: `bedrock`
 
 ---
 
-## Hey Chris 👋
+## Overview
 
-Before I start writing any code, I wanted to put together this document to outline my plan for the Bedrock integration. I've never used Bedrock before and want to make sure I understand the architecture correctly before diving in. Please let me know if anything looks off or if you have suggestions!
+This document outlines my plan for integrating AWS Bedrock into the KohakuRAG pipeline. The goal is to replace OpenRouter API calls with Bedrock's managed foundation models, giving us on-demand LLM access within the AWS ecosystem.
+
+I'm writing this before starting implementation to get feedback on the approach.
 
 ---
 
-## 1. What I Understand So Far
+## Current Architecture
 
-Based on our meeting notes and my review of the KohakuRAG codebase, here's my understanding:
-
-### Current Setup (OpenRouter)
-
-The KohakuRAG pipeline currently uses **OpenRouter** to access LLMs (like GPT-5, Claude, etc.). OpenRouter is basically a unified API that routes requests to different model providers.
+The KohakuRAG pipeline currently uses OpenRouter to access LLMs. OpenRouter is a unified API that routes requests to different model providers.
 
 ```mermaid
 flowchart LR
     subgraph "Current Flow"
         Q[User Question] --> RAG[RAG Pipeline]
-        RAG --> E[Jina Embeddings<br/>Local]
-        RAG --> V[(Vector Store<br/>SQLite)]
+        RAG --> E[Jina Embeddings]
+        RAG --> V[(Vector Store)]
         RAG --> LLM[OpenRouterChatModel]
         LLM --> OR((OpenRouter API))
-        OR --> M[GPT-5 / Claude / etc.]
+        OR --> M[Foundation Models]
     end
 ```
 
-### What We Want (Bedrock)
+## Target Architecture
 
-We want to replace OpenRouter with **AWS Bedrock** so we:
+We want to replace OpenRouter with AWS Bedrock so we:
 
-- Stay within the AWS ecosystem (easier for Chris to manage)
+- Stay within the AWS ecosystem
 - Pay only when we use it (no idle costs)
 - Have better control over access and billing
 
@@ -45,51 +43,49 @@ We want to replace OpenRouter with **AWS Bedrock** so we:
 flowchart LR
     subgraph "Target Flow"
         Q[User Question] --> RAG[RAG Pipeline]
-        RAG --> E[Jina Embeddings<br/>Local]
-        RAG --> V[(Vector Store<br/>SQLite)]
+        RAG --> E[Jina Embeddings]
+        RAG --> V[(Vector Store)]
         RAG --> LLM[BedrockChatModel]
         LLM --> BR((AWS Bedrock))
-        BR --> C[Claude 3<br/>Sonnet/Haiku]
+        BR --> FM[Foundation Model]
     end
     
-    subgraph "Our AWS Account"
+    subgraph "AWS Account"
         BR
-        C
+        FM
     end
 ```
 
 ---
 
-## 2. Where I'll Make Changes
+## Files to Modify
 
-I've identified three files I need to modify in the KohakuRAG codebase:
+I've identified three files in the KohakuRAG codebase that need changes:
 
-### 2.1 `src/kohakurag/llm.py`
+### 1. `src/kohakurag/llm.py`
 
 This is where all the LLM integrations live. Currently has:
 
 - `OpenAIChatModel` - for direct OpenAI API
-- `OpenRouterChatModel` - for OpenRouter (what we're currently using)
+- `OpenRouterChatModel` - for OpenRouter
 
-**I'll add**: `BedrockChatModel` - new class for AWS Bedrock
+I'll add a new `BedrockChatModel` class that uses `boto3` to call Bedrock.
 
-### 2.2 `scripts/wattbot_answer.py`
+### 2. `scripts/wattbot_answer.py`
 
 This is the main script that runs the RAG pipeline. It has a `create_chat_model()` factory function that creates the LLM client based on config.
 
-**I'll update**: Add `"bedrock"` as a valid `llm_provider` option
+I'll add `"bedrock"` as a valid `llm_provider` option.
 
-### 2.3 `pyproject.toml`
+### 3. `pyproject.toml`
 
-Dependencies file.
-
-**I'll add**: `boto3` (AWS SDK for Python)
+I'll add `boto3` as a dependency.
 
 ---
 
-## 3. The BedrockChatModel Class
+## BedrockChatModel Design
 
-Here's what I'm planning to build. The key insight is that Claude 3 on Bedrock uses a "Messages API" format similar to OpenAI, so the code structure should be familiar.
+The new class will implement the same `ChatModel` protocol as the existing classes.
 
 ```mermaid
 classDiagram
@@ -104,56 +100,23 @@ classDiagram
         -_region: str
         -_max_retries: int
         +complete(prompt, system_prompt) str
-        -_invoke_model(messages) str
     }
     
     ChatModel <|.. BedrockChatModel
-    
-    note for BedrockChatModel "Uses boto3 to call<br/>bedrock-runtime API"
 ```
 
-### Sample Code (What I'll Implement)
+Key implementation details:
 
-```python
-class BedrockChatModel(ChatModel):
-    """Chat backend powered by AWS Bedrock."""
-    
-    def __init__(
-        self,
-        model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
-        region: str = "us-east-2",
-        system_prompt: str | None = None,
-    ):
-        self._client = boto3.client('bedrock-runtime', region_name=region)
-        self._model_id = model_id
-        self._system_prompt = system_prompt
-    
-    async def complete(self, prompt: str, *, system_prompt: str | None = None) -> str:
-        # Format for Claude 3 Messages API
-        body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system_prompt or self._system_prompt:
-            body["system"] = system_prompt or self._system_prompt
-        
-        # Call Bedrock
-        response = self._client.invoke_model(
-            modelId=self._model_id,
-            body=json.dumps(body),
-        )
-        
-        # Parse response
-        result = json.loads(response['body'].read())
-        return result['content'][0]['text']
-```
+- Uses `boto3.client('bedrock-runtime')` to make API calls
+- Formats messages according to Bedrock's expected payload structure
+- Handles rate limiting with exponential backoff
+- Region defaults to `us-east-2` based on our AWS account
 
 ---
 
-## 4. Request Flow (Detailed)
+## Request Flow
 
-This diagram shows exactly what happens when a user asks a question:
+This diagram shows what happens when a user asks a question:
 
 ```mermaid
 sequenceDiagram
@@ -163,144 +126,104 @@ sequenceDiagram
     participant B as BedrockChatModel
     participant A as AWS Bedrock
     
-    U->>S: "How much water does GPT-3 use?"
+    U->>S: Submit question
     S->>P: run_qa(question)
     
     rect rgb(240, 248, 255)
-        Note over P,A: Step 1: Query Planning
+        Note over P,A: Query Planning
         P->>B: complete(planner_prompt)
-        B->>A: InvokeModel (Claude)
-        A-->>B: {"queries": ["GPT-3 water", "training water consumption"]}
+        B->>A: InvokeModel
+        A-->>B: Query variations
         B-->>P: Parsed queries
     end
     
     rect rgb(255, 248, 240)
-        Note over P: Step 2: Retrieval
-        P->>P: Embed queries with Jina
-        P->>P: Vector search in SQLite
-        P->>P: Build context from top-k results
+        Note over P: Retrieval
+        P->>P: Embed queries
+        P->>P: Vector search
+        P->>P: Build context
     end
     
     rect rgb(240, 255, 240)
-        Note over P,A: Step 3: Answer Generation
+        Note over P,A: Answer Generation
         P->>B: complete(answer_prompt + context)
-        B->>A: InvokeModel (Claude)
-        A-->>B: Structured JSON answer
-        B-->>P: StructuredAnswer
+        B->>A: InvokeModel
+        A-->>B: Generated answer
+        B-->>P: Structured response
     end
     
-    P-->>S: StructuredAnswerResult
-    S-->>U: Display answer with citations
+    P-->>S: Answer with citations
+    S-->>U: Display result
 ```
 
 ---
 
-## 5. Questions I Have For You
+## Configuration
 
-Before I start coding, I'd appreciate your input on these:
+The provider can be selected via config:
 
-### 5.1 Model Selection
+```python
+# LLM Provider Selection
+llm_provider = "bedrock"  # Options: "openai", "openrouter", "bedrock"
 
-| Model | Cost (Input/Output per 1K tokens) | Speed | Quality |
-|-------|-----------------------------------|-------|---------|
-| Claude 3 Haiku | $0.00025 / $0.00125 | Fastest | Good |
-| Claude 3 Sonnet | $0.003 / $0.015 | Medium | Better |
-| Claude 3.5 Sonnet | $0.003 / $0.015 | Medium | Best |
-
-**My suggestion**: Use **Haiku for query planning** (fast & cheap, just generating search queries) and **Sonnet for answer generation** (quality matters more for the final answer).
-
-**Question**: Does this make sense, or should we use the same model for both?
-
-### 5.2 Region
-
-Based on the AWS console link, it looks like we're in **US East (Ohio) / us-east-2**. Is that correct? Should I hardcode this or make it configurable?
-
-### 5.3 Model Access
-
-When I log into the AWS console, I need to check if Claude models are already enabled in Bedrock. Do you know if they are, or should I request access first?
-
-### 5.4 Fallback Strategy
-
-If Bedrock fails (rate limits, outage, etc.), should I:
-
-- Just fail and show an error?
-- Fall back to OpenRouter?
-- Something else?
-
----
-
-## 6. My Implementation Plan
-
-Here's what I'll do, in order:
-
-### Phase 1: AWS Setup Verification ⏳
-
-- [ ] Log into AWS Console via SSO
-- [ ] Navigate to Bedrock → Model Access
-- [ ] Verify Claude models are enabled
-- [ ] Install AWS CLI locally
-- [ ] Configure SSO profile (`aws configure sso`)
-- [ ] Test with `aws sts get-caller-identity`
-
-### Phase 2: Local Development Setup
-
-- [ ] Add `boto3` to `pyproject.toml`
-- [ ] Create `.env.example` with AWS config
-- [ ] Test basic Bedrock call (standalone script)
-
-### Phase 3: Code Implementation
-
-- [ ] Implement `BedrockChatModel` class
-- [ ] Add to `create_chat_model()` factory
-- [ ] Write unit tests with mocked boto3
-- [ ] Integration test with real Bedrock
-
-### Phase 4: Documentation & PR
-
-- [ ] Update README with Bedrock setup instructions
-- [ ] Create PR for team review
-- [ ] Document any gotchas I encounter
-
----
-
-## 7. Timeline Estimate
-
-| Phase | Estimated Time | Notes |
-|-------|---------------|-------|
-| Phase 1 | 1-2 hours | Depends on AWS access issues |
-| Phase 2 | 1 hour | Straightforward |
-| Phase 3 | 3-4 hours | Main implementation work |
-| Phase 4 | 1 hour | Documentation |
-
-**Total**: ~1 day of focused work
-
----
-
-## 8. What I Need From You
-
-1. ✅ **AWS Access** - Already have it (thank you!)
-2. 🔲 **Model Access Confirmation** - Are Claude models enabled in Bedrock?
-3. 🔲 **Review This Document** - Any concerns before I start?
-4. 🔲 **Answers to Questions** - Section 5 above
-
----
-
-## Appendix: Helpful Commands
-
-```bash
-# AWS SSO Login (I'll need to run this daily)
-aws configure sso
-aws sso login --profile <profile-name>
-
-# Verify credentials
-aws sts get-caller-identity
-
-# Test Bedrock access (once implemented)
-python -c "import boto3; print(boto3.client('bedrock').list_foundation_models())"
+# Bedrock-specific settings
+bedrock_model_id = "..."  # Model ID from Bedrock console
+bedrock_region = "us-east-2"
 ```
 
 ---
 
-**Thanks for reviewing! Let me know if you have any questions or concerns.** 🙏
+## Questions for Chris
+
+Before I start coding, I'd like your input on:
+
+1. **Model Selection**: Which foundation model should we use? There's a tradeoff between cost and quality. Should we use a faster/cheaper model for query planning and a higher-quality one for answer generation?
+
+2. **Region**: The AWS account appears to be in `us-east-2`. Should I hardcode this or make it configurable?
+
+3. **Model Access**: When I log into the AWS console, should I verify which models are enabled in Bedrock? Or do you already know what's available?
+
+4. **Error Handling**: If Bedrock fails (rate limits, outage), should I just show an error, or implement a fallback to OpenRouter?
+
+---
+
+## Implementation Plan
+
+### Phase 1: AWS Setup
+
+- Log into AWS Console via SSO
+- Check Bedrock Model Access settings
+- Install AWS CLI and configure SSO profile
+- Verify credentials work with `aws sts get-caller-identity`
+
+### Phase 2: Development Setup
+
+- Add `boto3` to dependencies
+- Create `.env.example` with AWS config
+- Test basic Bedrock call with standalone script
+
+### Phase 3: Integration
+
+- Implement `BedrockChatModel` class
+- Update factory function to support `bedrock` provider
+- Test with WattBot questions
+
+### Phase 4: Documentation
+
+- Update README with setup instructions
+- Create PR for review
+
+---
+
+## What I Need
+
+1. **AWS Access** - Already have it, thank you
+2. **Model Access Confirmation** - Are foundation models enabled in Bedrock?
+3. **Feedback on this document** - Any concerns with the approach?
+4. **Answers to the questions above**
+
+---
+
+Let me know if anything needs clarification or if the approach looks off.
 
 — Nils
