@@ -2,16 +2,17 @@
 
 **Author**: Nils  
 **Date**: January 14, 2026  
-**Status**: Draft, Awaiting Review  
+**Last Updated**: January 16, 2026  
+**Status**: Approved - Ready for Implementation  
 **Branch**: `bedrock`
 
 ---
 
 ## Overview
 
-This document outlines my plan for integrating AWS Bedrock into the KohakuRAG pipeline. I want to make sure I understand the system correctly before writing any code, so I'm documenting my approach here for feedback.
+This document outlines my plan for integrating AWS Bedrock into the KohakuRAG pipeline. The goal is to replace OpenRouter API calls with Bedrock's managed foundation models.
 
-The goal is to replace OpenRouter API calls with Bedrock's managed foundation models. This keeps us within the AWS ecosystem and means we only pay when we're actually using it.
+**Update (1/16)**: Chris reviewed this proposal and confirmed the approach looks good. His answers to my questions are included below.
 
 ---
 
@@ -32,251 +33,164 @@ Document
 
 Each level gets embedded. Sentences are embedded directly using Jina, and parent nodes get their embeddings by averaging their children's embeddings. This "bottom-up aggregation" is a key part of the design.
 
+*Chris confirmed this matches what's described in the paper.*
+
 ### The RAG Pipeline
 
 When a user asks a question, here's what happens:
 
-1. **Query Planning**: An LLM takes the question and generates multiple search queries (the original plus some variations that highlight key entities)
+1. **Query Planning**: An LLM takes the question and generates multiple search queries
 2. **Retrieval**: Each query searches the vector store and returns top-k results
 3. **Deduplication/Reranking**: Results are deduplicated and ranked by frequency or score
-4. **Context Expansion**: Retrieved sentences are expanded to include their parent paragraphs for context
-5. **Answer Generation**: The LLM generates a structured answer based on the retrieved context
+4. **Context Expansion**: Retrieved sentences are expanded to include their parent paragraphs
+5. **Answer Generation**: The LLM generates a structured answer based on the context
+
+*Chris confirmed the 3-phase flow (planning, retrieval, generation) matches the paper.*
 
 ### Where LLMs Are Used
 
-Looking at the code, LLMs are called in two places:
+LLMs are called in two places:
 
-1. **Query Planner** (`LLMQueryPlanner` in `wattbot_answer.py`): Takes the user question and generates additional retrieval queries
-2. **Answer Generation** (`RAGPipeline.run_qa`): Takes the context and generates the final answer
+1. **Query Planner** (`LLMQueryPlanner` in `wattbot_answer.py`)
+2. **Answer Generation** (`RAGPipeline.run_qa`)
 
 Both currently use `OpenRouterChatModel` from `src/kohakurag/llm.py`.
 
 ---
 
-## Current Architecture
+## Architecture
+
+### Current (OpenRouter)
 
 ```mermaid
 flowchart LR
     subgraph Current
         Q[User Question] --> Planner[Query Planner]
         Planner --> LLM1[OpenRouterChatModel]
-        LLM1 --> OR1((OpenRouter))
+        LLM1 --> OR((OpenRouter))
         Planner --> Retrieval[Vector Search]
         Retrieval --> Store[(SQLite + KohakuVault)]
-        Retrieval --> Context[Context Builder]
-        Context --> Answer[Answer Generator]
+        Retrieval --> Answer[Answer Generator]
         Answer --> LLM2[OpenRouterChatModel]
-        LLM2 --> OR2((OpenRouter))
+        LLM2 --> OR
     end
 ```
 
-## Target Architecture
+### Target (AWS Bedrock)
 
 ```mermaid
 flowchart LR
     subgraph Target
         Q[User Question] --> Planner[Query Planner]
         Planner --> LLM1[BedrockChatModel]
-        LLM1 --> BR1((AWS Bedrock))
+        LLM1 --> BR((AWS Bedrock))
         Planner --> Retrieval[Vector Search]
         Retrieval --> Store[(SQLite + KohakuVault)]
-        Retrieval --> Context[Context Builder]
-        Context --> Answer[Answer Generator]
+        Retrieval --> Answer[Answer Generator]
         Answer --> LLM2[BedrockChatModel]
-        LLM2 --> BR2((AWS Bedrock))
+        LLM2 --> BR
     end
 ```
 
 ---
 
-## What I Need to Change
+## Files to Modify
 
-### 1. `src/kohakurag/llm.py`
-
-This file defines the LLM integrations. Currently has:
-
-- `OpenAIChatModel`: Uses the OpenAI SDK directly
-- `OpenRouterChatModel`: Uses the OpenRouter SDK
-
-I need to add `BedrockChatModel` that:
-
-- Uses `boto3` to call the Bedrock Runtime API
-- Implements the same `ChatModel` protocol (just needs a `complete()` method)
-- Handles the message format that Bedrock expects
-
-One thing I'm not 100% sure about: the existing models are async (using `async def complete`), but boto3 is synchronous by default. I'll probably need to wrap the boto3 calls in `asyncio.to_thread()` to keep them non-blocking.
-
-### 2. `scripts/wattbot_answer.py`
-
-This script has a `create_chat_model()` factory function that creates the LLM client based on config. Currently supports `"openai"` and `"openrouter"`.
-
-I need to add a `"bedrock"` option here.
-
-### 3. `pyproject.toml`
-
-Add `boto3` as a dependency.
+1. **`src/kohakurag/llm.py`** - Add `BedrockChatModel` class
+2. **`scripts/wattbot_answer.py`** - Add `"bedrock"` as an `llm_provider` option
+3. **`pyproject.toml`** - Add `boto3` dependency
 
 ---
 
-## BedrockChatModel Design
+## Questions and Answers
 
-```mermaid
-classDiagram
-    class ChatModel {
-        <<Protocol>>
-        +complete(prompt, system_prompt) str
-    }
-    
-    class OpenAIChatModel {
-        -_client: AsyncOpenAI
-        -_model: str
-        +complete(prompt, system_prompt) str
-    }
-    
-    class OpenRouterChatModel {
-        -_api_key: str
-        -_model: str
-        +complete(prompt, system_prompt) str
-    }
-    
-    class BedrockChatModel {
-        -_client: boto3.Client
-        -_model_id: str
-        -_region: str
-        +complete(prompt, system_prompt) str
-    }
-    
-    ChatModel <|.. OpenAIChatModel
-    ChatModel <|.. OpenRouterChatModel
-    ChatModel <|.. BedrockChatModel
-```
+### Model Access
 
-Key things I need to figure out:
+**Q**: How do I check which models are enabled in Bedrock?
 
-- What model ID format does Bedrock use?
-- How do I format the request body for different model providers on Bedrock?
-- How should I handle rate limiting? Bedrock probably has different limits than OpenRouter.
+**A** (Chris): Most models should now be available by default in Bedrock. If you hit any access errors (model not enabled / permission denied), let me know and we'll sort out access.
+
+### Region
+
+**Q**: Which region should I use?
+
+**A** (Chris): Default to `us-east-2`. That region should have most of the Bedrock models available.
+
+### Model Selection
+
+**Q**: Which model should I try first?
+
+**A** (Chris): Start small/cheap for the prototype, get the end-to-end plumbing working, then swap in "better"/larger models once everything is stable. The smallest OpenAI or Anthropic models are good starting points.
+
+### Cost Monitoring
+
+**A** (Chris): Check the Cost Explorer early/regularly to confirm you're tagging/attributing spend the way you expect. Expect up to ~24 hours lag sometimes before costs show up.
 
 ---
 
-## Request Flow
+## Additional Notes from Chris
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as Streamlit UI
-    participant P as RAG Pipeline
-    participant B as BedrockChatModel
-    participant A as AWS Bedrock
-    
-    U->>S: Submit question
-    S->>P: run_qa(question)
-    
-    Note over P,A: Query Planning
-    P->>B: complete(planner_prompt)
-    B->>A: InvokeModel
-    A-->>B: Query variations
-    B-->>P: Parsed queries
-    
-    Note over P: Retrieval (local)
-    P->>P: Embed queries with Jina
-    P->>P: Search SQLite vector store
-    P->>P: Deduplicate and rerank
-    P->>P: Expand context with parents
-    
-    Note over P,A: Answer Generation
-    P->>B: complete(answer_prompt + context)
-    B->>A: InvokeModel
-    A-->>B: Structured JSON answer
-    B-->>P: Parsed answer
-    
-    P-->>S: StructuredAnswerResult
-    S-->>U: Display answer with citations
-```
+### Vector Store vs S3
 
----
+Chris mentioned: "One thing I'm less certain about is whether we need a vector store or not for this. With the size of our corpus, we can probably get away with just storing the data in an S3 bucket. However, I'm game to explore the vector store option. That option is more production-level, anyways."
 
-## Questions I Have
+For now, I'll stick with the existing SQLite + KohakuVault approach since it's already implemented and works. We can revisit S3 later if needed.
 
-### For Chris
+### Ensemble Setup
 
-1. **Model access**: When I log into the AWS console, how do I check which models are enabled in Bedrock? Do I need to request access to specific models, or is that already set up?
+Chris mentioned: "Another tricky piece to research is going to be how to elegantly use an ensemble model setup in Bedrock. I think it should be possible to setup concurrent calls to multiple models, but I haven't done it before."
 
-2. **Region**: The AWS account seems to be in `us-east-2` based on the console URL. Is that where I should be making Bedrock calls from?
+His recommendation: Start with an ensemble of N=1 or N=2 and scale up later.
 
-3. **Which model should I use?**: Bedrock has models from different providers (Anthropic, Amazon, Meta, etc.). Any preference on which one to try first?
+### Future Migration
 
-### Things I Need to Research
-
-1. How does Bedrock's request/response format work? Is it the same for all models or does each provider have a different format?
-
-2. What's the rate limiting like on Bedrock? Do I need to implement backoff like the existing OpenRouter code does?
-
-3. How do I authenticate? I know we're using SSO, but I need to figure out how that works with boto3.
+At some point the code may move to GitLab (where UW-Madison's longer-living code lives), but that's an easy migration for later.
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: AWS Setup
+### Phase 1: AWS Setup (Current)
 
-Before writing any code, I want to make sure I can actually call Bedrock:
-
-- Log into AWS Console via SSO
-- Find Bedrock in the console and check model access
-- Install AWS CLI and configure SSO profile locally
-- Test with a simple boto3 script to verify credentials work
+- [x] Proposal reviewed by Chris
+- [ ] Log into AWS Console via SSO
+- [ ] Verify Bedrock access in `us-east-2`
+- [ ] Install AWS CLI and configure SSO profile locally
+- [ ] Test with a simple boto3 script
 
 ### Phase 2: Prototype
 
-Write a standalone Python script that:
-
-- Uses boto3 to call Bedrock
-- Sends a simple prompt and gets a response
-- Figures out the request/response format
+- [ ] Write standalone script to call Bedrock
+- [ ] Figure out request/response format for Anthropic models
+- [ ] Test with a small, cheap model first
 
 ### Phase 3: Integration
 
-Once I have a working prototype:
+- [ ] Add `BedrockChatModel` to `llm.py`
+- [ ] Update `wattbot_answer.py` to support `bedrock` provider
+- [ ] Test with a few WattBot questions
+- [ ] Check Cost Explorer after 24 hours
 
-- Add `BedrockChatModel` to `llm.py`
-- Update `wattbot_answer.py` to support the `bedrock` provider
-- Test with a few WattBot questions
+### Phase 4: Documentation and PR
 
-### Phase 4: Documentation
-
-- Update the README with Bedrock setup instructions
-- Document any gotchas I run into
-- Create PR for review
-
----
-
-## Things I'm Uncertain About
-
-I want to be upfront about what I don't fully understand yet:
-
-1. **Async handling**: The existing code is async, but boto3 is sync. I think I can use `asyncio.to_thread()` but I haven't tested this.
-
-2. **Error handling**: The OpenRouter code has pretty sophisticated retry logic. I need to figure out what errors Bedrock returns and how to handle them.
-
-3. **Cost**: I don't have a good sense of how much Bedrock costs compared to OpenRouter. Might be worth doing some calculations before we run big experiments.
-
-4. **Multi-modal**: The paper mentions support for images via Jina v4. I'm focusing on text-only first, but I'm not sure if that affects the Bedrock integration at all.
+- [ ] Update README with Bedrock setup instructions
+- [ ] Document any issues encountered
+- [ ] Create PR for review
 
 ---
 
-## Next Steps
+## Resources
 
-Waiting on:
-
-- [ ] Chris to confirm model access in Bedrock
-- [ ] Feedback on this proposal
-- [ ] Answers to my questions above
-
-Once I hear back, I'll start with Phase 1 (AWS setup verification).
+- [Generative AI Applications with Amazon Bedrock](https://www.coursera.org/learn/generative-ai-applications-amazon-bedrock) - Coursera course Chris recommended
+- [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
 
 ---
 
-Let me know if I'm missing anything or if the approach looks wrong.
+## Changelog
+
+- **1/16/2026**: Added Chris's feedback and answers, updated status to "Approved"
+- **1/14/2026**: Initial proposal
+
+---
 
 - Nils
