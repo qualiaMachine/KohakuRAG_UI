@@ -34,12 +34,18 @@ flowchart TB
 | AWS Bedrock | Managed foundation models via API | Production, on-demand usage |
 | Local | Small models under 1B params | Development, on-prem deployment |
 
+## Documentation
+
+- [Bedrock Integration Proposal](docs/bedrock-integration-proposal.md) - AWS Bedrock design and implementation plan
+- [Meeting Notes](docs/meeting-notes.md) - Team discussions and decisions
+
 ## Repository Structure
 
 ```
 .
 ├── docs/
-│   └── bedrock-integration-proposal.md   # AWS Bedrock design document
+│   ├── bedrock-integration-proposal.md   # AWS Bedrock design document
+│   └── meeting-notes.md                  # Team meeting notes
 ├── src/                                  # Application source code
 ├── configs/                              # Pipeline configuration
 ├── .env.example                          # Environment template
@@ -57,14 +63,15 @@ flowchart TB
 - [KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG) - Core RAG engine
 - [WattBot 2025 Competition](https://www.kaggle.com/competitions/WattBot2025/overview) - Original challenge
 - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/) - Managed LLM service
+- [Generative AI with Amazon Bedrock](https://www.coursera.org/learn/generative-ai-applications-amazon-bedrock) - Coursera course
 
 ## Team
 
-| Name | Role |
-|------|------|
-| Chris | Research Supervisor |
-| Blaise | Local deployment |
-| Nils | AWS Bedrock integration |
+| Name | Role | GitHub |
+|------|------|--------|
+| Chris Endemann | Research Supervisor | [@qualiaMachine](https://github.com/qualiaMachine) |
+| Blaise | Local deployment | |
+| Nils | AWS Bedrock integration | [@matteso1](https://github.com/matteso1) |
 
 ## License
 
