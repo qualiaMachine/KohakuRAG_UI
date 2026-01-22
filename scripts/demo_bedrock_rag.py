@@ -1,17 +1,20 @@
-"""Demo script: Ask a single question using KohakuRAG + AWS Bedrock.
+"""
+Demo: End-to-End RAG with AWS Bedrock
 
-This script demonstrates end-to-end RAG with Bedrock as the LLM backend:
-1. Loads the KohakuRAG pipeline from the submodule
-2. Uses BedrockChatModel for LLM calls
-3. Retrieves context from the vector store
-4. Generates a structured answer
+This script proves the whole pipeline works. It:
+1. Takes a question (e.g., "What is the carbon footprint of LLMs?")
+2. Searches our local vector database for relevant research papers
+3. Sends the context + question to Claude 3 on AWS Bedrock
+4. Prints out the answer with citations
+
+It's a great starting point for understanding how the pieces fit together.
+
+Prerequisites:
+- You need to be logged into AWS SSO: `aws sso login --profile bedrock_nils`
+- You need the WattBot index built: `python KohakuRAG/scripts/wattbot_build_index.py ...`
 
 Usage:
-    python scripts/demo_bedrock_rag.py --question "What is the carbon footprint of LLMs?"
-    
-Prerequisites:
-    - AWS SSO login: aws sso login --profile bedrock_nils
-    - Built index: Requires artifacts/wattbot.db (see KohakuRAG docs)
+    python scripts/demo_bedrock_rag.py --question "How much water does ChatGPT consume?"
 """
 
 import argparse
@@ -89,33 +92,31 @@ async def run_rag_query(
     model_id: str = DEFAULT_MODEL,
     top_k: int = 5,
 ) -> dict:
-    """Run a single RAG query using Bedrock.
+    """
+    Orchestrates the full RAG process for a single question.
     
-    Args:
-        question: The question to answer
-        db_path: Path to the KohakuRAG SQLite database
-        table_prefix: Table prefix in the database
-        profile_name: AWS SSO profile name
-        region_name: AWS region
-        model_id: Bedrock model ID
-        top_k: Number of context snippets to retrieve
-    
-    Returns:
-        Dictionary with answer, sources, and metadata
+    This function:
+    1. Sets up the Bedrock client (Claude 3)
+    2. Loads the Jina embeddings and SQLite vector store
+    3. Retrieves the top-k most relevant text chunks
+    4. Sends everything to Bedrock to synthesize an answer
     """
     print(f"\n{'='*60}")
     print(f"Question: {question}")
     print(f"{'='*60}\n")
 
-    # Check if database exists
+    # 1. Validation
+    # We can't do anything if the vector DB doesn't exist.
     db = Path(db_path)
     if not db.exists():
         return {
-            "error": f"Database not found: {db_path}",
-            "help": "Run the KohakuRAG indexing pipeline first. See KohakuRAG/README.md"
+            "error": f"Database missing at {db_path}",
+            "help": "Please run the indexing script first! Check README.md for instructions."
         }
 
-    # Create Bedrock chat models
+    # 2. Setup Bedrock models
+    # We need two models: one for 'planning' (query expansion) and one for 'answering'.
+    # In this demo, we use the same model (Claude 3 Haiku) for both because it's efficient.
     print("Creating Bedrock chat models...")
     planner_chat = BedrockChatModel(
         model_id=model_id,
@@ -131,11 +132,11 @@ async def run_rag_query(
         system_prompt=ANSWER_SYSTEM_PROMPT,
     )
 
-    # Create embedder
+    # 3. Load Retrieval Components
+    # Jina embeddings turn text into vectors. KVaultNodeStore holds our indexed vectors.
     print("Loading Jina embeddings...")
     embedder = JinaEmbeddingModel()
 
-    # Create datastore
     print("Loading vector store...")
     store = KVaultNodeStore(
         db,
@@ -144,10 +145,10 @@ async def run_rag_query(
         paragraph_search_mode="averaged",
     )
 
-    # Create query planner
+    # 4. Build the Pipeline
+    # The Query Planner breaks complex questions into simpler search queries.
     planner = SimpleLLMQueryPlanner(planner_chat, max_queries=3)
 
-    # Create RAG pipeline
     print("Initializing RAG pipeline...")
     pipeline = RAGPipeline(
         store=store,
@@ -156,15 +157,16 @@ async def run_rag_query(
         planner=planner,
     )
 
-    # Run retrieval
+    # 5. Execute Retrieval
+    # This searches the database for relevant content.
     print(f"Retrieving top-{top_k} context snippets...")
     retrieval = await pipeline.retrieve(question, top_k=top_k)
 
     print(f"\nFound {len(retrieval.snippets)} snippets from {len(retrieval.matches)} matches")
 
-    # Display context snippets
+    # Show what we found (sanity check)
     print(f"\n{'-'*60}")
-    print("Retrieved Context:")
+    print("Retrieved Context (Top 3):")
     print(f"{'-'*60}")
     for i, snippet in enumerate(retrieval.snippets[:3], 1):
         doc_id = snippet.metadata.get("doc_id", "unknown")

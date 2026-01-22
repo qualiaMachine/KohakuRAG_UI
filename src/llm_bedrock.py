@@ -1,19 +1,25 @@
-"""AWS Bedrock Chat Model Integration for KohakuRAG.
+"""
+AWS Bedrock Integration for KohakuRAG
 
-This module provides a BedrockChatModel class that implements the ChatModel
-protocol from KohakuRAG, enabling the use of AWS Bedrock foundation models
-(e.g., Claude) for query planning and answer generation.
+This module is the bridge between our RAG pipeline and AWS Bedrock. It lets us swap out
+local models or OpenRouter for enterprise-grade Claude 3 models hosted on AWS.
+
+Key features:
+- Handles all the AWS auth complexity (SSO profiles, regions)
+- Smart retry logic so we don't get crushed by rate limits
+- Implements the standard `ChatModel` protocol so it drops right into existing pipelines
 
 Usage:
     from src.llm_bedrock import BedrockChatModel
     
+    # Initialize with your local AWS profile (setup via `aws sso login`)
     model = BedrockChatModel(
         profile_name="bedrock_nils",
-        region_name="us-east-2",
-        model_id="us.anthropic.claude-3-haiku-20240307-v1:0"
+        model_id="us.anthropic.claude-3-haiku-20240307-v1:0"  # Haiku is fast & cheap
     )
     
-    response = await model.complete("What is the carbon footprint of LLMs?")
+    # Fire off a query
+    response = await model.complete("What's the energy cost of training GPT-3?")
 """
 
 import asyncio
@@ -55,15 +61,13 @@ def _load_dotenv(path: str | Path = ".env") -> dict[str, str]:
 
 
 class BedrockChatModel:
-    """Chat backend powered by AWS Bedrock with automatic rate limit handling.
+    """
+    A unified wrapper for AWS Bedrock's Chat API.
     
-    Implements the ChatModel protocol for integration with KohakuRAG pipelines.
-    Uses boto3 to call Bedrock Runtime API with Anthropic Claude models.
-    
-    Attributes:
-        profile_name: AWS SSO profile name for authentication
-        region_name: AWS region (e.g., "us-east-2")
-        model_id: Bedrock model identifier
+    This class handles the messy parts of working with Bedrock:
+    1. Authentication via SSO profiles (so we don't need hardcoded keys)
+    2. Rate limiting (exponential backoff when AWS says "slow down")
+    3. Threading (boto3 is synchronous, so we offload it to keep the UI snappy)
     """
 
     def __init__(
@@ -78,25 +82,26 @@ class BedrockChatModel:
         base_retry_delay: float = 3.0,
         max_concurrent: int = 10,
     ) -> None:
-        """Initialize Bedrock chat model with automatic rate limit retry.
+        """
+        Set up the Bedrock connection.
 
         Args:
-            model_id: Bedrock model identifier (e.g., "us.anthropic.claude-3-haiku-20240307-v1:0")
-            profile_name: AWS SSO profile name (reads from AWS_PROFILE env if not provided)
-            region_name: AWS region (reads from AWS_REGION env if not provided, defaults to us-east-2)
-            system_prompt: Default system message for all completions
-            max_tokens: Maximum tokens to generate (default: 4096)
-            max_retries: Maximum retry attempts on rate limit errors
-            base_retry_delay: Base delay for exponential backoff (seconds)
-            max_concurrent: Maximum number of concurrent API requests (0 = unlimited)
+            model_id: Which model to use. Defaults to Claude 3 Haiku (best balance of speed/cost).
+            profile_name: Your AWS SSO profile (e.g., 'bedrock_nils'). Falls back to AWS_PROFILE env var.
+            region_name: The AWS region where the model is enabled. Defaults to us-east-2 (Ohio).
+            system_prompt: The persona the model should adopt.
+            max_tokens: Hard limit on response length. 4096 is usually plenty.
+            max_retries: How many times to try again if AWS throttles us.
+            base_retry_delay: Initial wait time between retries (increases exponentially).
+            max_concurrent: How many parallel requests we allow before queuing. Critical for bulk processing.
         """
-        # Lazy import boto3 to avoid import errors if not installed
+        # Lazy import boto3 to allow using the rest of the app without AWS dependencies
         try:
             import boto3
             self._boto3 = boto3
         except ImportError as e:
             raise ImportError(
-                "boto3 is required for BedrockChatModel. Install with: pip install boto3"
+                "Missing the 'boto3' library. You need it to talk to AWS. Run: pip install boto3"
             ) from e
 
         # Load environment variables
@@ -136,10 +141,14 @@ class BedrockChatModel:
         self._client = self._session.client("bedrock-runtime")
 
     def _make_request_sync(self, prompt: str, system_prompt: str) -> str:
-        """Make synchronous Bedrock API request.
-        
-        This is called via asyncio.to_thread() to avoid blocking the event loop.
         """
+        The actual API call to Bedrock.
+        
+        Note: This is a synchronous (blocking) function because boto3 doesn't support async yet.
+        We run this inside `asyncio.to_thread` elsewhere to prevent freezing the application.
+        """
+        # Create the standard Claude 3 request body
+        # Docs: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
         body = {
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": self._max_tokens,
@@ -165,22 +174,19 @@ class BedrockChatModel:
         *,
         system_prompt: str | None = None,
     ) -> str:
-        """Execute chat completion with automatic rate limit retry.
+        """
+        Send a message to Bedrock and get the response text.
 
-        Uses intelligent retry strategy:
-        1. Semaphore limits concurrent requests (if enabled)
-        2. Exponential backoff with jitter for rate limits
-        3. Handles Bedrock-specific throttling errors
+        This method includes a robust retry loop to handle AWS "ThrottlingException" errors.
+        It uses exponential backoff: if we get rated limited, we wait 3s, then 6s, then 12s...
+        It also uses a semaphore to ensure we never have more than `max_concurrent` requests in flight.
 
         Args:
-            prompt: User message/question
-            system_prompt: Optional system message override
+            prompt: The text you want Claude to process.
+            system_prompt: (Optional) Override the default system persona for this specific call.
 
         Returns:
-            Model's text response
-
-        Raises:
-            RuntimeError: If all retries are exhausted
+            The raw text string from the model.
         """
         system = system_prompt or self._system_prompt
 
