@@ -1,0 +1,9 @@
+# KohakuRAG UI - Bedrock Branch Dependencies
+
+# AWS SDK for Bedrock API calls
+boto3>=1.34.0
+
+# For running the KohakuRAG pipeline
+# Install KohakuRAG from submodule: pip install -e KohakuRAG/
+
+# Additional dependencies will be installed via KohakuRAG's requirements
