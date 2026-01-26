@@ -121,6 +121,23 @@ All models verified accessible on account `183295408236`.
 
 ---
 
+## S3 Bucket (Shared Index)
+
+The JinaV4 index is available on S3 for team access:
+
+```
+Bucket: wattbot-nils-kohakurag
+Region: us-east-2
+Path:   s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db
+```
+
+**Download command**:
+```bash
+aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db artifacts/wattbot_jinav4.db --profile bedrock_nils
+```
+
+---
+
 ## Ready for Blaise's UI
 
 The backend is ready to integrate:
