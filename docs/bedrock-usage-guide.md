@@ -2,19 +2,53 @@
 
 For Blaise - how to use the Bedrock integration in Streamlit.
 
+## First: Set Up Your AWS Profile
+
+Create your own SSO profile so your usage is tracked separately.
+
+### 1. Configure AWS CLI
+
+Run:
+```bash
+aws configure sso
+```
+
+Enter these values when prompted:
+```
+SSO session name: bedrock_blaise
+SSO start URL: https://d-9067aa9c10.awsapps.com/start
+SSO region: us-east-1
+SSO registration scopes: [press Enter for default]
+```
+
+It will open a browser for UW login. After auth, you'll see available accounts. Pick the Bedrock account (`183295408236`).
+
+When asked for CLI profile name, enter: `bedrock_blaise`
+
+### 2. Verify It Works
+
+```bash
+aws sso login --profile bedrock_blaise
+aws sts get-caller-identity --profile bedrock_blaise
+```
+
+You should see your email in the output.
+
+---
+
 ## Quick Start
 
 ### 1. Get the Vector Index
 
 ```bash
-aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db artifacts/wattbot_jinav4.db --profile bedrock_nils
+aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db artifacts/wattbot_jinav4.db --profile bedrock_blaise
 ```
 
 ### 2. AWS Auth
 
 Before running anything:
 ```bash
-aws sso login --profile bedrock_nils
+aws sso login --profile bedrock_blaise
 ```
 
 This gives you temporary credentials for ~8 hours.
@@ -48,7 +82,7 @@ from kohakurag.embeddings import JinaEmbeddingModel
 ```python
 # Bedrock client
 chat = BedrockChatModel(
-    profile_name="bedrock_nils",
+    profile_name="bedrock_blaise",
     region_name="us-east-2",
     model_id="us.anthropic.claude-3-haiku-20240307-v1:0",
     max_concurrent=3
@@ -121,7 +155,7 @@ if question:
 
 ```python
 BedrockChatModel(
-    profile_name="bedrock_nils",  # AWS SSO profile
+    profile_name="bedrock_blaise",  # AWS SSO profile
     region_name="us-east-2",       # AWS region
     model_id="us.anthropic.claude-3-haiku-20240307-v1:0",  # Model
     max_concurrent=3,              # Parallel requests (keep low)
@@ -170,7 +204,7 @@ embedder = JinaEmbeddingModel()
 ## Common Issues
 
 ### "Token has expired"
-Run `aws sso login --profile bedrock_nils` again.
+Run `aws sso login --profile bedrock_blaise` again.
 
 ### "ThrottlingException"
 The retry logic handles this automatically. If persistent, reduce `max_concurrent`.
@@ -184,58 +218,6 @@ First query loads the embedding model (~2GB). Subsequent queries are fast.
 - `scripts/demo_bedrock_rag.py` - Full working example
 - `artifacts/wattbot.db` - JinaV3 index (30MB)
 - `artifacts/wattbot_jinav4.db` - JinaV4 index (82MB)
-
-## Setting Up Your Own AWS Profile
-
-To avoid billing confusion, create your own SSO profile instead of using `bedrock_nils`.
-
-### 1. Configure AWS CLI
-
-Run:
-```bash
-aws configure sso
-```
-
-Enter these values when prompted:
-```
-SSO session name: bedrock_blaise
-SSO start URL: https://d-9067aa9c10.awsapps.com/start
-SSO region: us-east-1
-SSO registration scopes: [press Enter for default]
-```
-
-It will open a browser for UW login. After auth, you'll see available accounts. Pick the Bedrock account (`183295408236`).
-
-When asked for CLI profile name, enter: `bedrock_blaise`
-
-### 2. Verify It Works
-
-```bash
-aws sso login --profile bedrock_blaise
-aws sts get-caller-identity --profile bedrock_blaise
-```
-
-You should see your email in the output.
-
-### 3. Update Your Code
-
-Replace `bedrock_nils` with `bedrock_blaise` everywhere:
-
-```python
-chat = BedrockChatModel(
-    profile_name="bedrock_blaise",  # Your profile
-    region_name="us-east-2",
-    model_id="us.anthropic.claude-3-haiku-20240307-v1:0"
-)
-```
-
-### 4. Download Index with Your Profile
-
-```bash
-aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db artifacts/ --profile bedrock_blaise
-```
-
-This keeps your Bedrock usage separate from Nils's account for billing purposes.
 
 ## Questions
 
