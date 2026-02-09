@@ -3,6 +3,17 @@
 # AWS SDK for Bedrock API calls
 boto3>=1.34.0
 
+# Data processing
+pandas>=2.0.0
+
+# Plotting (for static publication-quality figures)
+matplotlib>=3.7.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Streamlit UI
+streamlit>=1.30.0
+
 # For running the KohakuRAG pipeline
 # Install KohakuRAG from submodule: pip install -e KohakuRAG/
 
