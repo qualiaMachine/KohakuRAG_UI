@@ -122,7 +122,7 @@ Notes:
 
 
 
-### 9) Final required smoke test (before tooling)
+### 7) Final required smoke test (before tooling)
 
 Confirm imports:
 
@@ -131,7 +131,7 @@ python -c "import kohakuvault, kohakurag; print('Imports OK')"
 ```
 
 
-### 10) Jupyter Lab (headless, remote)
+### 8) Jupyter Lab (headless, remote)
 
 Jupyter is used for:
 - inspecting embeddings
@@ -140,14 +140,14 @@ Jupyter is used for:
 - demos
 
 
-#### 10.1 Register a **named kernel** (important):
+#### 8.1 Register a **named kernel** (important):
 
 ```bash
 python -m ipykernel install   --user   --name kohaku-gb10   --display-name "kohaku-gb10"
 ```
 
 
-#### 10.2 Start Jupyter on GB10
+#### 8.2 Start Jupyter on GB10
 
 ```bash
 jupyter lab --no-browser --port=8888
@@ -156,7 +156,7 @@ jupyter lab --no-browser --port=8888
 Leave this running.
 
 
-#### 10.3 Port‑forward Jupyter to your laptop
+#### 8.3 Port‑forward Jupyter to your laptop
 
 On your **laptop** (new terminal):
 
