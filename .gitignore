@@ -26,7 +26,6 @@ Thumbs.db
 
 # Artifacts and data (large files)
 artifacts/
-data/
 *.db
 *.sqlite
 
