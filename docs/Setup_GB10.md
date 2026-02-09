@@ -1,33 +1,75 @@
-# KohakuRAG_UI setup (uv, GB10/ARM-friendly)
+# GB10 + KohakuRAG_UI (local branch) setup guide — v2
 
-This repo vendors known-good copies of:
+This guide is a **clean, ordered, end‑to‑end setup** for working on the
+`local` branch of **KohakuRAG_UI** on the Dell GB10.
 
-- `vendor/KohakuRAG/` (with `umap-learn` removed to avoid `numba -> llvmlite` issues on GB10 / newer Python)
-- `vendor/KohakuVault/` (with the `c_char` FFI fix applied for ARM/Rust)
+It preserves *all* important steps from the original remote‑access notes
+(including Jupyter + kernel naming), but moves **optional tools** to the
+correct place in the workflow.
 
-**Result:** you should not need to edit any upstream files during setup.
+Repo (local branch):  
+https://github.com/matteso1/KohakuRAG_UI/tree/local
 
-Python 3.10+ required. Python 3.11 recommended.
+Primary development goal:
+> **Replace OpenRouter-backed LLM calls with Hugging Face (HF) calls for local/on‑prem inference**, without breaking citation / abstention behavior.
 
 ---
 
-## 1) Clone the UI repo and check out the branch you want
+## Phase 1 — Required setup (must work before anything else)
+
+### 1) SSH into the GB10
+
+From your **laptop** terminal (Git Bash is recommended on Windows):
 
 ```bash
-git clone https://github.com/matteso1/KohakuRAG_UI.git
+ssh mlx@128.104.18.206   # ethernet
+# if that fails:
+ssh mlx@10.141.72.249    # wifi
+```
+
+Notes:
+- Use UW GlobalProtect VPN if off campus.
+- Accept the host key if prompted.
+- GB10 is a headless Linux workstation — SSH is the primary interface.
+
+---
+
+### 2) Clone the repo (local branch) and create a working branch
+
+On **GB10**:
+
+```bash
+ls # get oriented
+cd ~/GitHub
+```
+
+Create a folder for your git repos to live (use your name)
+
+```bash
+mkdir -p ~/GitHub/your-name # adjust to your name 
+cd ~/GitHub/your-name
+```
+
+Close the KohakuRAG_UI repo (local branch).
+```bash
+git clone -b local https://github.com/matteso1/KohakuRAG_UI.git
 cd KohakuRAG_UI
-git checkout local
+git branch --show-current   # should print: local
 ```
 
-Verify the vendored deps exist:
+
+### 3) Install `uv` (one‑time per user on GB10)
 
 ```bash
-ls vendor/KohakuRAG vendor/KohakuVault
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc
+uv --version
 ```
 
----
 
-## 2) Create and activate a venv with uv
+### 4) Create and activate the Python virtual environment
+
+From the repo root:
 
 ```bash
 uv venv --python 3.11
@@ -35,82 +77,98 @@ source .venv/bin/activate
 python --version
 ```
 
-Optional sanity check:
+Notes:
+- Always verify the venv is active before installing or running anything.
+
+
+### 5) Install **vendored** Vault + RAG (critical on GB10/ARM)
+
+The `local` branch vendors its core dependencies to avoid ARM build issues.
+
+Install them **editable** so imports resolve locally:
 
 ```bash
-python -c "import sys; print(sys.executable)"
+uv pip install -e vendor/KohakuVault # must be run before next line. May take a minute
+uv pip install -e vendor/KohakuRAG #
 ```
 
----
-
-## 3) Install vendored KohakuVault + KohakuRAG (editable)
-
-Run from the repo root (`KohakuRAG_UI/`), with the venv active.
-
-### GB10 / ARM (recommended order)
+Verify imports point into `vendor/`:
 
 ```bash
-uv pip install -e vendor/KohakuVault
-python -c "import kohakuvault; print('kohakuvault ok')"
-
-uv pip install -e vendor/KohakuRAG
-python -c "import kohakurag; print('kohakurag ok')"
+python -c "import kohakuvault; print(kohakuvault.__file__)"
+python -c "import kohakurag; print(kohakurag.__file__)"
 ```
 
-### x86 (also works)
+Expected:
+```
+.../KohakuRAG_UI/vendor/...
+```
 
-Using the same steps above is recommended for consistency.
+If imports point into `.venv/site-packages`, stop — you are not using the vendored versions.
 
----
 
-## 4) Install the UI repo itself (editable)
+### 6) Install **local-only development dependencies**
+
+This branch should include a `local_requirements.txt` for dependencies
+needed *after* the base install (HF backends, local inference helpers, etc.).
 
 ```bash
-uv pip install -e .
+uv pip install -r local_requirements.txt
 ```
 
----
+Notes:
+- This file is intentionally **separate** from core requirements.
+- It is expected to evolve as HF / local inference work progresses.
 
-## 5) Install KohakuEngine (if needed)
 
-The PyPI package name is `kohaku-engine`.
-- import name: `kohakuengine`
-- CLI tool: `kogine`
+
+### 9) Final required smoke test (before tooling)
+
+Confirm imports:
 
 ```bash
-uv pip install kohaku-engine
-python -c "import kohakuengine; print('kohakuengine ok')"
-kogine --help
+python -c "import kohakuvault, kohakurag; print('Imports OK')"
 ```
 
----
 
-## 6) Quick verification
+### 10) Jupyter Lab (headless, remote)
+
+Jupyter is used for:
+- inspecting embeddings
+- debugging vector stores
+- interactive HF inference tests
+- demos
+
+
+#### 10.1 Register a **named kernel** (important):
 
 ```bash
-python -c "import kohakuvault, kohakurag; print('imports ok')"
+python -m ipykernel install   --user   --name kohaku-gb10   --display-name "kohaku-gb10"
 ```
 
----
 
-## Notes
-
-### About UMAP
-`umap-learn` is intentionally not included in the vendored KohakuRAG dependency set to avoid
-`llvmlite/numba` build issues on some systems.
-
-If you want UMAP later, install it manually (may fail on GB10 depending on Python/arch):
+#### 10.2 Start Jupyter on GB10
 
 ```bash
-uv pip install umap-learn
+jupyter lab --no-browser --port=8888
 ```
 
-### Updating vendored dependencies
-If you update `vendor/KohakuRAG` or `vendor/KohakuVault` and want your environment to pick up changes:
+Leave this running.
+
+
+#### 10.3 Port‑forward Jupyter to your laptop
+
+On your **laptop** (new terminal):
 
 ```bash
-uv pip install -e vendor/KohakuVault
-uv pip install -e vendor/KohakuRAG
+ssh -N -L 8888:localhost:8888 mlx@128.104.18.206
 ```
 
-(Editable installs usually reflect changes immediately, but reinstalling is a quick reset.)
+In a browser on your laptop, visit the following URL:
+```
+http://localhost:8888
+```
+
+When starting a new notebook, select: **kohaku-gb10** as the kernel.
+
+
