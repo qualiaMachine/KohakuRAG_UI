@@ -2,8 +2,21 @@
 """
 AWS Bedrock Cost Tracking Setup
 
-Creates Application Inference Profiles with cost allocation tags for each model.
+Creates Application Inference Profiles with UW-Madison approved billing tags.
 This enables tracking costs by experiment/model in AWS Cost Explorer.
+
+IMPORTANT: UW-Madison manages billing tags at the payer/management account level.
+Only pre-approved tag keys will appear in Cost Explorer / Cost Allocation Reports.
+See: https://kb.wisc.edu/page.php?id=72454
+
+Tag mapping (our concept -> approved UW-Madison tag key):
+    project     -> Project       (e.g., "wattbot")
+    project name-> ProjectName   (e.g., "KohakuRAG-WattBot")
+    experiment  -> Purpose       (e.g., "wattbot-eval")
+    model       -> CA001         (custom allocation code; no "Model" tag exists yet)
+    owner       -> Owner         (e.g., "nils-matteson")
+    environment -> Environment   (e.g., "evaluation")
+    application -> Application   (e.g., "bedrock-inference")
 
 Usage:
     # List existing inference profiles
@@ -15,14 +28,18 @@ Usage:
     # Create profile for specific model
     python scripts/setup_bedrock_cost_tracking.py --create --model claude-3-haiku
 
-After creation:
-1. Go to AWS Billing > Cost Allocation Tags
-2. Activate the tags (project, experiment, model)
-3. Wait 24 hours for tags to appear in Cost Explorer
+    # Create with a specific experiment name
+    python scripts/setup_bedrock_cost_tracking.py --create --experiment wattbot-eval-v2
+
+    # Delete old profiles (e.g., before recreating with new tags)
+    python scripts/setup_bedrock_cost_tracking.py --delete <profile-arn>
+
+After creation, tagged costs should appear in Cost Explorer within ~24 hours
+(no manual tag activation needed -- these are already activated at the payer level).
 
 References:
 - https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-create.html
-- https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock/client/create_inference_profile.html
+- https://kb.wisc.edu/page.php?id=72454 (UW-Madison approved billing tags)
 """
 
 import argparse
@@ -38,69 +55,84 @@ except ImportError:
     sys.exit(1)
 
 
-# Model configurations - map friendly names to Bedrock model ARNs
-# Using us-east-2 region ARNs
+# Model configurations
+# Maps friendly names to cross-region inference profile model IDs.
+# The script auto-discovers the account ID and builds the full system-defined
+# inference profile ARN at runtime (needed for create_inference_profile's copyFrom).
 MODELS = {
     "claude-3-haiku": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-3-haiku-20240307-v1:0",
-        "model_id": "us.anthropic.claude-3-haiku-20240307-v1:0",
-        "description": "WattBot-Claude3-Haiku",
+        "profile_model_id": "us.anthropic.claude-3-haiku-20240307-v1:0",
+        "description": "WattBot Claude3 Haiku",
     },
     "claude-3-5-haiku": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0",
-        "model_id": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        "description": "WattBot-Claude3.5-Haiku",
+        "profile_model_id": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+        "description": "WattBot Claude3.5 Haiku",
     },
     "claude-3-5-sonnet": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
-        "model_id": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        "description": "WattBot-Claude3.5-Sonnet",
+        "profile_model_id": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "description": "WattBot Claude3.5 Sonnet",
     },
     "claude-3-7-sonnet": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0",
-        "model_id": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
-        "description": "WattBot-Claude3.7-Sonnet",
+        "profile_model_id": "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "description": "WattBot Claude3.7 Sonnet",
     },
     "nova-pro": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-pro-v1:0",
-        "model_id": "us.amazon.nova-pro-v1:0",
-        "description": "WattBot-Amazon-NovaPro",
+        "profile_model_id": "us.amazon.nova-pro-v1:0",
+        "description": "WattBot Amazon NovaPro",
     },
     "llama-3-70b": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/meta.llama3-70b-instruct-v1:0",
-        "model_id": "meta.llama3-70b-instruct-v1:0",
-        "description": "WattBot-Llama3-70B",
+        "profile_model_id": "us.meta.llama3-1-70b-instruct-v1:0",
+        "description": "WattBot Llama3 70B",
     },
     "llama-4-maverick": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/meta.llama4-maverick-17b-instruct-v1:0",
-        "model_id": "meta.llama4-maverick-17b-instruct-v1:0",
-        "description": "WattBot-Llama4-Maverick",
+        "profile_model_id": "us.meta.llama4-maverick-17b-instruct-v1:0",
+        "description": "WattBot Llama4 Maverick",
     },
     "deepseek-r1": {
-        "arn": "arn:aws:bedrock:us-east-2::foundation-model/deepseek.deepseek-r1-distill-llama-70b-v1:0",
-        "model_id": "deepseek.deepseek-r1-distill-llama-70b-v1:0",
-        "description": "WattBot-DeepSeek-R1",
+        "profile_model_id": "us.deepseek.r1-v1:0",
+        "description": "WattBot DeepSeek R1",
     },
 }
 
-# Default tags for cost allocation
+# =============================================================================
+# UW-Madison Approved Billing Tags
+# =============================================================================
+# These tag keys are pre-activated at the UW-Madison payer account level.
+# They MUST be spelled exactly as shown (case-sensitive) or they won't
+# appear in Cost Explorer / Cost Allocation Reports.
+# Full list: https://kb.wisc.edu/page.php?id=72454
+#
+# We use CA001 for "model" since there is no dedicated Model tag yet.
+# If UW-Madison adds a "Model" tag in the future, we can migrate to that.
+
 DEFAULT_TAGS = [
-    {"key": "project", "value": "wattbot"},
-    {"key": "team", "value": "kohaku-rag"},
+    {"key": "Project", "value": "wattbot"},
+    {"key": "ProjectName", "value": "KohakuRAG-WattBot"},
+    {"key": "Owner", "value": "nils-matteson"},
+    {"key": "Environment", "value": "evaluation"},
+    {"key": "Application", "value": "bedrock-inference"},
 ]
 
 
 def get_bedrock_client(profile_name: str, region: str):
-    """Create Bedrock client (not bedrock-runtime)."""
+    """Create Bedrock client and resolve account ID."""
     session = boto3.Session(profile_name=profile_name, region_name=region)
-    return session.client("bedrock")
+    bedrock = session.client("bedrock")
+
+    # Get account ID for building system-defined inference profile ARNs
+    sts = session.client("sts")
+    account_id = sts.get_caller_identity()["Account"]
+
+    return bedrock, account_id, region
 
 
-def list_inference_profiles(client) -> list:
-    """List all existing inference profiles."""
+def list_inference_profiles(client, profile_type: str | None = None) -> list:
+    """List inference profiles. If profile_type is None, returns both types."""
     try:
-        response = client.list_inference_profiles()
-        profiles = response.get("inferenceProfileSummaries", [])
+        profiles = []
+        for ptype in ([profile_type] if profile_type else ["SYSTEM_DEFINED", "APPLICATION"]):
+            response = client.list_inference_profiles(typeEquals=ptype)
+            profiles.extend(response.get("inferenceProfileSummaries", []))
         return profiles
     except ClientError as e:
         print(f"Error listing profiles: {e}")
@@ -204,20 +236,32 @@ def main():
     print(f"Region: {args.region}")
     print()
 
-    client = get_bedrock_client(args.profile, args.region)
+    client, account_id, region = get_bedrock_client(args.profile, args.region)
+    print(f"Account ID: {account_id}")
+    print()
 
     if args.list:
-        print("=== Existing Inference Profiles ===")
-        profiles = list_inference_profiles(client)
-        if profiles:
-            for p in profiles:
+        # Show application profiles (our tagged ones) first, then system-defined
+        app_profiles = list_inference_profiles(client, "APPLICATION")
+        sys_profiles = list_inference_profiles(client, "SYSTEM_DEFINED")
+
+        print(f"=== Application Inference Profiles ({len(app_profiles)}) ===")
+        if app_profiles:
+            for p in app_profiles:
                 print(f"  Name: {p.get('inferenceProfileName')}")
                 print(f"  ARN:  {p.get('inferenceProfileArn')}")
-                print(f"  Type: {p.get('type')}")
                 print(f"  Status: {p.get('status')}")
                 print()
         else:
-            print("  No inference profiles found")
+            print("  None (run --create to set up tagged profiles)")
+            print()
+
+        print(f"=== System-Defined Inference Profiles ({len(sys_profiles)}) ===")
+        if sys_profiles:
+            for p in sys_profiles:
+                print(f"  {p.get('inferenceProfileName')}")
+        else:
+            print("  None found")
         return
 
     if args.delete:
@@ -247,16 +291,25 @@ def main():
             profile_name = f"wattbot-{model_name}"
             print(f"Creating profile: {profile_name}")
 
-            # Build tags
+            # Build the system-defined inference profile ARN.
+            # create_inference_profile requires a system-defined profile ARN
+            # (not a foundation model ARN) for cross-region models.
+            source_arn = (
+                f"arn:aws:bedrock:{region}:{account_id}"
+                f":inference-profile/{model_info['profile_model_id']}"
+            )
+            print(f"  Source: {source_arn}")
+
+            # Build tags using UW-Madison approved keys
             tags = DEFAULT_TAGS.copy()
-            tags.append({"key": "experiment", "value": args.experiment})
-            tags.append({"key": "model", "value": model_name})
+            tags.append({"key": "Purpose", "value": args.experiment})  # experiment name
+            tags.append({"key": "CA001", "value": model_name})         # model (custom allocation code)
 
             result = create_inference_profile(
                 client=client,
                 profile_name=profile_name,
-                model_arn=model_info["arn"],
-                description=f"WattBot evaluation - {model_info['description']}",
+                model_arn=source_arn,
+                description=model_info["description"],
                 tags=tags,
             )
 
@@ -264,7 +317,7 @@ def main():
                 print(f"  Created: {result['arn']}")
                 created_profiles[model_name] = {
                     "profile_arn": result["arn"],
-                    "original_model_id": model_info["model_id"],
+                    "original_model_id": model_info["profile_model_id"],
                 }
             print()
 
@@ -277,12 +330,19 @@ def main():
 
         print()
         print("=== Next Steps ===")
-        print("1. Go to AWS Billing Console > Cost Allocation Tags")
-        print("2. Find and activate these tags: project, team, experiment, model")
-        print("3. Wait up to 24 hours for tags to appear in Cost Explorer")
+        print("Tags used are from the UW-Madison approved billing tag list.")
+        print("They are already activated at the payer account level (no action needed).")
+        print("  - Project     = wattbot")
+        print("  - ProjectName = KohakuRAG-WattBot")
+        print("  - Purpose     = experiment name")
+        print("  - CA001       = model name (custom allocation code)")
+        print()
+        print("Costs should appear in Cost Explorer within ~24 hours.")
         print()
         print("To use profiles in code, replace model_id with the profile ARN:")
         print("  model_id = 'arn:aws:bedrock:us-east-2:ACCOUNT:inference-profile/...'")
+        print()
+        print("Reference: https://kb.wisc.edu/page.php?id=72454")
 
 
 if __name__ == "__main__":

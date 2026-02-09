@@ -91,15 +91,27 @@ class ExperimentSummary:
     config_snapshot: dict = field(default_factory=dict)
 
 
-# Bedrock pricing per 1M tokens (as of Jan 2025)
+# Bedrock pricing per 1M tokens (as of Feb 2026)
 # https://aws.amazon.com/bedrock/pricing/
+# Prices are for on-demand inference in us-east-2. Cross-region may differ slightly.
 BEDROCK_PRICING = {
+    # Anthropic Claude family
     "claude-3-haiku": {"input": 0.25, "output": 1.25},
+    "claude-3-5-haiku": {"input": 0.80, "output": 4.00},
     "claude-3-sonnet": {"input": 3.00, "output": 15.00},
     "claude-3-5-sonnet": {"input": 3.00, "output": 15.00},
+    "claude-3-7-sonnet": {"input": 3.00, "output": 15.00},
     "claude-3-opus": {"input": 15.00, "output": 75.00},
-    "llama4-scout": {"input": 0.17, "output": 0.17},  # Estimated
-    "deepseek-v3": {"input": 0.50, "output": 1.00},   # Estimated
+    # Meta Llama family
+    "llama3-70b": {"input": 0.72, "output": 0.72},
+    "llama4-scout": {"input": 0.17, "output": 0.17},
+    "llama4-maverick": {"input": 0.49, "output": 0.49},
+    # Amazon Nova
+    "nova-pro": {"input": 0.80, "output": 3.20},
+    # Mistral
+    "mistral-small": {"input": 0.10, "output": 0.30},
+    # DeepSeek
+    "deepseek": {"input": 1.35, "output": 5.40},       # DeepSeek R1 distill on Bedrock
 }
 
 
