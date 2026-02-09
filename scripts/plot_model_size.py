@@ -65,8 +65,13 @@ def match_model_size(model_id: str) -> tuple[str, int, bool] | None:
     return None
 
 
-def load_experiments(experiments_dir: Path) -> list[dict]:
-    """Load all experiment summaries, skipping ensembles and duplicates."""
+def load_experiments(experiments_dir: Path, name_filter: str | None = None) -> list[dict]:
+    """Load experiment summaries, skipping ensembles and duplicates.
+
+    Args:
+        experiments_dir: Path to experiments directory.
+        name_filter: If set, only load experiments whose directory name contains this string.
+    """
     experiments = []
     seen_models = {}  # model_id -> best experiment (by score)
 
@@ -80,6 +85,10 @@ def load_experiments(experiments_dir: Path) -> list[dict]:
 
         name = data.get("name", summary_path.parent.name)
         model_id = data.get("model_id", "")
+
+        # Apply name filter
+        if name_filter and name_filter not in name:
+            continue
 
         # Skip ensembles and experiments without a model
         if not model_id or "ensemble" in name.lower():
@@ -363,6 +372,107 @@ def plot_bubble_chart(experiments: list[dict], output_dir: Path):
     print(f"Saved {output_dir / 'size_score_cost_bubble.png'}")
 
 
+def plot_overall_ranking(experiments: list[dict], output_dir: Path):
+    """Plot 5: Overall performance ranking (horizontal bar chart)."""
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    sorted_exp = sorted(experiments, key=lambda x: x["overall_score"])
+    names = [e["display_name"] for e in sorted_exp]
+    scores = [e["overall_score"] for e in sorted_exp]
+    colors = [get_color(n) for n in names]
+
+    bars = ax.barh(range(len(names)), scores, color=colors, edgecolor="white", linewidth=1.2, height=0.65)
+
+    # Add score labels
+    for i, (bar, score) in enumerate(zip(bars, scores)):
+        ax.text(bar.get_width() + 0.008, bar.get_y() + bar.get_height() / 2,
+                f"{score:.3f}", va="center", fontsize=10, fontweight="bold")
+
+    ax.set_yticks(range(len(names)))
+    ax.set_yticklabels(names, fontsize=11)
+    ax.set_xlim(0, 1.0)
+    ax.set_xlabel("WattBot Score (0.75*Val + 0.15*Ref + 0.10*NA)", fontsize=11)
+    ax.set_title(f"Model Performance Ranking (n={41} questions, fresh benchmark)", fontsize=14, fontweight="bold")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="x", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "overall_ranking.png", dpi=300, bbox_inches="tight")
+    print(f"Saved {output_dir / 'overall_ranking.png'}")
+
+
+def plot_cost_vs_performance(experiments: list[dict], output_dir: Path):
+    """Plot 6: Cost vs. Performance scatter (the key trade-off chart)."""
+    with_cost = [e for e in experiments if e["total_cost"] > 0]
+    if len(with_cost) < 2:
+        print("Not enough cost data for cost_vs_performance plot")
+        return
+
+    fig, ax = plt.subplots(figsize=(11, 7))
+
+    costs = [e["total_cost"] for e in with_cost]
+    scores = [e["overall_score"] for e in with_cost]
+    names = [e["display_name"] for e in with_cost]
+    colors = [get_color(n) for n in names]
+
+    ax.scatter(costs, scores, c=colors, s=150, zorder=5, edgecolors="white", linewidth=1.5)
+
+    for x, y, name in zip(costs, scores, names):
+        ax.annotate(
+            name, (x, y),
+            xytext=(8, 6), textcoords="offset points", fontsize=9, ha="left", va="bottom",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7, edgecolor="none"),
+        )
+
+    style_axis(ax, "Cost vs. Performance Trade-off", "Total Cost (USD)", "Overall Score")
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"${x:.2f}"))
+    ax.set_ylim(0.3, 0.85)
+
+    # Highlight the Pareto-optimal region
+    ax.text(
+        0.02, 0.02,
+        "Lower-left = cheaper but worse | Upper-left = best value",
+        transform=ax.transAxes, fontsize=8, va="bottom", style="italic", color="gray",
+    )
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "cost_vs_performance.png", dpi=300, bbox_inches="tight")
+    print(f"Saved {output_dir / 'cost_vs_performance.png'}")
+
+
+def plot_score_breakdown(experiments: list[dict], output_dir: Path):
+    """Plot 7: Stacked/grouped bar chart showing component score breakdown."""
+    fig, ax = plt.subplots(figsize=(14, 7))
+
+    sorted_exp = sorted(experiments, key=lambda x: x["overall_score"], reverse=True)
+    names = [e["display_name"] for e in sorted_exp]
+    x = np.arange(len(names))
+    width = 0.22
+
+    val_scores = [e["value_accuracy"] for e in sorted_exp]
+    ref_scores = [e["ref_overlap"] for e in sorted_exp]
+    na_scores = [e["na_accuracy"] for e in sorted_exp]
+
+    bars1 = ax.bar(x - width, val_scores, width, label="Value Accuracy (75%)", color="#6366f1", alpha=0.85)
+    bars2 = ax.bar(x, ref_scores, width, label="Reference Overlap (15%)", color="#f59e0b", alpha=0.85)
+    bars3 = ax.bar(x + width, na_scores, width, label="NA Accuracy (10%)", color="#10b981", alpha=0.85)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, rotation=35, ha="right", fontsize=10)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Score", fontsize=11)
+    ax.set_title("Score Component Breakdown by Model", fontsize=14, fontweight="bold")
+    ax.legend(loc="upper right", fontsize=9)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "score_breakdown.png", dpi=300, bbox_inches="tight")
+    print(f"Saved {output_dir / 'score_breakdown.png'}")
+
+
 def print_summary_table(experiments: list[dict]):
     """Print a formatted summary table to console."""
     print(f"\n{'='*100}")
@@ -402,6 +512,11 @@ def main():
         default="artifacts/plots",
         help="Output directory for plots",
     )
+    parser.add_argument(
+        "--filter", "-f",
+        default=None,
+        help="Only load experiments whose name contains this string (e.g. 'bench')",
+    )
     args = parser.parse_args()
 
     experiments_dir = Path(args.experiments)
@@ -413,7 +528,9 @@ def main():
         sys.exit(1)
 
     print("Loading experiment data...")
-    experiments = load_experiments(experiments_dir)
+    if args.filter:
+        print(f"  Filtering to experiments containing: '{args.filter}'")
+    experiments = load_experiments(experiments_dir, name_filter=args.filter)
 
     if not experiments:
         print("No valid experiments found!")
@@ -427,8 +544,11 @@ def main():
     plot_size_vs_latency(experiments, output_dir)
     plot_size_vs_cost(experiments, output_dir)
     plot_bubble_chart(experiments, output_dir)
+    plot_overall_ranking(experiments, output_dir)
+    plot_cost_vs_performance(experiments, output_dir)
+    plot_score_breakdown(experiments, output_dir)
 
-    print(f"\nAll plots saved to {output_dir}/")
+    print(f"\nAll 7 plots saved to {output_dir}/")
 
 
 if __name__ == "__main__":
