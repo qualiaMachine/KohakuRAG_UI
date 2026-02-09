@@ -129,11 +129,8 @@ def main():
     for m in raw_models:
         # Normalize: llama4-scout -> llama4_scout
         norm = m.replace("-", "_").lower()
-        if norm in IGNORED_MODELS:
+        if any(ign in norm for ign in IGNORED_MODELS):
             continue
-        # specific fix for llama4 duplicates
-        if "scout" in norm: norm = "llama4_scout"
-        if "maverick" in norm: norm = "llama4_maverick"
         
         # Prefer the one with underscores if conflict (arbitrary but consistent)
         model_map[norm] = m
