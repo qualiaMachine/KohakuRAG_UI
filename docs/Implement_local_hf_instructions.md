@@ -47,16 +47,46 @@ You want to support:
 
 Add a class that matches the same interface the pipeline expects (returning a string, plus any metadata if your code uses it).
 
-Minimal implementation sketch:
+Implementation sketch inspired from llm.py file (mirroring OpenAIChatModel):
 
 ```python
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 
-class HuggingFaceLocalChatModel:
-    def __init__(self, model_id: str, dtype: str = "bf16"):
-        self.model_id = model_id
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+class HuggingFaceLocalChatModel(ChatModel):
+    """Chat backend powered by a local Hugging Face Transformers model.
+
+    Intended for fully local inference (no network). Uses device_map="auto".
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        system_prompt: str | None = None,
+        dtype: str = "bf16",  # "bf16", "fp16", or "auto"
+        max_concurrent: int = 2,
+        max_new_tokens: int = 512,
+        temperature: float = 0.2,
+    ) -> None:
+        if not HF_AVAILABLE:
+            raise ImportError(
+                "transformers/torch are required for HuggingFaceLocalChatModel. "
+                "Install with: pip install torch transformers accelerate"
+            )
+
+        self._model_id = model
+        self._system_prompt = system_prompt or "You are a helpful assistant."
+        self._max_new_tokens = max_new_tokens
+        self._temperature = temperature
+
+        # Concurrency limiter (local inference is heavy)
+        self._semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
+        )
+
+        # Load tokenizer/model once
+        self._tokenizer = AutoTokenizer.from_pretrained(self._model_id, use_fast=True)
 
         torch_dtype = None
         if dtype == "bf16":
@@ -64,41 +94,67 @@ class HuggingFaceLocalChatModel:
         elif dtype == "fp16":
             torch_dtype = torch.float16
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
+        self._model = AutoModelForCausalLM.from_pretrained(
+            self._model_id,
             torch_dtype=torch_dtype,
             device_map="auto",
         )
 
-    def chat(self, messages, max_new_tokens: int = 512, temperature: float = 0.2) -> str:
-        # Prefer chat template if the model supports it
-        if hasattr(self.tokenizer, "apply_chat_template"):
-            prompt = self.tokenizer.apply_chat_template(
+    async def complete(self, prompt: str, *, system_prompt: str | None = None) -> str:
+        system = system_prompt or self._system_prompt
+
+        # Build messages in the same style as OpenAI/OpenRouter
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+
+        async def _run_generate() -> str:
+            return await asyncio.to_thread(self._generate_sync, messages)
+
+        if self._semaphore is not None:
+            async with self._semaphore:
+                return await _run_generate()
+        return await _run_generate()
+
+    def _generate_sync(self, messages: list[dict]) -> str:
+        # Use chat template if available for better formatting
+        if hasattr(self._tokenizer, "apply_chat_template"):
+            text = self._tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
         else:
-            prompt = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages]) + "\nASSISTANT:"
+            # Fallback: simple role formatting
+            lines = []
+            for m in messages:
+                lines.append(f"{m['role'].upper()}: {m['content']}")
+            lines.append("ASSISTANT:")
+            text = "\n".join(lines)
 
-        inputs = self.tokenizer(prompt, return_tensors="pt")
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        inputs = self._tokenizer(text, return_tensors="pt")
+        inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
 
-        with torch.no_grad():
-            out = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=(temperature > 0),
-                temperature=temperature,
-            )
-        return self.tokenizer.decode(out[0], skip_special_tokens=True)
+        do_sample = self._temperature > 0
+        out = self._model.generate(
+            **inputs,
+            max_new_tokens=self._max_new_tokens,
+            do_sample=do_sample,
+            temperature=self._temperature if do_sample else None,
+        )
+
+        return self._tokenizer.decode(out[0], skip_special_tokens=True).strip()
+
 ```
 
-### 3.3 Wire provider selection
+### 3.3 Wire provider selection 
 
 Wherever your code currently does something like:
 
 ```python
 if provider == "openrouter":
     model = OpenRouterChatModel(...)
+
+# hint: use grep to locate:provider == "openrouter"
 ```
 
 Add:
