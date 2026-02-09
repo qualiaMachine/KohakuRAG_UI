@@ -31,8 +31,12 @@ from typing import Any, Mapping, Sequence
 
 from kohakurag import RAGPipeline
 from kohakurag.datastore import ImageStore, KVaultNodeStore
-from kohakurag.embeddings import JinaEmbeddingModel, JinaV4EmbeddingModel
-from kohakurag.llm import OpenAIChatModel, OpenRouterChatModel
+from kohakurag.embeddings import (
+    JinaEmbeddingModel,
+    JinaV4EmbeddingModel,
+    LocalHFEmbeddingModel,
+)
+from kohakurag.llm import HuggingFaceLocalChatModel, OpenAIChatModel, OpenRouterChatModel
 
 
 Row = dict[str, Any]
@@ -101,12 +105,18 @@ questions = "data/test_Q.csv"
 output = "artifacts/wattbot_answers.csv"
 
 # LLM settings (defaulting to OpenRouter)
-llm_provider = "openrouter"  # Options: "openai", "openrouter"
-model = "openai/gpt-5-nano"  # Default model
+llm_provider = "openrouter"  # Options: "openai", "openrouter", "hf_local"
+model = "openai/gpt-5-nano"  # Default model (for openai/openrouter providers)
 planner_model = None  # Falls back to model
 openrouter_api_key = None  # From env: OPENROUTER_API_KEY
 site_url = None  # Optional for OpenRouter
 app_name = None  # Optional for OpenRouter
+
+# HuggingFace local LLM settings (used when llm_provider = "hf_local")
+hf_model_id = "Qwen/Qwen2.5-7B-Instruct"
+hf_dtype = "bf16"  # Options: "bf16", "fp16", "auto"
+hf_max_new_tokens = 512
+hf_temperature = 0.2
 
 # Retrieval settings
 top_k = 5
@@ -116,9 +126,10 @@ rerank_strategy = None  # Options: None, "frequency", "score", "combined"
 top_k_final = None  # Optional: truncate to this many results after dedup+rerank (None = no truncation)
 
 # Embedding settings
-embedding_model = "jina"  # Options: "jina" (v3), "jinav4"
+embedding_model = "jina"  # Options: "jina" (v3), "jinav4", "hf_local"
 embedding_dim = None  # For JinaV4: 128, 256, 512, 1024, 2048
 embedding_task = "retrieval"  # For JinaV4: "retrieval", "text-matching", "code"
+embedding_model_id = "BAAI/bge-base-en-v1.5"  # For hf_local: sentence-transformers model
 
 # Paragraph search mode (runtime toggle, requires "both" mode during indexing)
 # Options:
@@ -352,7 +363,10 @@ def create_embedder(config):
     """
     model_type = getattr(config, "embedding_model", "jina")
 
-    if model_type == "jinav4":
+    if model_type == "hf_local":
+        model_id = getattr(config, "embedding_model_id", "BAAI/bge-base-en-v1.5")
+        return LocalHFEmbeddingModel(model_name=model_id)
+    elif model_type == "jinav4":
         dim = getattr(config, "embedding_dim", 1024)
         task = getattr(config, "embedding_task", "retrieval")
         return JinaV4EmbeddingModel(truncate_dim=dim, task=task)
@@ -373,7 +387,16 @@ def create_chat_model(config, system_prompt: str):
     """
     provider = getattr(config, "llm_provider", "openrouter")
 
-    if provider == "openrouter":
+    if provider == "hf_local":
+        return HuggingFaceLocalChatModel(
+            model=getattr(config, "hf_model_id", "Qwen/Qwen2.5-7B-Instruct"),
+            system_prompt=system_prompt,
+            dtype=getattr(config, "hf_dtype", "bf16"),
+            max_new_tokens=getattr(config, "hf_max_new_tokens", 512),
+            temperature=getattr(config, "hf_temperature", 0.2),
+            max_concurrent=getattr(config, "max_concurrent", 2),
+        )
+    elif provider == "openrouter":
         return OpenRouterChatModel(
             model=config.model,
             api_key=getattr(config, "openrouter_api_key", None),
@@ -522,6 +545,10 @@ def create_pipeline() -> RAGPipeline:
         site_url=site_url,
         app_name=app_name,
         max_concurrent=max_concurrent,
+        hf_model_id=hf_model_id,
+        hf_dtype=hf_dtype,
+        hf_max_new_tokens=hf_max_new_tokens,
+        hf_temperature=hf_temperature,
     )
 
     # Datastore (thread-safe via async executor)
@@ -917,6 +944,7 @@ async def main() -> None:
         embedding_model=embedding_model,
         embedding_dim=embedding_dim,
         embedding_task=embedding_task,
+        embedding_model_id=embedding_model_id,
     )
     GLOBAL_EMBEDDER = create_embedder(embedder_config)
 
