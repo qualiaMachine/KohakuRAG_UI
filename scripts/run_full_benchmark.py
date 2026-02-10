@@ -55,6 +55,9 @@ HF_LOCAL_MODELS = {
     # "hf_gemma2_9b": "gemma2-9b-bench",     # gated — needs HF_TOKEN
     # "hf_gemma2_27b": "gemma2-27b-bench",   # gated — needs HF_TOKEN
     "hf_mixtral_8x7b": "mixtral-8x7b-bench",
+    "hf_mixtral_8x22b": "mixtral-8x22b-bench",
+    "hf_qwen3_30b_a3b": "qwen3-30b-a3b-bench",
+    "hf_olmoe_1b7b": "olmoe-1b7b-bench",
 }
 
 # AWS Bedrock models (requires llm_bedrock module + AWS credentials)
