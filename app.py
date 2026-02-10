@@ -1,10 +1,13 @@
 """
-KohakuRAG WattBot - Streamlit Dashboard
+KohakuRAG WattBot — Streamlit Dashboard
 
-Interactive UI for:
-  1. Experiment Results Dashboard -- compare models, view scores
-  2. Model Size Analysis -- interactive size vs. performance charts
-  3. RAG Q&A -- ask questions through the pipeline
+Interactive demo for the WattBot energy & sustainability RAG pipeline.
+
+Pages:
+  1. Dashboard — headline metrics and model comparison
+  2. Benchmark Gallery — presentation-grade plots
+  3. Ask a Question — ChatGPT-style RAG Q&A via AWS Bedrock
+  4. Model Analysis — interactive size/cost/latency analysis
 
 Usage:
     streamlit run app.py
@@ -33,6 +36,7 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).parent
 EXPERIMENTS_DIR = PROJECT_ROOT / "artifacts" / "experiments"
+PLOTS_DIR = PROJECT_ROOT / "artifacts" / "plots"
 DATA_DIR = PROJECT_ROOT / "data"
 
 # Add source paths for imports
@@ -40,7 +44,94 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(PROJECT_ROOT / "KohakuRAG" / "src"))
 
 # ---------------------------------------------------------------------------
-# Model Size Registry (shared with plot_model_size.py)
+# Custom CSS — polished dark theme
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+    /* ---- Header banner ---- */
+    .hero-banner {
+        background: linear-gradient(135deg, #c5050c 0%, #9b0000 50%, #282728 100%);
+        padding: 2rem 2.5rem;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 20px rgba(197, 5, 12, 0.25);
+    }
+    .hero-banner h1 {
+        color: white;
+        margin: 0;
+        font-size: 2.2rem;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+    }
+    .hero-banner p {
+        color: rgba(255,255,255,0.85);
+        margin: 0.3rem 0 0 0;
+        font-size: 1rem;
+    }
+
+    /* ---- Metric cards ---- */
+    div[data-testid="stMetric"] {
+        background: #1a1d24;
+        border: 1px solid #2d3139;
+        border-radius: 10px;
+        padding: 1rem 1.2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    div[data-testid="stMetric"] label {
+        color: #9ca3af !important;
+        font-size: 0.85rem !important;
+    }
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+    }
+
+    /* ---- Sidebar ---- */
+    [data-testid="stSidebar"] {
+        background: #12151a;
+        border-right: 1px solid #2d3139;
+    }
+    [data-testid="stSidebar"] .stRadio label {
+        font-size: 1rem;
+    }
+
+    /* ---- Chat messages ---- */
+    .stChatMessage {
+        border-radius: 12px !important;
+        border: 1px solid #2d3139 !important;
+    }
+
+    /* ---- Plot gallery card ---- */
+    .plot-card {
+        background: #1a1d24;
+        border: 1px solid #2d3139;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .plot-card img {
+        border-radius: 8px;
+    }
+    .plot-caption {
+        color: #9ca3af;
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+        font-style: italic;
+    }
+
+    /* ---- General polish ---- */
+    .stDataFrame {
+        border-radius: 8px;
+    }
+    .block-container {
+        padding-top: 2rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Model Registry
 # ---------------------------------------------------------------------------
 MODEL_SIZES = {
     "claude-3-haiku": ("Claude 3 Haiku", 8, True),
@@ -112,11 +203,15 @@ def load_all_experiments():
 
 
 # ============================================================================
-# PAGE 1: Experiment Dashboard
+# PAGE 1: Dashboard
 # ============================================================================
 def page_dashboard():
-    st.title("Experiment Results Dashboard")
-    st.caption("Compare model performance across all evaluation runs")
+    st.markdown("""
+    <div class="hero-banner">
+        <h1>🍁 KohakuRAG WattBot</h1>
+        <p>Energy & Sustainability RAG — Model Benchmark Dashboard</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     experiments = load_all_experiments()
     if not experiments:
@@ -144,15 +239,15 @@ def page_dashboard():
         cheapest = filtered[filtered["Cost ($)"] > 0]
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Best Score", f"{best['Overall']:.3f}", best["Model"])
-        c2.metric("Models Tested", len(filtered["Model"].unique()))
-        c3.metric("Total Experiments", len(filtered))
+        c1.metric("🏆 Best Score", f"{best['Overall']:.3f}", best["Model"])
+        c2.metric("🤖 Models Tested", len(filtered["Model"].unique()))
+        c3.metric("🧪 Total Experiments", len(filtered))
         if not cheapest.empty:
             cheapest_row = cheapest.loc[cheapest["Cost ($)"].idxmin()]
-            c4.metric("Cheapest Run", f"${cheapest_row['Cost ($)']:.4f}", cheapest_row["Model"])
+            c4.metric("💰 Cheapest Run", f"${cheapest_row['Cost ($)']:.2f}", cheapest_row["Model"])
 
     # --------------- Results Table ---------------
-    st.subheader("Results Table")
+    st.subheader("📊 Results Table")
 
     display_cols = [
         "Experiment", "Model", "Size (B)", "Overall", "Value Acc.",
@@ -174,11 +269,8 @@ def page_dashboard():
     )
 
     # --------------- Bar Chart ---------------
-    st.subheader("Score Comparison")
-
-    # Deduplicate: keep best run per model
+    st.subheader("📈 Score Comparison")
     best_per_model = filtered.sort_values("Overall", ascending=False).drop_duplicates("Model")
-
     chart_data = best_per_model.set_index("Model")[["Value Acc.", "Ref Overlap", "NA Acc."]].sort_values(
         "Value Acc.", ascending=False
     )
@@ -186,94 +278,108 @@ def page_dashboard():
 
 
 # ============================================================================
-# PAGE 2: Model Size Analysis
+# PAGE 2: Benchmark Gallery
 # ============================================================================
-def page_model_size():
-    st.title("Model Size Analysis")
-    st.caption("How does model size relate to performance, latency, and cost?")
+PLOT_INFO = {
+    "01_overall_ranking.png": {
+        "title": "Overall Model Ranking",
+        "caption": "Horizontal bar chart with 95% CI error bars. Models ranked by WattBot composite score (0.75·Value + 0.15·Ref + 0.10·NA)."
+    },
+    "02_score_breakdown.png": {
+        "title": "Score Component Breakdown",
+        "caption": "Grouped bar chart showing Value Accuracy, Reference Overlap, and NA Recall for each model."
+    },
+    "03_refusal_rates.png": {
+        "title": "Refusal Rate Comparison",
+        "caption": "Percentage of questions where each model answered \"Unable\". Error bars show Wilson 95% CI."
+    },
+    "04_unique_wins.png": {
+        "title": "Unique Wins",
+        "caption": "Questions that only one model answered correctly — shows complementary strengths."
+    },
+    "05_cost_vs_score.png": {
+        "title": "Cost vs. Performance (Pareto Frontier)",
+        "caption": "Scatter plot with Pareto frontier. DeepSeek R1 is free and ranked #3. Claude Sonnets are premium ($10+)."
+    },
+    "06_cost_efficiency.png": {
+        "title": "Cost Efficiency Ranking",
+        "caption": "Score per dollar spent. DeepSeek R1 is free (infinite efficiency). Shows best value models for production deployment."
+    },
+    "07_latency_vs_score.png": {
+        "title": "Latency vs. Performance (Pareto Frontier)",
+        "caption": "Speed-quality tradeoff. GPT-OSS models are fastest (2-3s), Claude Sonnets are slower but highest scoring."
+    },
+    "08_agreement_heatmap.png": {
+        "title": "Model Agreement Heatmap",
+        "caption": "Pairwise agreement on question correctness. Higher = more similar behavior."
+    },
+    "09_accuracy_by_type.png": {
+        "title": "Accuracy by Question Type",
+        "caption": "Performance breakdown by question category: Table, Figure, Math, Quote, and N/A questions."
+    },
+}
 
-    experiments = load_all_experiments()
-    if not experiments:
-        st.warning("No experiments found.")
+
+def page_benchmark():
+    st.markdown("""
+    <div class="hero-banner">
+        <h1>📊 Benchmark Gallery</h1>
+        <p>Presentation-grade analysis of 10 models across 282 test questions</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not PLOTS_DIR.exists():
+        st.error("No plots found. Run `python scripts/make_presentation_plots.py` first.")
         return
 
-    import pandas as pd
-
-    df = pd.DataFrame(experiments)
-
-    # Filter out broken runs and keep best per model
-    df = df[df["Overall"] >= 0.15]
-    df = df.sort_values("Overall", ascending=False).drop_duplicates("Model")
-    df = df.dropna(subset=["Size (B)"])
-
-    if df.empty:
-        st.warning("No experiments with model size information.")
+    plot_files = sorted(PLOTS_DIR.glob("*.png"))
+    if not plot_files:
+        st.error("No PNG plots found in artifacts/plots/")
         return
 
-    # --------------- Metric Selector ---------------
-    metric = st.selectbox(
-        "Y-axis metric",
-        ["Overall", "Value Acc.", "Ref Overlap", "Latency (s)", "Cost ($)"],
-        index=0,
-    )
+    st.markdown(f"**{len(plot_files)} plots** generated from benchmark results")
+    st.divider()
 
-    # --------------- Scatter Plot ---------------
-    st.subheader(f"Model Size vs. {metric}")
-
-    chart_df = df[["Model", "Size (B)", metric, "Size Est."]].copy()
-    chart_df["Label"] = chart_df.apply(
-        lambda r: f"{r['Model']}{'*' if r['Size Est.'] == '~' else ''} ({r['Size (B)']:.0f}B)", axis=1
-    )
-
-    st.scatter_chart(
-        chart_df,
-        x="Size (B)",
-        y=metric,
-        color="Model",
-        size=80,
-        height=500,
-    )
-
-    st.caption("(*) = estimated model size (proprietary model)")
-
-    # --------------- Data Table ---------------
-    st.subheader("Data")
-    display = df[["Model", "Size (B)", "Size Est.", "Overall", "Value Acc.", "Ref Overlap", "Latency (s)", "Cost ($)"]].copy()
-    display = display.sort_values("Size (B)")
-    st.dataframe(display, use_container_width=True, hide_index=True)
-
-    # --------------- Key Insights ---------------
-    st.subheader("Key Observations")
-
-    # Auto-generate some insights
-    best_overall = df.loc[df["Overall"].idxmax()]
-    fastest = df.loc[df["Latency (s)"].idxmin()]
-    best_small = df[df["Size (B)"] <= 20]
-
-    insights = []
-    insights.append(f"**Best overall score:** {best_overall['Model']} ({best_overall['Overall']:.3f}) at {best_overall['Size (B)']:.0f}B")
-    insights.append(f"**Fastest model:** {fastest['Model']} ({fastest['Latency (s)']:.2f}s avg) at {fastest['Size (B)']:.0f}B")
-
-    if not best_small.empty:
-        best_small_row = best_small.loc[best_small["Overall"].idxmax()]
-        insights.append(
-            f"**Best small model (<=20B):** {best_small_row['Model']} ({best_small_row['Overall']:.3f}) at {best_small_row['Size (B)']:.0f}B"
-        )
-
-    for insight in insights:
-        st.markdown(f"- {insight}")
+    # Display in 2-column layout
+    for i in range(0, len(plot_files), 2):
+        cols = st.columns(2)
+        for j, col in enumerate(cols):
+            idx = i + j
+            if idx >= len(plot_files):
+                break
+            pf = plot_files[idx]
+            info = PLOT_INFO.get(pf.name, {"title": pf.stem.replace("_", " ").title(), "caption": ""})
+            with col:
+                st.markdown(f"#### {info['title']}")
+                st.image(str(pf), width="stretch")
+                if info["caption"]:
+                    st.caption(info["caption"])
+                st.markdown("")  # spacer
 
 
 # ============================================================================
-# PAGE 3: RAG Q&A
+# PAGE 3: RAG Q&A (Chat-style)
 # ============================================================================
+EXAMPLE_QUESTIONS = [
+    "What is the carbon footprint of training GPT-3?",
+    "How much energy does a data center consume annually?",
+    "What renewable energy sources are used to power AI systems?",
+    "What is the water usage of large language model training?",
+    "How do transformer models compare to CNNs in energy efficiency?",
+]
+
+
 def page_qa():
-    st.title("Ask a Question")
-    st.caption("Query the WattBot RAG pipeline with any energy/sustainability question")
+    st.markdown("""
+    <div class="hero-banner">
+        <h1>💬 Ask a Question</h1>
+        <p>Query the WattBot RAG pipeline — powered by AWS Bedrock</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     # --------------- Config Sidebar ---------------
     with st.sidebar:
-        st.subheader("RAG Settings")
+        st.subheader("⚙️ RAG Settings")
         aws_profile = st.text_input("AWS Profile", value="bedrock_nils")
         model_options = {
             "Claude 3 Haiku (fast, cheap)": "us.anthropic.claude-3-haiku-20240307-v1:0",
@@ -289,6 +395,9 @@ def page_qa():
 
     # --------------- DB Check ---------------
     db_path = PROJECT_ROOT / "artifacts" / "wattbot_jinav4.db"
+    alt_db = PROJECT_ROOT / "artifacts" / "wattbot.db"
+    if not db_path.exists() and alt_db.exists():
+        db_path = alt_db
     if not db_path.exists():
         st.error(f"Vector database not found at `{db_path}`")
         st.info("Download it first:")
@@ -298,65 +407,107 @@ def page_qa():
         )
         return
 
-    # --------------- Question Input ---------------
-    question = st.text_area(
-        "Your question",
-        placeholder="e.g., What is the carbon footprint of training GPT-3?",
-        height=100,
-    )
+    # --------------- Initialize Chat History ---------------
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-    if st.button("Ask", type="primary", use_container_width=True):
-        if not question.strip():
-            st.warning("Please enter a question.")
-            return
+    # --------------- Example Questions ---------------
+    st.markdown("**Try an example:**")
+    example_cols = st.columns(len(EXAMPLE_QUESTIONS))
+    clicked_example = None
+    for i, (col, q) in enumerate(zip(example_cols, EXAMPLE_QUESTIONS)):
+        with col:
+            # Truncate for button label
+            label = q[:35] + "..." if len(q) > 35 else q
+            if st.button(label, key=f"example_{i}", use_container_width=True):
+                clicked_example = q
 
-        with st.spinner(f"Thinking with {selected_model_name}..."):
-            try:
-                answer_data = _run_rag_query(
-                    question=question,
-                    model_id=selected_model_id,
-                    profile_name=aws_profile,
-                    db_path=str(db_path),
-                    top_k=top_k,
-                )
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.info("Make sure you're logged in: `aws sso login --profile bedrock_nils`")
-                return
+    st.divider()
 
-        # --------------- Display Answer ---------------
-        st.divider()
-        st.subheader("Answer")
-        st.markdown(answer_data.get("answer", "No answer generated."))
+    # --------------- Display Chat History ---------------
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"], avatar="🧑‍🔬" if msg["role"] == "user" else "🍁"):
+            st.markdown(msg["content"])
+            if msg.get("sources"):
+                with st.expander(f"📚 Sources ({len(msg['sources'])} passages)"):
+                    for s in msg["sources"]:
+                        st.markdown(f"**{s['doc_id']}** (score: {s['score']:.3f})")
+                        st.text(s["content"][:300])
+                        st.divider()
+            if msg.get("usage"):
+                u = msg["usage"]
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Input Tokens", f"{u.get('input', 0):,}")
+                c2.metric("Output Tokens", f"{u.get('output', 0):,}")
+                c3.metric("Latency", f"{u.get('latency', 0):.2f}s")
 
-        # Show parsed fields if available
-        parsed = answer_data.get("parsed", {})
-        if parsed:
-            with st.expander("Structured Response", expanded=False):
-                if parsed.get("explanation"):
-                    st.markdown(f"**Explanation:** {parsed['explanation']}")
-                if parsed.get("answer_value"):
-                    st.markdown(f"**Value:** `{parsed['answer_value']}`")
-                if parsed.get("ref_id"):
-                    st.markdown(f"**References:** {parsed['ref_id']}")
-                if parsed.get("supporting_materials"):
-                    st.markdown(f"**Supporting:** {parsed['supporting_materials']}")
+    # --------------- Chat Input ---------------
+    question = st.chat_input("Ask an energy & sustainability question...")
 
-        # Show retrieved context
-        if answer_data.get("sources"):
-            with st.expander(f"Retrieved Context ({len(answer_data['sources'])} passages)", expanded=False):
-                for i, source in enumerate(answer_data["sources"], 1):
-                    st.markdown(f"**[{i}]** {source.get('doc_id', 'unknown')} (score: {source.get('score', 0):.3f})")
-                    st.text(source.get("content", "")[:500])
-                    st.divider()
+    # Handle example button click
+    if clicked_example:
+        question = clicked_example
 
-        # Token usage
-        usage = answer_data.get("usage", {})
-        if usage:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Input Tokens", f"{usage.get('input', 0):,}")
-            c2.metric("Output Tokens", f"{usage.get('output', 0):,}")
-            c3.metric("Latency", f"{usage.get('latency', 0):.2f}s")
+    if question:
+        # Add user message
+        st.session_state.messages.append({"role": "user", "content": question})
+        with st.chat_message("user", avatar="🧑‍🔬"):
+            st.markdown(question)
+
+        # Generate response
+        with st.chat_message("assistant", avatar="🍁"):
+            with st.spinner(f"Thinking with {selected_model_name}..."):
+                try:
+                    answer_data = _run_rag_query(
+                        question=question,
+                        model_id=selected_model_id,
+                        profile_name=aws_profile,
+                        db_path=str(db_path),
+                        top_k=top_k,
+                    )
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    st.info("Make sure you're logged in: `aws sso login --profile bedrock_nils`")
+                    return
+
+            answer_text = answer_data.get("answer", "No answer generated.")
+            st.markdown(answer_text)
+
+            # Parsed fields
+            parsed = answer_data.get("parsed", {})
+            if parsed:
+                with st.expander("🔍 Structured Response", expanded=False):
+                    if parsed.get("explanation"):
+                        st.markdown(f"**Explanation:** {parsed['explanation']}")
+                    if parsed.get("answer_value"):
+                        st.markdown(f"**Value:** `{parsed['answer_value']}`")
+                    if parsed.get("ref_id"):
+                        st.markdown(f"**References:** {parsed['ref_id']}")
+
+            # Sources
+            sources = answer_data.get("sources", [])
+            if sources:
+                with st.expander(f"📚 Sources ({len(sources)} passages)"):
+                    for s in sources:
+                        st.markdown(f"**{s['doc_id']}** (score: {s['score']:.3f})")
+                        st.text(s["content"][:300])
+                        st.divider()
+
+            # Usage metrics
+            usage = answer_data.get("usage", {})
+            if usage:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Input Tokens", f"{usage.get('input', 0):,}")
+                c2.metric("Output Tokens", f"{usage.get('output', 0):,}")
+                c3.metric("Latency", f"{usage.get('latency', 0):.2f}s")
+
+        # Save assistant message
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer_text,
+            "sources": sources,
+            "usage": usage,
+        })
 
 
 def _run_rag_query(question: str, model_id: str, profile_name: str, db_path: str, top_k: int) -> dict:
@@ -441,19 +592,113 @@ def _run_rag_query(question: str, model_id: str, profile_name: str, db_path: str
 
 
 # ============================================================================
+# PAGE 4: Model Analysis
+# ============================================================================
+def page_model_size():
+    st.markdown("""
+    <div class="hero-banner">
+        <h1>🔬 Model Analysis</h1>
+        <p>Interactive analysis — how does size, cost, and speed relate to performance?</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    experiments = load_all_experiments()
+    if not experiments:
+        st.warning("No experiments found.")
+        return
+
+    import pandas as pd
+
+    df = pd.DataFrame(experiments)
+
+    # Filter out broken runs and keep best per model
+    df = df[df["Overall"] >= 0.15]
+    df = df.sort_values("Overall", ascending=False).drop_duplicates("Model")
+    df = df.dropna(subset=["Size (B)"])
+
+    if df.empty:
+        st.warning("No experiments with model size information.")
+        return
+
+    # --------------- Metric Selector ---------------
+    metric = st.selectbox(
+        "Y-axis metric",
+        ["Overall", "Value Acc.", "Ref Overlap", "Latency (s)", "Cost ($)"],
+        index=0,
+    )
+
+    # --------------- Scatter Plot ---------------
+    st.subheader(f"📊 Model Size vs. {metric}")
+
+    chart_df = df[["Model", "Size (B)", metric, "Size Est."]].copy()
+    chart_df["Label"] = chart_df.apply(
+        lambda r: f"{r['Model']}{'*' if r['Size Est.'] == '~' else ''} ({r['Size (B)']:.0f}B)", axis=1
+    )
+
+    st.scatter_chart(
+        chart_df,
+        x="Size (B)",
+        y=metric,
+        color="Model",
+        size=80,
+        height=500,
+    )
+
+    st.caption("(*) = estimated model size (proprietary model)")
+
+    # --------------- Data Table ---------------
+    st.subheader("📋 Data")
+    display = df[["Model", "Size (B)", "Size Est.", "Overall", "Value Acc.", "Ref Overlap", "Latency (s)", "Cost ($)"]].copy()
+    display = display.sort_values("Size (B)")
+    st.dataframe(display, use_container_width=True, hide_index=True)
+
+    # --------------- Key Insights ---------------
+    st.subheader("💡 Key Observations")
+
+    best_overall = df.loc[df["Overall"].idxmax()]
+    fastest = df.loc[df["Latency (s)"].idxmin()]
+    best_small = df[df["Size (B)"] <= 20]
+
+    insights = []
+    insights.append(f"**Best overall score:** {best_overall['Model']} ({best_overall['Overall']:.3f}) at {best_overall['Size (B)']:.0f}B")
+    insights.append(f"**Fastest model:** {fastest['Model']} ({fastest['Latency (s)']:.2f}s avg) at {fastest['Size (B)']:.0f}B")
+
+    if not best_small.empty:
+        best_small_row = best_small.loc[best_small["Overall"].idxmax()]
+        insights.append(
+            f"**Best small model (≤20B):** {best_small_row['Model']} ({best_small_row['Overall']:.3f}) at {best_small_row['Size (B)']:.0f}B"
+        )
+
+    for insight in insights:
+        st.markdown(f"- {insight}")
+
+
+# ============================================================================
 # Navigation
 # ============================================================================
 PAGES = {
-    "Dashboard": page_dashboard,
-    "Model Size Analysis": page_model_size,
-    "Ask a Question": page_qa,
+    "🏠 Dashboard": page_dashboard,
+    "📊 Benchmarks": page_benchmark,
+    "💬 Ask a Question": page_qa,
+    "🔬 Model Analysis": page_model_size,
 }
 
 with st.sidebar:
-    st.title("KohakuRAG WattBot")
-    st.caption("Energy & Sustainability RAG")
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem 0;">
+        <span style="font-size: 2.5rem;">🍁</span>
+        <h2 style="margin: 0.3rem 0 0 0; font-weight: 700; letter-spacing: -0.5px;">KohakuRAG</h2>
+        <p style="color: #9ca3af; margin: 0; font-size: 0.85rem;">WattBot · Energy & Sustainability RAG</p>
+        <p style="color: #666; margin: 0.2rem 0 0 0; font-size: 0.75rem;">UW-Madison · ML+X Group</p>
+    </div>
+    """, unsafe_allow_html=True)
     st.divider()
     page = st.radio("Navigate", list(PAGES.keys()), label_visibility="collapsed")
+
+    # Footer
+    st.divider()
+    st.caption("Built with Streamlit + AWS Bedrock")
+    st.caption("Data: 282 test questions · 10 models")
 
 # Run selected page
 PAGES[page]()

@@ -460,86 +460,75 @@ def plot_pareto_scatter(models, xs, ys, xlabel, ylabel, title, filename,
     save(filename)
 
 # ============================================================================
-# Category Strip Plot — for Size vs Score
+# Cost Efficiency Ranking
 # ============================================================================
 
-def plot_size_strip(models, scores):
+def plot_cost_efficiency(models, scores, summaries):
     """
-    X-axis = size bucket (categorical: 8B, 17B, 20B, 70B, 120B).
-    Y-axis = overall score.
-    Each dot = one model, with short label.
-    Directly shows that size does NOT determine quality.
+    Horizontal bar chart: score per dollar.
+    Free models (DeepSeek R1) get a special annotation since cost=0.
     """
-    from matplotlib.lines import Line2D
-
-    # Build data
     rows = []
+    free_models = []
     for m in models:
-        rows.append({
-            "model": m,
-            "size_label": f"{SIZE_B[m]}B",
-            "size": SIZE_B[m],
-            "score": scores[m]["overall"],
-            "family": FAMILY.get(m, ""),
-        })
-    pdf = pd.DataFrame(rows)
-    pdf = pdf.sort_values("size")
+        if m not in summaries or m not in scores:
+            continue
+        cost = summaries[m]["cost"]
+        score = scores[m]["overall"]
+        if cost <= 0:
+            free_models.append((m, score))
+        else:
+            rows.append((m, score, cost, score / cost))
 
-    # Order categories by size
-    size_order = sorted(pdf["size_label"].unique(), key=lambda s: int(s.replace("B","")))
+    if not rows and not free_models:
+        return
+
+    rows.sort(key=lambda r: r[3], reverse=True)
 
     fig, ax = plt.subplots(figsize=(11, 8))
 
-    # Use seaborn stripplot for automatic jitter within each category
-    FAMILY_MARKERS = {"Claude": "o", "Llama": "s", "GPT": "D", "DeepSeek": "^", "Mistral": "v", "Nova": "p"}
+    names = [DISPLAY.get(r[0], r[0]) for r in rows]
+    efficiencies = [r[3] for r in rows]
+    colors = [fcolor(r[0]) for r in rows]
+    costs = [r[2] for r in rows]
+    model_scores = [r[1] for r in rows]
 
-    # Plot manually for family-specific colors and markers
-    for _, row in pdf.iterrows():
-        x_pos = size_order.index(row["size_label"])
-        marker = FAMILY_MARKERS.get(row["family"], "o")
-        ax.scatter(x_pos, row["score"], color=fcolor(row["model"]),
-                   s=200, marker=marker, zorder=5, edgecolors="white", linewidth=1.5)
-        ax.annotate(SHORT.get(row["model"], row["model"][:3]),
-                    (x_pos, row["score"]),
-                    xytext=(10, 0), textcoords="offset points",
-                    fontsize=9, fontweight="bold", color="#333",
-                    bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="#ccc", alpha=0.8))
+    y_positions = list(range(len(rows)))
+    bars = ax.barh(y_positions, efficiencies, color=colors, height=0.6,
+                   edgecolor="white", linewidth=0.8, zorder=3)
 
-    ax.set_xticks(range(len(size_order)))
-    ax.set_xticklabels(size_order, fontsize=13)
-    ax.set_xlabel("Model Size (Parameters)", fontsize=13)
-    ax.set_ylabel("Overall WattBot Score", fontsize=13)
-    ax.set_title("Model Size vs. Performance", fontsize=16, fontweight="bold", pad=15)
-    ax.grid(axis="y", ls="--", alpha=0.3)
+    for i, (bar, s, c) in enumerate(zip(bars, model_scores, costs)):
+        w = bar.get_width()
+        ax.text(w + max(efficiencies)*0.02, bar.get_y() + bar.get_height()/2,
+                f"Score: {s:.3f}  |  Cost: ${c:.2f}",
+                va="center", fontsize=9, color="#555")
+
+    for j, (m, score) in enumerate(free_models):
+        y_pos = len(rows) + j
+        y_positions.append(y_pos)
+        names.append(DISPLAY.get(m, m))
+        ax.barh(y_pos, max(efficiencies) * 1.15, color=fcolor(m), height=0.6,
+                edgecolor="white", linewidth=0.8, zorder=3, alpha=0.7,
+                hatch="//")
+        ax.text(max(efficiencies) * 0.5, y_pos,
+                f"FREE  |  Score: {score:.3f}",
+                va="center", ha="center", fontsize=10, fontweight="bold",
+                color="white", zorder=5)
+
+    ax.set_yticks(y_positions)
+    ax.set_yticklabels(names, fontsize=12)
+    ax.set_xlabel("Cost Efficiency  (Score / Dollar)", fontsize=13)
+    ax.set_title("Cost Efficiency Ranking", fontsize=16, fontweight="bold", pad=15)
+    ax.grid(axis="x", ls="--", alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ax.invert_yaxis()
 
-    # Show spread per category with a thin vertical range line
-    for xi, sz in enumerate(size_order):
-        subset = pdf[pdf["size_label"] == sz]
-        if len(subset) > 1:
-            ax.vlines(xi, subset["score"].min(), subset["score"].max(),
-                      color="#aaa", lw=1, ls=":", zorder=2)
+    ax.annotate("Higher = more score per dollar spent",
+                xy=(0.98, 0.02), xycoords="axes fraction",
+                ha="right", fontsize=9, color="#888", style="italic")
 
-    yr = pdf["score"].max() - pdf["score"].min()
-    ax.set_ylim(pdf["score"].min() - yr*0.1, pdf["score"].max() + yr*0.1)
-
-    # Family legend
-    seen = {}
-    for m in models:
-        f = FAMILY.get(m, "")
-        if f not in seen:
-            seen[f] = (fcolor(m), FAMILY_MARKERS.get(f, "o"))
-    handles = [Line2D([0],[0], marker=mk, color="w", markerfacecolor=c,
-                      markersize=10, label=f) for f, (c, mk) in seen.items()]
-    ax.legend(handles=handles, title="Family", loc="lower right", fontsize=10,
-             framealpha=0.9)
-
-    # Annotation: highlight that smaller model beats bigger ones
-    ax.annotate("Size ≠ Quality", xy=(0.02, 0.98), xycoords="axes fraction",
-                fontsize=10, va="top", style="italic", color="#888")
-
-    save("06_size_vs_score.png")
+    save("06_cost_efficiency.png")
 
 # ============================================================================
 # Plot 5-7 Suite
@@ -556,8 +545,8 @@ def plot_metric_suite(scores, summaries, models):
                         "Cost vs. Performance  (Pareto Frontier)",
                         "05_cost_vs_score.png", offsets=COST_OFFSETS)
 
-    # 6. Size vs Score (strip plot)
-    plot_size_strip(mwd, scores)
+    # 6. Cost Efficiency Ranking
+    plot_cost_efficiency(mwd, scores, summaries)
 
     # 7. Latency vs Score (Pareto frontier)
     xs_lat = [summaries[m]["latency"] for m in mwd]

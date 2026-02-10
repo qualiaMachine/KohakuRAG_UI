@@ -175,8 +175,8 @@ def plot_breakdown(results: dict, output_path: Path):
         color="gray",
     )
 
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.tight_layout(rect=[0, 0.12, 1, 0.97])
+    plt.savefig(output_path, dpi=150, bbox_inches="tight", pad_inches=0.25)
     plt.close()
     print(f"Saved: {output_path}")
 

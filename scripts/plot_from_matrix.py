@@ -28,6 +28,12 @@ try:
 except ImportError:
     HAS_SCIPY = False
 
+try:
+    from adjustText import adjust_text
+    HAS_ADJUST_TEXT = True
+except ImportError:
+    HAS_ADJUST_TEXT = False
+
 import json
 import glob
 
@@ -234,46 +240,52 @@ def main():
              # WattBot Score = 0.75*Val + 0.15*Ref + 0.10*NA_Recall
              overall_score = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_recall
 
+             # 95% CI for overall score: SE from val/ref (n questions) and NA (16 trials)
+             n = len(df)
+             se_val = df[val_col].std() / np.sqrt(n) if n > 0 else 0
+             se_ref = df[ref_col].std() / np.sqrt(n) if n > 0 else 0
+             se_na = np.sqrt(na_recall * (1 - na_recall) / n_truly_na) if n_truly_na > 0 else 0
+             if np.isnan(se_val): se_val = 0
+             if np.isnan(se_ref): se_ref = 0
+             se_overall = np.sqrt((0.75 * se_val) ** 2 + (0.15 * se_ref) ** 2 + (0.10 * se_na) ** 2)
+             ci_half = 1.96 * se_overall  # 95% CI
+
              overall_scores[model] = {
                  "Value Accuracy": val_acc,
                  "Ref Overlap": ref_acc,
                  "NA Recall": na_recall,
                  "Overall": overall_score,
+                 "Overall_ci_half": ci_half,
                  "n_questions": len(df)
              }
         else:
             print(f"Warning: Score columns missing for {model}")
 
-    # Plot Overall
-    fig, ax = plt.subplots(figsize=(12, 7))
-    
+    # Plot Overall (horizontal bars so model names on y-axis don't overlap)
+    fig, ax = plt.subplots(figsize=(10, 8))
     model_names = list(overall_scores.keys())
     scores = [overall_scores[m]["Overall"] for m in model_names]
-    
-    # Sort by score descending
     sorted_pairs = sorted(zip(model_names, scores), key=lambda x: x[1], reverse=True)
     model_names = [p[0] for p in sorted_pairs]
     scores = [p[1] for p in sorted_pairs]
     display_labels = [display_name(m) for m in model_names]
-    
+    ci_halves = [overall_scores[m].get("Overall_ci_half", 0) for m in model_names]
     colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(models)))
-    bars = ax.bar(display_labels, scores, color=colors, width=0.6)
-    
-    ax.set_ylim(0, 1.1)
+    y_pos = np.arange(len(display_labels))
+    bars = ax.barh(y_pos, scores, height=0.65, color=colors, xerr=ci_halves, capsize=4, error_kw={"linewidth": 1.2})
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(display_labels, fontsize=10)
+    ax.set_xlim(0, 1.15)
+    ax.set_xlabel("WattBot Score (0.75*Val + 0.15*Ref + 0.10*NA Recall)", fontsize=12)
     n_questions = len(df)
-    setup_plot(ax, f"Model Performance (WattBot Score, n={n_questions})", "WattBot Score (0.75*Val + 0.15*Ref + 0.10*NA Recall)")
-    
-    # Add value labels
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(f'{height:.3f}',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 5),
-                    textcoords="offset points",
-                    ha='center', va='bottom', fontsize=9, fontweight='bold')
-                    
-    plt.tight_layout()
-    plt.savefig(output_dir / "overall_scores.png", dpi=300)
+    ax.set_title(f"Model Performance (WattBot Score, n={n_questions})", fontsize=14, pad=20)
+    ax.text(0.02, 0.98, "Error bars: 95% CI", transform=ax.transAxes, fontsize=8, va="top", style="italic", color="gray")
+    ax.grid(axis="x", linestyle="--", alpha=0.3)
+    for i, (bar, score) in enumerate(zip(bars, scores)):
+        ax.text(bar.get_width() + 0.012, bar.get_y() + bar.get_height() / 2, f"{score:.3f}",
+                va="center", fontsize=9, fontweight="bold")
+    plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.97])
+    plt.savefig(output_dir / "overall_scores.png", dpi=300, bbox_inches="tight", pad_inches=0.25)
     print(f"Saved {output_dir / 'overall_scores.png'}")
     
     # -------------------------------------------------------------------------
@@ -368,9 +380,8 @@ def main():
         ax.text(0.02, 0.98, "Note: (!) indicates n<10, interpret with caution",
                 transform=ax.transAxes, fontsize=8, verticalalignment='top',
                 style='italic', color='gray')
-        
-        plt.tight_layout()
-        plt.savefig(output_dir / "accuracy_by_type.png", dpi=300)
+        plt.tight_layout(rect=[0, 0.08, 1, 0.97])
+        plt.savefig(output_dir / "accuracy_by_type.png", dpi=300, bbox_inches="tight", pad_inches=0.25)
         print(f"Saved {output_dir / 'accuracy_by_type.png'}")
 
     # -------------------------------------------------------------------------
@@ -412,8 +423,8 @@ def main():
                            ha="center", va="center", color="black")
                            
     ax.set_title("Model Agreement (Correctness Correlation)")
-    fig.tight_layout()
-    plt.savefig(output_dir / "agreement_heatmap.png")
+    fig.tight_layout(rect=[0.08, 0.08, 0.95, 0.95])
+    plt.savefig(output_dir / "agreement_heatmap.png", bbox_inches="tight", pad_inches=0.25)
     print(f"Saved {output_dir / 'agreement_heatmap.png'}")
 
     # -------------------------------------------------------------------------
@@ -438,57 +449,64 @@ def main():
         ]
         unique_wins[m_target] = len(wins)
         
-    fig, ax = plt.subplots(figsize=(12, 7))
-    bars = ax.bar([display_name(m) for m in unique_wins.keys()], unique_wins.values(), color='orange', width=0.6)
-    
-    setup_plot(ax, "Unique Wins (Questions only THIS model got right)", "Count of Questions")
-    
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(f'{height}',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 5),
-                    textcoords="offset points",
-                    ha='center', va='bottom', fontsize=9, fontweight='bold')
-                    
-    plt.tight_layout()
-    plt.savefig(output_dir / "unique_wins.png", dpi=300)
+    win_counts = list(unique_wins.values())
+    win_err = [np.sqrt(c) for c in win_counts]
+    win_labels = [display_name(m) for m in unique_wins.keys()]
+    fig, ax = plt.subplots(figsize=(10, 8))
+    y_pos = np.arange(len(win_labels))
+    bars = ax.barh(y_pos, win_counts, height=0.65, color='orange', xerr=win_err, capsize=4, error_kw={"linewidth": 1.2})
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(win_labels, fontsize=10)
+    ax.set_xlabel("Count of Questions", fontsize=12)
+    ax.set_title("Unique Wins (Questions only THIS model got right)", fontsize=14, pad=20)
+    ax.text(0.02, 0.98, "Error bars: ±√n (Poisson)", transform=ax.transAxes, fontsize=8, va="top", style="italic", color="gray")
+    ax.grid(axis="x", linestyle="--", alpha=0.3)
+    for bar, count in zip(bars, win_counts):
+        ax.text(bar.get_width() + 0.3, bar.get_y() + bar.get_height() / 2, f"{count}", va="center", fontsize=9, fontweight="bold")
+    plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.97])
+    plt.savefig(output_dir / "unique_wins.png", dpi=300, bbox_inches="tight", pad_inches=0.25)
     print(f"Saved {output_dir / 'unique_wins.png'}")
 
     # -------------------------------------------------------------------------
     # 5. Refusal Rate Comparison
     # -------------------------------------------------------------------------
     print("Generating refusal rate comparison...")
-    refusal_rates = {}
+    refusal_rates = {}  # model -> {"rate": pct, "n_refusal": int, "n": int}
     
     for model in models:
         val_col = f"{model}_Value"
         if val_col in df.columns:
-            # Check for strings like "is_blank" or "unable"
-            # We treat everything as string first
             vals = df[val_col].fillna("is_blank").astype(str).str.lower()
             refusals = vals.apply(lambda x: "is_blank" in x or "unable" in x or "refuse" in x)
+            n_refusal = int(refusals.sum())
+            n = len(df)
             rate = refusals.mean() * 100
-            refusal_rates[model] = rate
+            refusal_rates[model] = {"rate": rate, "n_refusal": n_refusal, "n": n}
             
-    fig, ax = plt.subplots(figsize=(12, 7))
-    bars = ax.bar([display_name(m) for m in refusal_rates.keys()], refusal_rates.values(), color='gray', width=0.6)
-    
-    # Scale y-axis
-    y_max = max(refusal_rates.values() or [10]) * 1.2
-    ax.set_ylim(0, y_max)
-    setup_plot(ax, "Refusal Rate (% of questions answered as 'Unable')", "Percentage (%)")
-    
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(f'{height:.1f}%',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 5),
-                    textcoords="offset points",
-                    ha='center', va='bottom', fontsize=9, fontweight='bold')
-                    
-    plt.tight_layout()
-    plt.savefig(output_dir / "refusal_rates.png", dpi=300)
+    rates = [refusal_rates[m]["rate"] for m in refusal_rates]
+    refusal_labels = [display_name(m) for m in refusal_rates.keys()]
+    xerr_lower = []
+    xerr_upper = []
+    for m in refusal_rates:
+        r = refusal_rates[m]
+        low, high = wilson_ci(r["n_refusal"], r["n"], confidence=0.95)
+        xerr_lower.append(r["rate"] - low * 100)
+        xerr_upper.append(high * 100 - r["rate"])
+    fig, ax = plt.subplots(figsize=(10, 8))
+    y_pos = np.arange(len(refusal_labels))
+    bars = ax.barh(y_pos, rates, height=0.65, color='gray', xerr=[xerr_lower, xerr_upper], capsize=4, error_kw={"linewidth": 1.2})
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(refusal_labels, fontsize=10)
+    x_max = max(rates or [10]) * 1.2
+    ax.set_xlim(0, x_max)
+    ax.set_xlabel("Percentage (%)", fontsize=12)
+    ax.set_title("Refusal Rate (% of questions answered as 'Unable')", fontsize=14, pad=20)
+    ax.text(0.02, 0.98, "Error bars: 95% Wilson CI", transform=ax.transAxes, fontsize=8, va="top", style="italic", color="gray")
+    ax.grid(axis="x", linestyle="--", alpha=0.3)
+    for bar, rate in zip(bars, rates):
+        ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height() / 2, f"{rate:.1f}%", va="center", fontsize=9, fontweight="bold")
+    plt.tight_layout(rect=[0.02, 0.02, 0.98, 0.97])
+    plt.savefig(output_dir / "refusal_rates.png", dpi=300, bbox_inches="tight", pad_inches=0.25)
     print(f"Saved {output_dir / 'refusal_rates.png'}")
 
     # -------------------------------------------------------------------------
@@ -517,21 +535,24 @@ def main():
              print(f"Skipping cost plot for {model}: No cost data found")
              
     if len(plot_models) > 1:
-        fig, ax = plt.subplots(figsize=(10, 8))
-        ax.scatter(plot_costs, plot_scores, color='blue', alpha=0.7, s=100)
-        
-        # Annotate points
+        fig, ax = plt.subplots(figsize=(11, 8))
+        ax.scatter(plot_costs, plot_scores, color='blue', alpha=0.7, s=120)
+        texts = []
         for i, txt in enumerate(plot_models):
-            ax.annotate(display_name(txt), (plot_costs[i], plot_scores[i]), 
-                        xytext=(5, 5), textcoords='offset points')
-                        
+            t = ax.annotate(display_name(txt), (plot_costs[i], plot_scores[i]),
+                            xytext=(8, 8), textcoords='offset points', fontsize=9,
+                            bbox=dict(boxstyle='round,pad=0.25', facecolor='white', alpha=0.85, edgecolor='gray'))
+            texts.append(t)
+        if HAS_ADJUST_TEXT:
+            adjust_text(texts, ax=ax, expand_points=(1.2, 1.4), arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
         ax.set_xlabel("Total Cost (USD)")
         ax.set_ylabel("Overall Score")
         ax.set_title("Cost vs. Performance Trade-off")
         ax.grid(True, linestyle='--', alpha=0.6)
-        
+        ax.set_xlim(-0.5, max(plot_costs) * 1.15)
+        ax.set_ylim(min(plot_scores) - 0.02, max(plot_scores) + 0.05)
         plt.tight_layout()
-        plt.savefig(output_dir / "cost_vs_score.png")
+        plt.savefig(output_dir / "cost_vs_score.png", bbox_inches="tight", pad_inches=0.25)
         print(f"Saved {output_dir / 'cost_vs_score.png'}")
     else:
         print("Not enough models with cost data to generate cost plot.")
