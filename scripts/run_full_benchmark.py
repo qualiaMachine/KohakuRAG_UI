@@ -72,7 +72,8 @@ BEDROCK_MODELS = {
 ALL_MODELS = {**HF_LOCAL_MODELS, **BEDROCK_MODELS}
 
 
-def run_experiment(config_name: str, experiment_name: str, env: str = "") -> tuple[bool, str]:
+def run_experiment(config_name: str, experiment_name: str, env: str = "",
+                    questions: str | None = None) -> tuple[bool, str]:
     """Run a single experiment. Returns (success, output_summary)."""
     config_path = f"vendor/KohakuRAG/configs/{config_name}.py"
 
@@ -86,6 +87,8 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "") -> tup
     ]
     if env:
         cmd.extend(["--env", env])
+    if questions:
+        cmd.extend(["--questions", questions])
 
     try:
         result = subprocess.run(
@@ -98,16 +101,25 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "") -> tup
         output = result.stdout + result.stderr
         success = result.returncode == 0
 
+        # Print the experiment report block (from "EXPERIMENT COMPLETE" onward)
+        report_lines = output.split("\n")
+        in_report = False
+        for line in report_lines:
+            if "EXPERIMENT COMPLETE" in line:
+                in_report = True
+            if in_report:
+                print(f"  {line}")
+
         # Look for the score line
         score_line = ""
-        for line in output.split("\n"):
+        for line in report_lines:
             if "OVERALL SCORE" in line:
                 score_line = line.strip()
             elif "Error" in line and "Traceback" not in line:
                 score_line = line.strip()[:120]
 
         if not success:
-            error_lines = [l for l in output.split("\n") if "Error" in l or "error" in l]
+            error_lines = [l for l in report_lines if "Error" in l or "error" in l]
             error_summary = error_lines[-1][:150] if error_lines else "Unknown error"
             return False, error_summary
 
@@ -137,6 +149,10 @@ def main():
     parser.add_argument(
         "--env", "-e", default="",
         help="Run environment label (e.g. 'GB10', 'PowerEdge') for cross-machine comparison",
+    )
+    parser.add_argument(
+        "--questions", "-q", default=None,
+        help="Override questions CSV path (e.g. data/test_solutions.csv)",
     )
     args = parser.parse_args()
 
@@ -191,7 +207,8 @@ def main():
         print(f"[{i}/{len(available_models)}] {config_name} -> {exp_name}")
         start = time.time()
 
-        success, summary = run_experiment(config_name, exp_name, env=args.env)
+        success, summary = run_experiment(config_name, exp_name, env=args.env,
+                                           questions=args.questions)
         elapsed = time.time() - start
 
         status = "PASS" if success else "FAIL"

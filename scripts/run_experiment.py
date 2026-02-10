@@ -128,6 +128,8 @@ class ExperimentSummary:
     config_snapshot: dict = field(default_factory=dict)
     # Run environment (machine label for cross-machine comparison)
     run_environment: str = ""  # e.g. "GB10", "PowerEdge", "Bedrock-us-east-1"
+    # Dataset info
+    questions_file: str = ""  # path to the questions CSV used for this run
 
 
 # API pricing per 1M tokens (for cost estimation)
@@ -646,6 +648,7 @@ class ExperimentRunner:
             hardware=hw_dict,
             config_snapshot=self.config,
             run_environment=self.config.get("_run_environment", ""),
+            questions_file=self.config.get("_questions_file", ""),
         )
 
     def save_results(self, summary: ExperimentSummary) -> None:
@@ -704,7 +707,12 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"{model_short}_{timestamp}"
 
-    output_dir = Path(__file__).parent.parent / "artifacts" / "experiments" / experiment_name
+    # Organize output by env: artifacts/experiments/<env>/<name>/
+    experiments_base = Path(__file__).parent.parent / "artifacts" / "experiments"
+    if run_environment:
+        output_dir = experiments_base / run_environment / experiment_name
+    else:
+        output_dir = experiments_base / experiment_name
 
     # Load questions (CLI --questions overrides config)
     project_root = Path(__file__).parent.parent
@@ -714,6 +722,7 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
     else:
         q_raw = config.get("questions", "data/train_QA.csv")
         questions_path = project_root / q_raw.removeprefix("../").removeprefix("../")
+    config["_questions_file"] = str(questions_path.name)
     questions_df = pd.read_csv(questions_path)
     print(f"Loaded {len(questions_df)} questions from {questions_path}")
 
@@ -732,6 +741,7 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
     print(f"Quantization : {summary.quantization}")
     if summary.run_environment:
         print(f"Environment  : {summary.run_environment}")
+    print(f"Dataset      : {summary.questions_file}")
     print(f"Questions    : {summary.num_questions}")
     print(f"Correct      : {summary.questions_correct} ({100*summary.value_accuracy:.1f}%)")
     print(f"Wrong        : {summary.questions_wrong}")

@@ -94,14 +94,16 @@ overrides the `questions` path in the config file.
 
 `data/test_solutions.csv` is gitignored so it will never be committed.
 
-Output lands in `artifacts/experiments/<name>/`:
+When `--env` is set, output is organized by environment:
 
 ```
-artifacts/experiments/qwen7b-v1/
+artifacts/experiments/PowerEdge/qwen7b-v1/
 ├── submission.csv   # Kaggle-format predictions
 ├── results.json     # Per-question details (latency, scores, raw LLM output)
-└── summary.json     # Aggregate metrics (overall score, timing, cost)
+└── summary.json     # Aggregate metrics (overall score, timing, dataset info)
 ```
+
+Without `--env`, results go directly under `artifacts/experiments/<name>/`.
 
 ### Quick eval (alternative)
 
@@ -155,6 +157,10 @@ python scripts/run_full_benchmark.py --smoke-test --provider hf_local --env GB10
 
 # Full benchmark — all local HF models on the PowerEdge
 python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge
+
+# Full benchmark with test dataset
+python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
+    --questions data/test_solutions.csv
 
 # Single model only
 python scripts/run_full_benchmark.py --model qwen7b --env GB10
@@ -676,12 +682,14 @@ KohakuRAG_UI/
 │   ├── plot_from_matrix.py
 │   └── plot_score_breakdown.py
 ├── artifacts/                # Experiment outputs (gitignored, machine-specific)
-│   ├── experiments/          # Per-experiment results
-│   │   ├── qwen7b-v1/
-│   │   │   ├── submission.csv
-│   │   │   ├── results.json
-│   │   │   └── summary.json
-│   │   └── ...
+│   ├── experiments/          # Per-experiment results, organized by --env
+│   │   ├── PowerEdge/       # Results from PowerEdge runs
+│   │   │   ├── qwen7b-v1/
+│   │   │   │   ├── submission.csv
+│   │   │   │   ├── results.json
+│   │   │   │   └── summary.json
+│   │   │   └── ...
+│   │   └── GB10/            # Results from GB10 runs
 │   ├── plots/                # Generated charts
 │   └── results_matrix.csv
 ├── notebooks/
