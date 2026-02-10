@@ -72,6 +72,25 @@ python scripts/run_experiment.py \
     --name qwen7b-v1
 ```
 
+### Using the test dataset
+
+The competition test set (`test_solutions.csv`) is **not** stored in the repo.
+Upload it to `data/test_solutions.csv` on the machine, then use `--questions`:
+
+```bash
+# Run on test set with any config
+python scripts/run_experiment.py \
+    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
+    --questions data/test_solutions.csv \
+    --name qwen7b-test --env PowerEdge
+```
+
+The CSV must have the same columns as `train_QA.csv` (`id`, `question`,
+`answer_value`, `answer_unit`, `ref_id`, etc.). The `--questions` flag
+overrides the `questions` path in the config file.
+
+`data/test_solutions.csv` is gitignored so it will never be committed.
+
 Output lands in `artifacts/experiments/<name>/`:
 
 ```
@@ -326,9 +345,10 @@ hf_dtype = "bf16"           # "bf16", "fp16", "4bit", or "auto"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 
-# Embedding settings (keep these the same)
-embedding_model = "hf_local"
-embedding_model_id = "BAAI/bge-base-en-v1.5"
+# Embedding settings (Jina v4 — must match index, keep these the same)
+embedding_model = "jinav4"
+embedding_dim = 1024
+embedding_task = "retrieval"
 
 # Retrieval settings (keep these the same for fair comparison)
 top_k = 8
@@ -452,9 +472,10 @@ llm_provider = "openrouter"
 model = "meta-llama/llama-4-scout"
 max_concurrent = 10
 
-# Embedding: can still use local HF embeddings with an API LLM
-embedding_model = "hf_local"
-embedding_model_id = "BAAI/bge-base-en-v1.5"
+# Embedding: must match the index (jinav4 with 1024 dims)
+embedding_model = "jinav4"
+embedding_dim = 1024
+embedding_task = "retrieval"
 ```
 
 For Bedrock, ensure `llm_bedrock.py` is on the Python path and AWS credentials
@@ -631,7 +652,8 @@ print(scaling[["model", "params_b", "overall_score", "vram_allocated_gb", "energ
 ```
 KohakuRAG_UI/
 ├── data/                     # Tracked in git (source data shared across machines)
-│   ├── train_QA.csv          # Ground truth questions
+│   ├── train_QA.csv          # Ground truth questions (training set)
+│   ├── test_solutions.csv    # Competition test set (gitignored, upload manually)
 │   ├── metadata.csv          # Document bibliography
 │   ├── embeddings/           # Vector databases — gitignored, built locally (>100MB)
 │   │   └── wattbot_jinav4.db # (built by kogine, not in git)

@@ -24,6 +24,9 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Test dataset (secret — not committed to repo)
+data/test_solutions.csv
+
 # Experiment outputs (large, machine-specific)
 artifacts/
 
