@@ -10,24 +10,48 @@ All commands assume you are at the **repo root** with your venv active.
 ## 0) Prerequisites — Build the vector index
 
 Before running any experiments, you need a vector database. The config files
-reference `artifacts/wattbot_jinav4.db`, which is built by the KohakuRAG
-indexing pipeline.
+reference `artifacts/wattbot_jinav4.db`, which is built by the indexing pipeline.
+
+### Option A: Full indexing (requires parsed documents)
+
+If you have structured JSON documents in `artifacts/docs/` or
+`artifacts/docs_with_images/` (from the PDF parsing pipeline):
 
 ```bash
-# 1. Prepare documents: download PDFs and extract structured docs
-#    (see vendor/KohakuRAG/docs/wattbot.md for full details)
+# Build JinaV4 index (matches experiment configs)
+python scripts/build_index.py --config vendor/KohakuRAG/configs/jinav4/index.py
 
-# 2. Build the JinaV4 index
-cd vendor/KohakuRAG
-kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
-cd ../..
-
-# 3. Verify the database exists
+# Verify
 ls -lh artifacts/wattbot_jinav4.db
 ```
 
+### Option B: Citation-based indexing (quick start, no PDFs needed)
+
+If you only have `data/metadata.csv` and want to get experiments running quickly:
+
+```bash
+python scripts/build_index.py \
+    --config vendor/KohakuRAG/configs/jinav4/index.py \
+    --use-citations
+```
+
+This builds a lighter index from document titles/citations in metadata.csv.
+Quality will be lower than full document indexing, but it's enough to test
+the pipeline end-to-end.
+
+### Option C: Using kogine (if KohakuEngine is installed)
+
+```bash
+cd vendor/KohakuRAG
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+cd ../..
+```
+
+### Data prerequisites
+
 You also need `data/train_QA.csv` (the ground-truth question set) and
-`data/metadata.csv`. These should already be in the repo.
+`data/metadata.csv`. `train_QA.csv` should already be in the repo.
+For `metadata.csv`, see `vendor/KohakuRAG/docs/wattbot.md`.
 
 ---
 
@@ -481,6 +505,7 @@ KohakuRAG_UI/
 │   ├── hf_phi3_mini.py
 │   └── ...
 ├── scripts/                  # Benchmarking & analysis tools
+│   ├── build_index.py        # Build vector index (no kogine needed)
 │   ├── run_experiment.py     # Run one experiment (+ hardware metrics)
 │   ├── run_qwen_scaling.py   # Qwen size scaling experiment
 │   ├── run_full_benchmark.py # Run all models
