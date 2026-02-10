@@ -59,20 +59,17 @@ parameters.
 `summary.json` and comparison CSVs so you can distinguish results across machines.
 
 ```bash
-# Run with Qwen 2.5 7B on the GB10
+# Run with Qwen 2.5 7B on the GB10. Provide custom name for experimnet logging
 python scripts/run_experiment.py \
     --config vendor/KohakuRAG/configs/hf_qwen7b.py \
     --env GB10
+    --name qwen7b-v1
 
 # Same model on the PowerEdge
 python scripts/run_experiment.py \
     --config vendor/KohakuRAG/configs/hf_qwen7b.py \
-    --env PowerEdge
-
-# Give it a custom name + env
-python scripts/run_experiment.py \
-    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
-    --name qwen7b-v1 --env GB10
+    --env PowerEdge \
+    --name qwen7b-v1
 ```
 
 Output lands in `artifacts/experiments/<name>/`:
