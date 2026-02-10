@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass
+import time as _time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterable, Mapping, Protocol, Sequence
 
 from .datastore import HierarchicalNodeStore, InMemoryNodeStore, matches_to_snippets
@@ -80,6 +81,8 @@ class StructuredAnswerResult:
     retrieval: RetrievalResult
     raw_response: str
     prompt: str
+    timing: dict[str, float] = field(default_factory=dict)
+    # timing keys (seconds): retrieval_s, generation_s, total_s
 
 
 @dataclass
@@ -780,6 +783,8 @@ class RAGPipeline:
         if top_k_final is not None:
             self._top_k_final = top_k_final
 
+        # --- Retrieval phase (embedding + vector search) ---
+        t0 = _time.time()
         try:
             # Use image-aware retrieval if requested
             if with_images:
@@ -796,6 +801,7 @@ class RAGPipeline:
         finally:
             # Restore original top_k_final
             self._top_k_final = original_top_k_final
+        t_retrieval = _time.time() - t0
 
         # Render user prompt with context (and images if present as captions)
         rendered_prompt = prompt.render(
@@ -814,10 +820,12 @@ class RAGPipeline:
         else:
             prompt_content = rendered_prompt
 
-        # Get LLM response
+        # --- Generation phase (LLM inference) ---
+        t1 = _time.time()
         raw = await self._chat.complete(
             prompt_content, system_prompt=prompt.system_prompt
         )
+        t_generation = _time.time() - t1
 
         # Parse JSON structure
         parsed = self._parse_structured_response(raw)
@@ -827,6 +835,11 @@ class RAGPipeline:
             retrieval=retrieval,
             raw_response=raw,
             prompt=rendered_prompt,
+            timing={
+                "retrieval_s": t_retrieval,
+                "generation_s": t_generation,
+                "total_s": t_retrieval + t_generation,
+            },
         )
 
     async def run_qa(
