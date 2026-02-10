@@ -236,10 +236,11 @@ def score(solution: pd.DataFrame,
                            set and the ground-truth set (order ignored, case-insensitive).
                            Use 'is_blank' if no evidence is available.
 
-    is_NA (NA)      0.10   For truly unanswerable questions, your submission must
-                           mark all relevant fields (answer_value, answer_unit,
-                           ref_id, ref_url, supporting_materials) as 'is_blank'.
-                           Any other combination scores 0 for this component.
+    is_NA (NA)      0.10   **Recall** over truly unanswerable questions: of all
+                           ground-truth NA questions, what fraction did the model
+                           correctly mark as 'is_blank'?  This avoids inflating
+                           the score when most questions are answerable (the value
+                           component already penalizes false NAs).
 
     Notes:
     - Output: the scorer prints per-component accuracies/scores and the final score; it
@@ -287,11 +288,23 @@ def score(solution: pd.DataFrame,
     )
 
     comp = bits.mean(numeric_only=True)
+
+    # NA component: use RECALL over truly-NA questions only.
+    # The old approach averaged na_ok over ALL rows, where non-NA rows always
+    # score True — washing out the signal (e.g., 240/250 = 0.96 even if every
+    # NA question is wrong).  Recall = (correctly abstained) / (truly NA).
+    na_gt_mask = merged["answer_value_sol"].apply(is_blank)
+    na_gt_count = int(na_gt_mask.sum())
+    if na_gt_count > 0:
+        na_recall = float(bits.loc[na_gt_mask, "na"].mean())
+    else:
+        na_recall = 1.0  # no NA questions in this set → perfect by default
+
     overall = (
         0.75*comp["val"] +
         0.00*comp["unit"] +  # unit remains binary & weight=0
         0.15*comp["ref"] +   # now the mean Jaccard score
-        0.10*comp["na"]
+        0.10*na_recall       # recall over truly-NA questions only
     )
 
     # ----- Component accuracy / score
@@ -299,7 +312,7 @@ def score(solution: pd.DataFrame,
     print(f"  value match  : {comp['val']:.3f}")
     print(f"  unit match   : {comp['unit']:.3f}")
     print(f"  ref overlap  : {comp['ref']:.3f}")  # renamed
-    print(f"  NA agreement : {comp['na']:.3f}")
+    print(f"  NA recall    : {na_recall:.3f}  (n={na_gt_count} truly-NA questions)")
     print(f"OVERALL SCORE  : {overall:.3f}\n")
 
     # ----- Answer-value accuracy by coded evidence flags (multi-label; SOLUTION ONLY, NO FALLBACK)

@@ -478,8 +478,15 @@ class ExperimentRunner:
         # Compute aggregate metrics
         value_acc = sum(1 for r in self.results if r.value_correct) / total
         ref_overlap = sum(r.ref_score for r in self.results) / total
-        na_acc = sum(1 for r in self.results if r.na_correct) / total
-        overall = 0.75 * value_acc + 0.15 * ref_overlap + 0.10 * na_acc
+
+        # NA component: recall over truly-NA questions only
+        # (avoids inflating the score when most questions are answerable)
+        na_questions = [r for r in self.results if is_blank(r.gt_value)]
+        if na_questions:
+            na_recall = sum(1 for r in na_questions if r.na_correct) / len(na_questions)
+        else:
+            na_recall = 1.0  # no NA questions → perfect by default
+        overall = 0.75 * value_acc + 0.15 * ref_overlap + 0.10 * na_recall
         avg_latency = sum(r.latency_seconds for r in self.results) / total
         error_count = sum(1 for r in self.results if r.error)
 
@@ -503,7 +510,7 @@ class ExperimentRunner:
             avg_latency_seconds=avg_latency,
             value_accuracy=value_acc,
             ref_overlap=ref_overlap,
-            na_accuracy=na_acc,
+            na_accuracy=na_recall,
             overall_score=overall,
             questions_correct=sum(1 for r in self.results if r.value_correct),
             questions_wrong=sum(1 for r in self.results if not r.value_correct),
@@ -597,7 +604,7 @@ async def main(config_path: str, experiment_name: str | None = None) -> None:
     print(f"\nComponent Scores:")
     print(f"  Value match  : {summary.value_accuracy:.3f}")
     print(f"  Ref overlap  : {summary.ref_overlap:.3f}")
-    print(f"  NA agreement : {summary.na_accuracy:.3f}")
+    print(f"  NA recall    : {summary.na_accuracy:.3f}")
     print(f"\nOVERALL SCORE  : {summary.overall_score:.3f}")
     if summary.input_tokens > 0:
         print(f"\nCost Tracking:")

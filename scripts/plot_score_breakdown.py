@@ -2,7 +2,7 @@
 """
 Generate Score Component Breakdown Chart
 
-Shows Value Accuracy, Ref Overlap, and NA Accuracy side-by-side for each model
+Shows Value Accuracy, Ref Overlap, and NA Recall side-by-side for each model
 to understand WHY certain models perform better.
 
 Usage:
@@ -59,15 +59,16 @@ def load_and_score(gt_path: Path, experiments_dir: Path):
 
         val_scores = []
         ref_scores = []
-        na_scores = []
+        na_gt_scores = []  # only for truly-NA questions
 
         for qid in common_ids:
             gt_row = gt_df.loc[qid]
             sub_row = sub_df.loc[qid]
 
+            gt_val = str(gt_row.get("answer_value", ""))
             bits = row_bits(
                 sol={
-                    "answer_value": str(gt_row.get("answer_value", "")),
+                    "answer_value": gt_val,
                     "answer_unit": str(gt_row.get("answer_unit", "")),
                     "ref_id": str(gt_row.get("ref_id", "")),
                 },
@@ -79,17 +80,19 @@ def load_and_score(gt_path: Path, experiments_dir: Path):
             )
             val_scores.append(bits["val"])
             ref_scores.append(bits["ref"])
-            na_scores.append(bits["na"])
+            # Only track NA for truly-NA questions (recall, not accuracy)
+            if is_blank(gt_val):
+                na_gt_scores.append(bits["na"])
 
         val_acc = np.mean(val_scores)
         ref_acc = np.mean(ref_scores)
-        na_acc = np.mean(na_scores)
-        overall = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_acc
+        na_recall = np.mean(na_gt_scores) if na_gt_scores else 1.0
+        overall = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_recall
 
         results[model_name] = {
             "Value Accuracy": val_acc,
             "Ref Overlap": ref_acc,
-            "NA Accuracy": na_acc,
+            "NA Recall": na_recall,
             "Overall": overall,
         }
 
@@ -111,7 +114,7 @@ def plot_breakdown(results: dict, output_path: Path):
 
     val_scores = [results[m]["Value Accuracy"] for m in sorted_models]
     ref_scores = [results[m]["Ref Overlap"] for m in sorted_models]
-    na_scores = [results[m]["NA Accuracy"] for m in sorted_models]
+    na_scores = [results[m]["NA Recall"] for m in sorted_models]
     overall_scores = [results[m]["Overall"] for m in sorted_models]
 
     # Colors
@@ -124,7 +127,7 @@ def plot_breakdown(results: dict, output_path: Path):
 
     bars1 = ax.bar(x - 1.5*width, val_scores, width, label=f"Value Acc (75%)", color=colors["Value"])
     bars2 = ax.bar(x - 0.5*width, ref_scores, width, label=f"Ref Overlap (15%)", color=colors["Ref"])
-    bars3 = ax.bar(x + 0.5*width, na_scores, width, label=f"NA Acc (10%)", color=colors["NA"])
+    bars3 = ax.bar(x + 0.5*width, na_scores, width, label=f"NA Recall (10%)", color=colors["NA"])
     bars4 = ax.bar(x + 1.5*width, overall_scores, width, label=f"Overall", color=colors["Overall"], alpha=0.8)
 
     # Add value labels on bars
@@ -205,7 +208,7 @@ def main():
     print("-" * 70)
     for model in sorted(results.keys(), key=lambda m: results[m]["Overall"], reverse=True):
         r = results[model]
-        print(f"{model:<25} {r['Value Accuracy']:>8.3f} {r['Ref Overlap']:>8.3f} {r['NA Accuracy']:>8.3f} {r['Overall']:>8.3f}")
+        print(f"{model:<25} {r['Value Accuracy']:>8.3f} {r['Ref Overlap']:>8.3f} {r['NA Recall']:>8.3f} {r['Overall']:>8.3f}")
 
     print("\nGenerating breakdown chart...")
     plot_breakdown(results, output_path)

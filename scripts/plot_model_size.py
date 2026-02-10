@@ -226,7 +226,7 @@ def plot_size_vs_scores(experiments: list[dict], output_dir: Path):
         ("overall_score", "Overall WattBot Score", axes[0, 0]),
         ("value_accuracy", "Value Accuracy (75% weight)", axes[0, 1]),
         ("ref_overlap", "Reference Overlap (15% weight)", axes[1, 0]),
-        ("na_accuracy", "NA Accuracy (10% weight)", axes[1, 1]),
+        ("na_accuracy", "NA Recall (10% weight)", axes[1, 1]),
     ]
 
     sizes = [e["size_b"] for e in experiments]
@@ -461,7 +461,7 @@ def plot_score_breakdown(experiments: list[dict], output_dir: Path):
 
     ax.bar(x - width, val_scores, width, label="Value Accuracy (75%)", color="#6366f1", alpha=0.85)
     ax.bar(x, ref_scores, width, label="Reference Overlap (15%)", color="#f59e0b", alpha=0.85)
-    ax.bar(x + width, na_scores, width, label="NA Accuracy (10%)", color="#10b981", alpha=0.85)
+    ax.bar(x + width, na_scores, width, label="NA Recall (10%)", color="#10b981", alpha=0.85)
 
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=35, ha="right", fontsize=10)

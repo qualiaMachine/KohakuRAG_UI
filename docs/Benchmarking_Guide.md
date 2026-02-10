@@ -309,9 +309,15 @@ The WattBot competition score is a weighted combination:
 |------------------|--------|-----------------------------------------------------|
 | `value_accuracy` | 75%    | Exact match on `answer_value` (±0.1% for numerics)  |
 | `ref_overlap`    | 15%    | Jaccard overlap between predicted and GT `ref_id`   |
-| `na_accuracy`    | 10%    | Correctly outputting `is_blank` for unanswerable Qs |
+| `na_recall`      | 10%    | **Recall** over truly-NA questions: of all ground-truth unanswerable questions, what fraction did the model correctly mark as `is_blank`? |
 
-**Overall = 0.75 × value_accuracy + 0.15 × ref_overlap + 0.10 × na_accuracy**
+**Overall = 0.75 × value_accuracy + 0.15 × ref_overlap + 0.10 × na_recall**
+
+Why recall instead of accuracy? Most questions are answerable, so a naive
+accuracy metric (correct NAs + all non-NA questions) / total is dominated by
+the non-NA majority — a model that never abstains still scores ~0.96. Recall
+isolates the signal. False NAs (answering `is_blank` on answerable questions)
+are already penalized by the value_accuracy component.
 
 The scoring logic lives in `scripts/score.py` and is provider-agnostic — it
 only looks at the CSV columns, not how they were generated.

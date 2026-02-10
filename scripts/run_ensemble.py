@@ -180,13 +180,19 @@ def score_ensemble_results(results: list[dict]) -> dict:
 
     value_accuracy = value_correct / total
     ref_overlap = sum(ref_scores) / total
-    na_accuracy = na_correct / total
-    overall = 0.75 * value_accuracy + 0.15 * ref_overlap + 0.10 * na_accuracy
+
+    # NA component: recall over truly-NA questions only
+    na_gt = [r for r in results if is_blank(r.get("gt_value", ""))]
+    if na_gt:
+        na_recall = sum(1 for r in na_gt if r.get("na_correct", False)) / len(na_gt)
+    else:
+        na_recall = 1.0
+    overall = 0.75 * value_accuracy + 0.15 * ref_overlap + 0.10 * na_recall
 
     return {
         "value_accuracy": value_accuracy,
         "ref_overlap": ref_overlap,
-        "na_accuracy": na_accuracy,
+        "na_accuracy": na_recall,
         "overall_score": overall,
         "questions_correct": value_correct,
         "questions_wrong": total - value_correct,
@@ -311,7 +317,7 @@ def main():
     print(f"\nComponent Scores:")
     print(f"  Value match  : {scores['value_accuracy']:.3f}")
     print(f"  Ref overlap  : {scores['ref_overlap']:.3f}")
-    print(f"  NA agreement : {scores['na_accuracy']:.3f}")
+    print(f"  NA recall    : {scores['na_accuracy']:.3f}")
     print(f"\nOVERALL SCORE  : {scores['overall_score']:.3f}")
     print(f"\nOutput dir     : {output_dir}")
 
