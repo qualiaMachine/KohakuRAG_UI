@@ -71,6 +71,8 @@ class StructuredAnswer:
     answer_value: str
     ref_id: list[str]
     explanation: str
+    ref_url: list[str] = field(default_factory=list)
+    supporting_materials: str = ""
 
 
 @dataclass
@@ -954,9 +956,27 @@ class RAGPipeline:
                         text = text[7:].strip()  # Remove "ref_id=" prefix
                     ref_ids.append(text)
 
+        # Parse ref_url (can be string or list)
+        ref_url_raw = data.get("ref_url", [])
+        ref_urls: list[str] = []
+        if isinstance(ref_url_raw, str):
+            if ref_url_raw.strip() and ref_url_raw.strip() != "is_blank":
+                ref_urls = [ref_url_raw.strip()]
+        elif isinstance(ref_url_raw, Sequence):
+            for item in ref_url_raw:
+                text = str(item).strip()
+                if text and text != "is_blank":
+                    ref_urls.append(text)
+
+        supporting_materials = str(data.get("supporting_materials", "")).strip()
+        if supporting_materials == "is_blank":
+            supporting_materials = ""
+
         return StructuredAnswer(
             answer=answer,
             answer_value=answer_value,
             ref_id=ref_ids,
             explanation=explanation,
+            ref_url=ref_urls,
+            supporting_materials=supporting_materials,
         )

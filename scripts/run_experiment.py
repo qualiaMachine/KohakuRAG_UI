@@ -89,6 +89,9 @@ class QuestionResult:
     retrieval_seconds: float = 0.0
     generation_seconds: float = 0.0
     error: str | None = None
+    # LLM-generated evidence fields
+    pred_ref_url: list = field(default_factory=list)  # URLs cited by the model
+    pred_supporting_materials: str = ""  # Verbatim quote / table ref from the model
     # Full context for debugging / analysis
     rendered_prompt: str = ""  # The complete prompt sent to the LLM
     retrieved_snippets: list = field(default_factory=list)  # [{node_id, doc_title, text, score, rank}]
@@ -444,6 +447,10 @@ class ExperimentRunner:
                 timing = getattr(result, "timing", {})
                 rendered_prompt = getattr(result, "prompt", "")
 
+                # Capture LLM evidence fields
+                pred_ref_url = getattr(result.answer, "ref_url", []) or []
+                pred_supporting_materials = getattr(result.answer, "supporting_materials", "") or ""
+
                 # Serialize retrieval snippets for debugging
                 snippets_data = []
                 retrieval = getattr(result, "retrieval", None)
@@ -473,6 +480,8 @@ class ExperimentRunner:
                 timing = {}
                 rendered_prompt = ""
                 snippets_data = []
+                pred_ref_url = []
+                pred_supporting_materials = ""
 
             latency = time.time() - start_time
             retrieval_s = timing.get("retrieval_s", 0.0)
@@ -512,6 +521,8 @@ class ExperimentRunner:
                 retrieval_seconds=retrieval_s,
                 generation_seconds=generation_s,
                 error=error_msg,
+                pred_ref_url=pred_ref_url,
+                pred_supporting_materials=pred_supporting_materials,
                 rendered_prompt=rendered_prompt,
                 retrieved_snippets=snippets_data,
                 num_snippets=len(snippets_data),
@@ -646,8 +657,8 @@ class ExperimentRunner:
                 "answer_value": r.pred_value,
                 "answer_unit": r.pred_unit,
                 "ref_id": r.pred_ref,
-                "ref_url": "is_blank",
-                "supporting_materials": "is_blank",
+                "ref_url": json.dumps(r.pred_ref_url) if r.pred_ref_url else "is_blank",
+                "supporting_materials": r.pred_supporting_materials if r.pred_supporting_materials else "is_blank",
                 "explanation": r.pred_explanation,
             })
 
