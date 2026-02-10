@@ -142,7 +142,39 @@ def main():
         
     models = sorted(list(model_map.values()))
     print(f"Selected {len(models)} models after filtering: {models}")
-    
+
+    # Pretty display names for plots (strip -test/-bench suffix, use proper names)
+    DISPLAY_NAMES = {
+        "sonnet-test": "Claude 3.5 Sonnet",
+        "sonnet-bench": "Claude 3.5 Sonnet",
+        "claude37-sonnet-test": "Claude 3.7 Sonnet",
+        "claude37-sonnet-bench": "Claude 3.7 Sonnet",
+        "claude35-haiku-test": "Claude 3.5 Haiku",
+        "claude35-haiku-bench": "Claude 3.5 Haiku",
+        "haiku-test": "Claude 3 Haiku",
+        "haiku-bench": "Claude 3 Haiku",
+        "deepseek-r1-test": "DeepSeek R1",
+        "deepseek-r1-bench": "DeepSeek R1",
+        "llama4-maverick-test": "Llama 4 Maverick",
+        "llama4-maverick-bench": "Llama 4 Maverick",
+        "llama4-scout-test": "Llama 4 Scout",
+        "llama4-scout-bench": "Llama 4 Scout",
+        "llama3-70b-test": "Llama 3.3 70B",
+        "llama3-70b-bench": "Llama 3.3 70B",
+        "gpt-oss-120b-test": "GPT-OSS 120B",
+        "gpt-oss-120b-bench-smoke": "GPT-OSS 120B",
+        "gpt-oss-20b-test": "GPT-OSS 20B",
+        "gpt-oss-20b-bench-smoke": "GPT-OSS 20B",
+        "nova-pro-bench": "Nova Pro",
+    }
+
+    def display_name(m):
+        if m in DISPLAY_NAMES:
+            return DISPLAY_NAMES[m]
+        # Fallback: strip -test/-bench suffix and title-case
+        clean = m.replace("-test", "").replace("-bench", "").replace("-", " ").title()
+        return clean
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -222,9 +254,10 @@ def main():
     sorted_pairs = sorted(zip(model_names, scores), key=lambda x: x[1], reverse=True)
     model_names = [p[0] for p in sorted_pairs]
     scores = [p[1] for p in sorted_pairs]
+    display_labels = [display_name(m) for m in model_names]
     
     colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(models)))
-    bars = ax.bar(model_names, scores, color=colors, width=0.6)
+    bars = ax.bar(display_labels, scores, color=colors, width=0.6)
     
     ax.set_ylim(0, 1.1)
     n_questions = len(df)
@@ -314,7 +347,7 @@ def main():
                     yerr_lower.append(0)
                     yerr_upper.append(0)
 
-            ax.bar(x + i*width, scores, width, label=model, color=colors[i],
+            ax.bar(x + i*width, scores, width, label=display_name(model), color=colors[i],
                    yerr=[yerr_lower, yerr_upper], capsize=2, error_kw={'linewidth': 1})
 
         # Add N counts to labels with warning for small samples
@@ -369,8 +402,8 @@ def main():
     ax.set_xticks(np.arange(n_models))
     ax.set_yticks(np.arange(n_models))
     # ... and label them with the respective list entries
-    ax.set_xticklabels(models, rotation=45, ha="right")
-    ax.set_yticklabels(models)
+    ax.set_xticklabels([display_name(m) for m in models], rotation=45, ha="right")
+    ax.set_yticklabels([display_name(m) for m in models])
     
     # Loop over data dimensions and create text annotations.
     for i in range(n_models):
@@ -406,7 +439,7 @@ def main():
         unique_wins[m_target] = len(wins)
         
     fig, ax = plt.subplots(figsize=(12, 7))
-    bars = ax.bar(unique_wins.keys(), unique_wins.values(), color='orange', width=0.6)
+    bars = ax.bar([display_name(m) for m in unique_wins.keys()], unique_wins.values(), color='orange', width=0.6)
     
     setup_plot(ax, "Unique Wins (Questions only THIS model got right)", "Count of Questions")
     
@@ -439,7 +472,7 @@ def main():
             refusal_rates[model] = rate
             
     fig, ax = plt.subplots(figsize=(12, 7))
-    bars = ax.bar(refusal_rates.keys(), refusal_rates.values(), color='gray', width=0.6)
+    bars = ax.bar([display_name(m) for m in refusal_rates.keys()], refusal_rates.values(), color='gray', width=0.6)
     
     # Scale y-axis
     y_max = max(refusal_rates.values() or [10]) * 1.2
@@ -489,7 +522,7 @@ def main():
         
         # Annotate points
         for i, txt in enumerate(plot_models):
-            ax.annotate(txt, (plot_costs[i], plot_scores[i]), 
+            ax.annotate(display_name(txt), (plot_costs[i], plot_scores[i]), 
                         xytext=(5, 5), textcoords='offset points')
                         
         ax.set_xlabel("Total Cost (USD)")
