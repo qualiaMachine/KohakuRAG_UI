@@ -54,6 +54,14 @@ except ImportError:
     HAS_BEDROCK = False
 
 from score import score as compute_wattbot_score, row_bits, is_blank
+from hardware_metrics import (
+    HardwareMetrics,
+    GPUPowerMonitor,
+    NVMLEnergyCounter,
+    CPURSSMonitor,
+    collect_post_experiment_metrics,
+    reset_gpu_peak_stats,
+)
 
 
 # =============================================================================
@@ -103,6 +111,8 @@ class ExperimentSummary:
     input_tokens: int = 0
     output_tokens: int = 0
     estimated_cost_usd: float = 0.0
+    # Hardware metrics (local models)
+    hardware: dict = field(default_factory=dict)
     config_snapshot: dict = field(default_factory=dict)
 
 
@@ -329,6 +339,10 @@ class ExperimentRunner:
         self.chat_model = None
         self.semaphore: asyncio.Semaphore | None = None
         self.results: list[QuestionResult] = []
+        self.model_load_time: float = 0.0
+        self.power_monitor: GPUPowerMonitor | None = None
+        self.nvml_energy: NVMLEnergyCounter | None = None
+        self.cpu_monitor: CPURSSMonitor | None = None
 
     async def initialize(self) -> None:
         """Initialize the RAG pipeline with config settings."""
@@ -337,7 +351,17 @@ class ExperimentRunner:
         db_raw = self.config.get("db", "artifacts/wattbot_jinav4.db")
         db_path = project_root / db_raw.removeprefix("../").removeprefix("../")
         if not db_path.exists():
-            raise FileNotFoundError(f"Database not found: {db_path}")
+            raise FileNotFoundError(
+                f"Database not found: {db_path}\n\n"
+                f"The vector database must be built before running experiments.\n"
+                f"To build the index, run from the vendor/KohakuRAG directory:\n\n"
+                f"  cd vendor/KohakuRAG\n"
+                f"  kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py\n\n"
+                f"Or directly:\n\n"
+                f"  python vendor/KohakuRAG/scripts/wattbot_build_index.py\n\n"
+                f"This requires documents in artifacts/docs/ (or artifacts/docs_with_images/)\n"
+                f"and metadata in data/metadata.csv. See vendor/KohakuRAG/docs/wattbot.md for details."
+            )
 
         model_id = get_model_display_id(self.config)
         provider = self.config.get("llm_provider", "openrouter")
@@ -345,8 +369,14 @@ class ExperimentRunner:
         print(f"[init] Provider: {provider}")
         print(f"[init] Model: {model_id}")
 
+        # Reset GPU peak stats before loading (for accurate VRAM measurement)
+        reset_gpu_peak_stats()
+
+        load_start = time.time()
         self.chat_model = create_chat_model_from_config(self.config, SYSTEM_PROMPT)
         embedder = create_embedder_from_config(self.config)
+        self.model_load_time = time.time() - load_start
+        print(f"[init] Model loaded in {self.model_load_time:.1f}s")
 
         table_prefix = self.config.get("table_prefix", "wattbot_jv4")
         print(f"[init] Loading vector store from {db_path} (prefix: {table_prefix})...")
@@ -466,6 +496,21 @@ class ExperimentRunner:
         print(f"Questions: {total}")
         print(f"{'='*60}\n")
 
+        # Start hardware monitors
+        # NVML energy counter (preferred, hardware-level accuracy)
+        self.nvml_energy = NVMLEnergyCounter()
+        if self.nvml_energy.available:
+            self.nvml_energy.start()
+            print("[monitor] Using NVML energy counter")
+
+        # nvidia-smi power sampling (fallback for energy, also provides avg/peak power)
+        self.power_monitor = GPUPowerMonitor(device_id=0, interval=1.0)
+        self.power_monitor.start()
+
+        # CPU RSS monitor
+        self.cpu_monitor = CPURSSMonitor(interval=0.5)
+        self.cpu_monitor.start()
+
         # Process all questions
         tasks = []
         for idx, row in questions_df.iterrows():
@@ -474,6 +519,9 @@ class ExperimentRunner:
 
         self.results = await asyncio.gather(*tasks)
         total_time = time.time() - start_time
+
+        # Stop all monitors
+        self.power_monitor.stop()
 
         # Compute aggregate metrics
         value_acc = sum(1 for r in self.results if r.value_correct) / total
@@ -499,6 +547,17 @@ class ExperimentRunner:
 
         estimated_cost = estimate_cost(model_id, input_tokens, output_tokens)
 
+        # Collect hardware metrics (VRAM, disk size, energy, CPU RSS)
+        hw_metrics = collect_post_experiment_metrics(
+            model_id=model_id,
+            device_id=0,
+            power_monitor=self.power_monitor,
+            nvml_energy=self.nvml_energy,
+            cpu_monitor=self.cpu_monitor,
+            model_load_time=self.model_load_time,
+        )
+        hw_dict = asdict(hw_metrics)
+
         return ExperimentSummary(
             name=self.experiment_name,
             config_path=str(self.config.get("_config_path", "unknown")),
@@ -518,6 +577,7 @@ class ExperimentRunner:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             estimated_cost_usd=estimated_cost,
+            hardware=hw_dict,
             config_snapshot=self.config,
         )
 
@@ -614,6 +674,25 @@ async def main(config_path: str, experiment_name: str | None = None) -> None:
     print(f"\nTiming:")
     print(f"  Total time   : {summary.total_time_seconds:.1f}s ({summary.total_time_seconds/60:.1f} min)")
     print(f"  Avg latency  : {summary.avg_latency_seconds:.2f}s/question")
+    hw = summary.hardware
+    if hw:
+        print(f"\nHardware Metrics:")
+        if hw.get("gpu_name"):
+            print(f"  GPU          : {hw['gpu_name']}")
+        if hw.get("gpu_vram_allocated_gb"):
+            print(f"  VRAM (peak)  : {hw['gpu_vram_allocated_gb']:.2f} GB allocated / {hw['gpu_vram_total_gb']:.1f} GB total")
+        if hw.get("model_disk_size_gb"):
+            print(f"  Model on disk: {hw['model_disk_size_gb']:.2f} GB")
+        if hw.get("model_load_time_seconds"):
+            print(f"  Load time    : {hw['model_load_time_seconds']:.1f}s")
+        if hw.get("cpu_rss_peak_gb", 0) > 0:
+            print(f"  CPU RSS peak : {hw['cpu_rss_peak_gb']:.2f} GB")
+        if hw.get("gpu_energy_wh", 0) > 0:
+            method = hw.get("gpu_energy_method", "")
+            method_note = f" ({method})" if method else ""
+            print(f"  Energy       : {hw['gpu_energy_wh']:.3f} Wh{method_note}")
+            print(f"  Avg power    : {hw['gpu_avg_power_watts']:.1f} W")
+            print(f"  Peak power   : {hw['gpu_peak_power_watts']:.1f} W")
     print(f"\nOutput dir     : {output_dir}")
 
 

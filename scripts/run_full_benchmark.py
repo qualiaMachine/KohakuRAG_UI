@@ -39,8 +39,11 @@ from pathlib import Path
 
 # Local HuggingFace models
 HF_LOCAL_MODELS = {
-    "hf_qwen7b": "qwen7b-bench",
     "hf_qwen1_5b": "qwen1.5b-bench",
+    "hf_qwen3b": "qwen3b-bench",
+    "hf_qwen7b": "qwen7b-bench",
+    "hf_qwen14b": "qwen14b-bench",
+    "hf_qwen32b": "qwen32b-bench",
     "hf_llama3_8b": "llama3-8b-bench",
     "hf_mistral7b": "mistral7b-bench",
     "hf_phi3_mini": "phi3-mini-bench",
