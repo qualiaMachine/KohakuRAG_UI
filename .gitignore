@@ -24,10 +24,10 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Artifacts and data (large files)
+# Experiment outputs (large, machine-specific)
 artifacts/
-*.db
-*.sqlite
+
+# Keep data/ tracked (embeddings, PDFs, QA data are small enough)
 
 # Logs
 *.log
