@@ -172,19 +172,28 @@ def main():
              val_acc = df[val_col].mean()
              ref_acc = df[ref_col].mean()
 
-             # Use actual NA scores if available, otherwise fall back to 1.0
-             if na_col in df.columns:
-                 na_acc = df[na_col].mean()
+             # NA component: recall over truly-NA questions only
+             # GT_Value == "is_blank" (or similar) indicates a truly-NA question
+             if na_col in df.columns and "GT_Value" in df.columns:
+                 na_gt_mask = df["GT_Value"].apply(
+                     lambda v: str(v).strip().lower() in ("", "na", "n/a", "is_blank", "nan")
+                 )
+                 if na_gt_mask.any():
+                     na_recall = df.loc[na_gt_mask, na_col].mean()
+                 else:
+                     na_recall = 1.0
+             elif na_col in df.columns:
+                 na_recall = df[na_col].mean()  # fallback if no GT_Value column
              else:
-                 na_acc = 1.0  # Fallback for old matrices without NA column
+                 na_recall = 1.0
 
-             # WattBot Score = 0.75*Val + 0.15*Ref + 0.10*NA
-             overall_score = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_acc
+             # WattBot Score = 0.75*Val + 0.15*Ref + 0.10*NA_recall
+             overall_score = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_recall
 
              overall_scores[model] = {
                  "Value Accuracy": val_acc,
                  "Ref Overlap": ref_acc,
-                 "NA Accuracy": na_acc,
+                 "NA Recall": na_recall,
                  "Overall": overall_score,
                  "n_questions": len(df)
              }
