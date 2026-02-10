@@ -324,20 +324,143 @@ only looks at the CSV columns, not how they were generated.
 
 ---
 
-## 9) Directory structure reference
+## 9) Hardware metrics
+
+Every experiment now collects hardware metrics automatically (when running
+on a machine with an NVIDIA GPU):
+
+| Metric                | How it's measured                                      |
+|-----------------------|--------------------------------------------------------|
+| **VRAM (peak)**       | `torch.cuda.max_memory_allocated()` after experiment   |
+| **Model disk size**   | Total size of HuggingFace cache dir for the model      |
+| **Model load time**   | Wall-clock time to load model + embedder               |
+| **Energy (Wh)**       | Trapezoidal integration of `nvidia-smi` power readings |
+| **Avg/Peak power (W)**| From 1-second interval `nvidia-smi` polling            |
+| **GPU name**          | From `torch.cuda.get_device_properties()`              |
+
+These are saved in `summary.json` under the `"hardware"` key:
+
+```json
+{
+  "hardware": {
+    "gpu_vram_allocated_gb": 14.23,
+    "gpu_vram_total_gb": 48.0,
+    "model_disk_size_gb": 13.47,
+    "gpu_energy_wh": 2.541,
+    "gpu_avg_power_watts": 185.3,
+    "model_load_time_seconds": 12.4,
+    "gpu_name": "NVIDIA RTX A6000"
+  }
+}
+```
+
+For API models (Bedrock/OpenRouter), VRAM and power metrics will be zero but
+API cost tracking (token counts + estimated USD) is still recorded.
+
+---
+
+## 10) Qwen model-size scaling experiment
+
+To measure how WattBot performance scales with model size (keeping
+everything else constant), there's a dedicated script:
+
+```bash
+# Run all Qwen sizes that fit in your GPU
+python scripts/run_qwen_scaling.py
+
+# Run specific sizes only
+python scripts/run_qwen_scaling.py --sizes 1.5 3 7
+
+# Skip sizes already run (resume after crash)
+python scripts/run_qwen_scaling.py --skip-existing
+
+# See what would run without running
+python scripts/run_qwen_scaling.py --dry-run
+```
+
+Available Qwen sizes: 1.5B (~4GB), 3B (~8GB), 7B (~16GB), 14B (~30GB), 32B (~65GB).
+
+The script:
+- Runs models **sequentially** (frees GPU between runs for clean measurements)
+- Auto-skips models that won't fit in available VRAM
+- Produces per-model results + a combined comparison table
+
+Output:
+```
+artifacts/experiments/qwen-scaling/
+├── qwen1.5b/submission.csv, results.json, summary.json
+├── qwen3b/...
+├── qwen7b/...
+├── scaling_comparison.csv    ← side-by-side comparison
+└── scaling_comparison.json   ← same data, for notebooks
+```
+
+The `scaling_comparison.csv` has columns for scores, latency, VRAM, disk
+size, energy (Wh), and power — ready for plotting.
+
+---
+
+## 11) Results output for post-processing
+
+Every experiment produces three files for iteration:
+
+| File               | Format | What's in it                                      |
+|--------------------|--------|---------------------------------------------------|
+| `submission.csv`   | CSV    | Kaggle-format predictions (id, answer_value, ...) |
+| `results.json`     | JSON   | Per-question: GT, prediction, scores, latency     |
+| `summary.json`     | JSON   | Aggregate: overall score, hardware metrics, config |
+
+To iterate on post-processing:
+
+```python
+import json, pandas as pd
+
+# Load per-question results
+with open("artifacts/experiments/qwen7b-v1/results.json") as f:
+    results = json.load(f)
+
+# Convert to DataFrame for analysis
+df = pd.DataFrame(results)
+print(df[["id", "pred_value", "gt_value", "value_correct", "latency_seconds"]])
+
+# Load summary (includes hardware)
+with open("artifacts/experiments/qwen7b-v1/summary.json") as f:
+    summary = json.load(f)
+print(f"VRAM: {summary['hardware']['gpu_vram_allocated_gb']} GB")
+print(f"Energy: {summary['hardware']['gpu_energy_wh']} Wh")
+```
+
+For the scaling experiment, use the combined file:
+
+```python
+scaling = pd.read_csv("artifacts/experiments/qwen-scaling/scaling_comparison.csv")
+print(scaling[["model", "params_b", "overall_score", "vram_allocated_gb", "energy_wh"]])
+```
+
+---
+
+## 12) Directory structure reference
 
 ```
 KohakuRAG_UI/
 ├── configs/                  # Experiment configs (one per model)
-│   ├── hf_qwen7b.py
-│   ├── hf_qwen1_5b.py
+│   ├── hf_qwen1_5b.py       # Qwen 2.5 1.5B
+│   ├── hf_qwen3b.py         # Qwen 2.5 3B
+│   ├── hf_qwen7b.py         # Qwen 2.5 7B
+│   ├── hf_qwen14b.py        # Qwen 2.5 14B
+│   ├── hf_qwen32b.py        # Qwen 2.5 32B
+│   ├── hf_llama3_8b.py
+│   ├── hf_mistral7b.py
+│   ├── hf_phi3_mini.py
 │   └── ...
 ├── scripts/                  # Benchmarking & analysis tools
-│   ├── run_experiment.py     # Run one experiment
+│   ├── run_experiment.py     # Run one experiment (+ hardware metrics)
+│   ├── run_qwen_scaling.py   # Qwen size scaling experiment
 │   ├── run_full_benchmark.py # Run all models
 │   ├── run_wattbot_eval.py   # Quick eval + score
 │   ├── run_ensemble.py       # Combine multiple runs
 │   ├── score.py              # WattBot scoring
+│   ├── hardware_metrics.py   # VRAM, disk, energy measurement
 │   ├── generate_results_matrix.py
 │   ├── audit_experiments.py
 │   ├── plot_model_size.py
