@@ -690,7 +690,7 @@ class ExperimentRunner:
 # Main
 # =============================================================================
 
-async def main(config_path: str, experiment_name: str | None = None, run_environment: str = "") -> None:
+async def main(config_path: str, experiment_name: str | None = None, run_environment: str = "", questions_override: str | None = None) -> None:
     """Run an experiment with the given config."""
     config = load_config(config_path)
     config["_config_path"] = config_path
@@ -706,10 +706,14 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
 
     output_dir = Path(__file__).parent.parent / "artifacts" / "experiments" / experiment_name
 
-    # Load questions
+    # Load questions (CLI --questions overrides config)
     project_root = Path(__file__).parent.parent
-    q_raw = config.get("questions", "data/train_QA.csv")
-    questions_path = project_root / q_raw.removeprefix("../").removeprefix("../")
+    if questions_override:
+        qpath = Path(questions_override)
+        questions_path = qpath if qpath.is_absolute() else project_root / qpath
+    else:
+        q_raw = config.get("questions", "data/train_QA.csv")
+        questions_path = project_root / q_raw.removeprefix("../").removeprefix("../")
     questions_df = pd.read_csv(questions_path)
     print(f"Loaded {len(questions_df)} questions from {questions_path}")
 
@@ -795,9 +799,14 @@ def cli():
         default="",
         help="Run environment label for cross-machine comparison (e.g. 'GB10', 'PowerEdge')"
     )
+    parser.add_argument(
+        "--questions", "-q",
+        default=None,
+        help="Override questions CSV path (e.g. data/test_solutions.csv)"
+    )
 
     args = parser.parse_args()
-    asyncio.run(main(args.config, args.name, args.env))
+    asyncio.run(main(args.config, args.name, args.env, args.questions))
 
 
 if __name__ == "__main__":
