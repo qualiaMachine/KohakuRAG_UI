@@ -71,7 +71,9 @@ class HardwareMetrics:
     gpu_power_samples: int = 0              # Number of power readings taken
 
     # Timing
-    model_load_time_seconds: float = 0.0    # Time to load model into VRAM
+    model_load_time_seconds: float = 0.0    # Total time to load LLM + embedder
+    llm_load_time_seconds: float = 0.0      # Time to load LLM into VRAM
+    embedder_load_time_seconds: float = 0.0 # Time to load embedding model
 
     # CPU memory
     cpu_rss_peak_bytes: int = 0
@@ -422,6 +424,8 @@ def collect_post_experiment_metrics(
     nvml_energy: NVMLEnergyCounter | None = None,
     cpu_monitor: CPURSSMonitor | None = None,
     model_load_time: float = 0.0,
+    llm_load_time: float = 0.0,
+    embedder_load_time: float = 0.0,
 ) -> HardwareMetrics:
     """Collect all metrics AFTER the experiment completes.
 
@@ -480,6 +484,8 @@ def collect_post_experiment_metrics(
         gpu_power_samples=power_samples,
         # Timing
         model_load_time_seconds=model_load_time,
+        llm_load_time_seconds=llm_load_time,
+        embedder_load_time_seconds=embedder_load_time,
         # CPU
         cpu_rss_peak_bytes=cpu_rss,
         cpu_rss_peak_gb=_bytes_to_gb(cpu_rss),

@@ -86,7 +86,16 @@ class QuestionResult:
     na_correct: bool
     weighted_score: float
     latency_seconds: float
+    retrieval_seconds: float = 0.0
+    generation_seconds: float = 0.0
     error: str | None = None
+    # LLM-generated evidence fields
+    pred_ref_url: list = field(default_factory=list)  # URLs cited by the model
+    pred_supporting_materials: str = ""  # Verbatim quote / table ref from the model
+    # Full context for debugging / analysis
+    rendered_prompt: str = ""  # The complete prompt sent to the LLM
+    retrieved_snippets: list = field(default_factory=list)  # [{node_id, doc_title, text, score, rank}]
+    num_snippets: int = 0
 
 
 @dataclass
@@ -101,6 +110,8 @@ class ExperimentSummary:
     num_questions: int
     total_time_seconds: float
     avg_latency_seconds: float
+    avg_retrieval_seconds: float
+    avg_generation_seconds: float
     value_accuracy: float
     ref_overlap: float
     na_accuracy: float
@@ -370,11 +381,17 @@ class ExperimentRunner:
         # Reset GPU peak stats before loading (for accurate VRAM measurement)
         reset_gpu_peak_stats()
 
-        load_start = time.time()
+        llm_load_start = time.time()
         self.chat_model = create_chat_model_from_config(self.config, SYSTEM_PROMPT)
+        self.llm_load_time = time.time() - llm_load_start
+        print(f"[init] LLM loaded in {self.llm_load_time:.1f}s")
+
+        embed_load_start = time.time()
         embedder = create_embedder_from_config(self.config)
-        self.model_load_time = time.time() - load_start
-        print(f"[init] Model loaded in {self.model_load_time:.1f}s")
+        self.embedder_load_time = time.time() - embed_load_start
+        print(f"[init] Embedder loaded in {self.embedder_load_time:.1f}s")
+
+        self.model_load_time = self.llm_load_time + self.embedder_load_time
 
         table_prefix = self.config.get("table_prefix", "wattbot_jv4")
         print(f"[init] Loading vector store from {db_path} (prefix: {table_prefix})...")
@@ -427,6 +444,26 @@ class ExperimentRunner:
                 pred_ref = result.answer.ref_id
                 pred_explanation = result.answer.explanation
                 raw_response = getattr(result, "raw_response", "")
+                timing = getattr(result, "timing", {})
+                rendered_prompt = getattr(result, "prompt", "")
+
+                # Capture LLM evidence fields
+                pred_ref_url = getattr(result.answer, "ref_url", []) or []
+                pred_supporting_materials = getattr(result.answer, "supporting_materials", "") or ""
+
+                # Serialize retrieval snippets for debugging
+                snippets_data = []
+                retrieval = getattr(result, "retrieval", None)
+                if retrieval and hasattr(retrieval, "snippets"):
+                    for s in retrieval.snippets:
+                        snippets_data.append({
+                            "node_id": s.node_id,
+                            "document_title": s.document_title,
+                            "text": s.text,
+                            "score": round(s.score, 4),
+                            "rank": s.rank,
+                            "metadata": s.metadata,
+                        })
 
                 if isinstance(pred_ref, list):
                     pred_ref_str = json.dumps(pred_ref)
@@ -440,8 +477,15 @@ class ExperimentRunner:
                 pred_value = "is_blank"
                 pred_ref_str = "is_blank"
                 pred_explanation = f"Error: {error_msg}"
+                timing = {}
+                rendered_prompt = ""
+                snippets_data = []
+                pred_ref_url = []
+                pred_supporting_materials = ""
 
             latency = time.time() - start_time
+            retrieval_s = timing.get("retrieval_s", 0.0)
+            generation_s = timing.get("generation_s", 0.0)
 
             # Compute scores
             gt_value = str(row.get("answer_value", "is_blank"))
@@ -456,7 +500,7 @@ class ExperimentRunner:
 
             status = "OK" if bits["val"] else "WRONG"
             preview = str(pred_value)[:40]
-            print(f"[{index}/{total}] {row['id']}: {preview} [{status}] ({latency:.1f}s)")
+            print(f"[{index}/{total}] {row['id']}: {preview} [{status}] ({latency:.1f}s | ret={retrieval_s:.1f}s gen={generation_s:.1f}s)")
 
             return QuestionResult(
                 id=row["id"],
@@ -474,7 +518,14 @@ class ExperimentRunner:
                 na_correct=bool(bits["na"]),
                 weighted_score=weighted,
                 latency_seconds=latency,
+                retrieval_seconds=retrieval_s,
+                generation_seconds=generation_s,
                 error=error_msg,
+                pred_ref_url=pred_ref_url,
+                pred_supporting_materials=pred_supporting_materials,
+                rendered_prompt=rendered_prompt,
+                retrieved_snippets=snippets_data,
+                num_snippets=len(snippets_data),
             )
 
     async def run(self, questions_df: pd.DataFrame) -> ExperimentSummary:
@@ -534,6 +585,8 @@ class ExperimentRunner:
             na_recall = 1.0  # no NA questions → perfect by default
         overall = 0.75 * value_acc + 0.15 * ref_overlap + 0.10 * na_recall
         avg_latency = sum(r.latency_seconds for r in self.results) / total
+        avg_retrieval = sum(r.retrieval_seconds for r in self.results) / total
+        avg_generation = sum(r.generation_seconds for r in self.results) / total
         error_count = sum(1 for r in self.results if r.error)
 
         # Get token usage from chat model (if supported)
@@ -553,6 +606,8 @@ class ExperimentRunner:
             nvml_energy=self.nvml_energy,
             cpu_monitor=self.cpu_monitor,
             model_load_time=self.model_load_time,
+            llm_load_time=getattr(self, "llm_load_time", 0.0),
+            embedder_load_time=getattr(self, "embedder_load_time", 0.0),
         )
         hw_dict = asdict(hw_metrics)
 
@@ -572,6 +627,8 @@ class ExperimentRunner:
             num_questions=total,
             total_time_seconds=total_time,
             avg_latency_seconds=avg_latency,
+            avg_retrieval_seconds=avg_retrieval,
+            avg_generation_seconds=avg_generation,
             value_accuracy=value_acc,
             ref_overlap=ref_overlap,
             na_accuracy=na_recall,
@@ -600,8 +657,8 @@ class ExperimentRunner:
                 "answer_value": r.pred_value,
                 "answer_unit": r.pred_unit,
                 "ref_id": r.pred_ref,
-                "ref_url": "is_blank",
-                "supporting_materials": "is_blank",
+                "ref_url": json.dumps(r.pred_ref_url) if r.pred_ref_url else "is_blank",
+                "supporting_materials": r.pred_supporting_materials if r.pred_supporting_materials else "is_blank",
                 "explanation": r.pred_explanation,
             })
 
@@ -680,6 +737,8 @@ async def main(config_path: str, experiment_name: str | None = None) -> None:
     print(f"\nTiming:")
     print(f"  Total time   : {summary.total_time_seconds:.1f}s ({summary.total_time_seconds/60:.1f} min)")
     print(f"  Avg latency  : {summary.avg_latency_seconds:.2f}s/question")
+    print(f"    Retrieval  : {summary.avg_retrieval_seconds:.2f}s/question")
+    print(f"    Generation : {summary.avg_generation_seconds:.2f}s/question")
     hw = summary.hardware
     if hw:
         print(f"\nHardware Metrics:")
@@ -690,7 +749,9 @@ async def main(config_path: str, experiment_name: str | None = None) -> None:
         if hw.get("model_disk_size_gb"):
             print(f"  Model on disk: {hw['model_disk_size_gb']:.2f} GB")
         if hw.get("model_load_time_seconds"):
-            print(f"  Load time    : {hw['model_load_time_seconds']:.1f}s")
+            llm_t = hw.get("llm_load_time_seconds", 0)
+            embed_t = hw.get("embedder_load_time_seconds", 0)
+            print(f"  Load time    : {hw['model_load_time_seconds']:.1f}s (LLM={llm_t:.1f}s, Embedder={embed_t:.1f}s)")
         if hw.get("cpu_rss_peak_gb", 0) > 0:
             print(f"  CPU RSS peak : {hw['cpu_rss_peak_gb']:.2f} GB")
         if hw.get("gpu_energy_wh", 0) > 0:
