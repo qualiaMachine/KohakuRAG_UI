@@ -59,25 +59,17 @@ parameters.
 `summary.json` and comparison CSVs so you can distinguish results across machines.
 
 ```bash
-# Run with Qwen 2.5 7B on the GB10 (default: 4-bit quantization)
+# Run with Qwen 2.5 7B on the GB10. Provide custom name for experimnet logging
 python scripts/run_experiment.py \
     --config vendor/KohakuRAG/configs/hf_qwen7b.py \
     --env GB10
+    --name qwen7b-v1
 
 # Same model on the PowerEdge
 python scripts/run_experiment.py \
     --config vendor/KohakuRAG/configs/hf_qwen7b.py \
-    --env PowerEdge
-
-# Give it a custom name + env
-python scripts/run_experiment.py \
-    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
-    --name qwen7b-v1 --env GB10
-
-# Run in bf16 (full precision) instead of 4-bit
-python scripts/run_experiment.py \
-    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
-    --precision bf16 --env PowerEdge
+    --env PowerEdge \
+    --name qwen7b-v1
 ```
 
 **Precision flag:** All local HF models default to `--precision 4bit` (NF4
