@@ -567,7 +567,42 @@ still pass `--env` for Bedrock runs (e.g., `--env Bedrock-us-east-1`).
 
 ---
 
-## 10) Qwen model-size scaling experiment
+## 10) Running on the test set
+
+By default, benchmarks run against `data/train_QA.csv`. To run on a
+different question set (e.g. the competition test set) without
+overwriting your existing train results, use `--split` and `--questions`:
+
+```bash
+# Full batch on test set — results go to <env>/qwen7b-bench-test/ etc.
+python scripts/run_full_benchmark.py \
+    --env PowerEdge \
+    --split test \
+    --questions data/test_solutions.csv
+
+# Single model on test set
+python scripts/run_experiment.py \
+    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
+    --name qwen7b-bench-test \
+    --env PowerEdge \
+    --questions data/test_solutions.csv
+```
+
+`--split <suffix>` appends `-<suffix>` to every experiment name in the
+batch, so train and test results live side-by-side:
+
+```
+artifacts/experiments/PowerEdge/
+├── qwen7b-bench/          ← train results
+├── qwen7b-bench-test/     ← test results
+```
+
+The skip-existing check still applies per-split, so you can re-run
+with `--force` if needed.
+
+---
+
+## 11) Qwen model-size scaling experiment
 
 To measure how WattBot performance scales with model size (keeping
 everything else constant), there's a dedicated script:
@@ -613,7 +648,7 @@ size, energy (Wh), and power — ready for plotting.
 
 ---
 
-## 11) Results output for post-processing
+## 12) Results output for post-processing
 
 Every experiment produces three files for iteration:
 
@@ -646,13 +681,13 @@ print(f"Energy: {summary['hardware']['gpu_energy_wh']} Wh")
 For the scaling experiment, use the combined file:
 
 ```python
-scaling = pd.read_csv("artifacts/experiments/qwen-scaling/scaling_comparison.csv")
+scaling = pd.read_csv("artifacts/experiments/PowerEdge/qwen_scaling_comparison.csv")
 print(scaling[["model", "params_b", "overall_score", "vram_allocated_gb", "energy_wh"]])
 ```
 
 ---
 
-## 12) Directory structure reference
+## 13) Directory structure reference
 
 ```
 KohakuRAG_UI/

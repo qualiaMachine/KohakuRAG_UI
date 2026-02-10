@@ -206,6 +206,11 @@ def main():
         "--force", action="store_true",
         help="Re-run experiments even if results already exist",
     )
+    parser.add_argument(
+        "--split", type=str, default=None,
+        help="Append a suffix to experiment names (e.g. --split test → qwen7b-bench-test). "
+             "Use this to run on a different question set without overwriting existing results.",
+    )
     args = parser.parse_args()
 
     # Select model set
@@ -255,6 +260,8 @@ def main():
     for i, (config_name, exp_name) in enumerate(available_models.items(), 1):
         if args.smoke_test:
             exp_name = f"{exp_name}-smoke"
+        if args.split:
+            exp_name = f"{exp_name}-{args.split}"
 
         print(f"[{i}/{len(available_models)}] {config_name} -> {exp_name}")
 
