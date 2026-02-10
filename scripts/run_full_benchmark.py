@@ -137,7 +137,6 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            bufsize=1,  # line-buffered
         )
 
         all_lines = []
@@ -148,14 +147,7 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "",
         elapsed_sum = 0.0
         start_time = time.time()
 
-        # Use readline() instead of iterating proc.stdout to avoid
-        # Python's internal read-ahead buffer that delays output
-        while True:
-            line = proc.stdout.readline()
-            if not line and proc.poll() is not None:
-                break
-            if not line:
-                continue
+        for line in proc.stdout:
             line = line.rstrip("\n")
             all_lines.append(line)
 
@@ -189,6 +181,7 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "",
             if "OVERALL SCORE" in line:
                 score_line = line.strip()
 
+        proc.wait(timeout=1800)
         success = proc.returncode == 0
 
         if not success:
