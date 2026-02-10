@@ -190,6 +190,8 @@ class BedrockChatModel:
             return "deepseek"
         elif "amazon" in model_lower or "nova" in model_lower:
             return "amazon"
+        elif "openai" in model_lower or "gpt" in model_lower:
+            return "openai"
         elif "cohere" in model_lower:
             return "cohere"
         else:
@@ -241,6 +243,18 @@ class BedrockChatModel:
             return {
                 "prompt": f"System: {system_prompt}\n\nUser: {prompt}\n\nAssistant:",
                 "max_tokens": min(self._max_tokens, 8192),  # DeepSeek quality degrades above 8192
+                "temperature": 0.1,
+            }
+
+        elif family == "openai":
+            # OpenAI GPT-OSS models use standard OpenAI Chat Completions format
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-openai.html
+            return {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "max_completion_tokens": self._max_tokens,
                 "temperature": 0.1,
             }
 
@@ -316,6 +330,29 @@ class BedrockChatModel:
             # DeepSeek doesn't return token counts in response
             input_tokens = 0
             output_tokens = 0
+            return text, input_tokens, output_tokens
+
+        elif family == "openai":
+            # OpenAI GPT-OSS: standard OpenAI Chat Completions response format
+            # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-openai.html
+            choices = result.get("choices", [])
+            if choices:
+                message = choices[0].get("message", {})
+                text = message.get("content", "")
+                # GPT-OSS wraps chain-of-thought in <reasoning>...</reasoning> tags
+                # Strip them to get the actual answer
+                for tag in ["reasoning", "think"]:
+                    open_tag = f"<{tag}>"
+                    close_tag = f"</{tag}>"
+                    if open_tag in text and close_tag in text:
+                        tag_end = text.find(close_tag)
+                        if tag_end != -1:
+                            text = text[tag_end + len(close_tag):].strip()
+            else:
+                text = ""
+            usage = result.get("usage", {})
+            input_tokens = usage.get("prompt_tokens", 0)
+            output_tokens = usage.get("completion_tokens", 0)
             return text, input_tokens, output_tokens
 
         elif family == "amazon":

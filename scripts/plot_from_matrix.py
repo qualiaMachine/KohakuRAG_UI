@@ -122,14 +122,19 @@ def main():
     raw_models = [c.replace("_Value", "") for c in df.columns if c.endswith("_Value") and c != "GT_Value"]
     
     # Filter and Deduplicate
-    IGNORED_MODELS = {"test", "new", "v2", "fixed", "jinav4", "haiku-baseline"}
+    # Only exclude exact matches or specific patterns -- NOT substrings like "test"
+    # which would filter out legitimate "-test" suffixed experiments
+    IGNORED_EXACT = {"test", "new", "fixed", "jinav4"}
+    IGNORED_SUBSTRINGS = {"haiku_baseline"}  # More specific patterns
     
     model_map = {} # normalized_name -> original_name_in_csv
     
     for m in raw_models:
         # Normalize: llama4-scout -> llama4_scout
         norm = m.replace("-", "_").lower()
-        if any(ign in norm for ign in IGNORED_MODELS):
+        if norm in IGNORED_EXACT:
+            continue
+        if any(ign in norm for ign in IGNORED_SUBSTRINGS):
             continue
         
         # Prefer the one with underscores if conflict (arbitrary but consistent)
@@ -287,8 +292,8 @@ def main():
                 if t in type_ci[model]:
                     ci_low, ci_high = type_ci[model][t]
                     score = type_scores[model].get(t, 0)
-                    yerr_lower.append(score - ci_low)
-                    yerr_upper.append(ci_high - score)
+                    yerr_lower.append(max(0, score - ci_low))
+                    yerr_upper.append(max(0, ci_high - score))
                 else:
                     yerr_lower.append(0)
                     yerr_upper.append(0)

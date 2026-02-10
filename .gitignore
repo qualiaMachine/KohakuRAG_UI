@@ -4,6 +4,11 @@
 .env
 .env.local
 
+# CONFIDENTIAL: WattBot competition test solutions -- DO NOT COMMIT
+# Chris may reuse this for future competitions
+test_solutions.csv
+**/test_solutions.csv
+
 # Claude Code artifacts
 .claude/
 *.jsonl

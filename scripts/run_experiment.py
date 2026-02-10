@@ -19,9 +19,18 @@ import argparse
 import asyncio
 import csv
 import importlib.util
+import io
 import json
+import os
 import sys
 import time
+
+# Fix Windows console encoding -- GPT-OSS and other models can return Unicode
+# characters that the default Windows codepage (cp1252) can't handle
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -112,6 +121,9 @@ BEDROCK_PRICING = {
     "mistral-small": {"input": 0.10, "output": 0.30},
     # DeepSeek
     "deepseek": {"input": 1.35, "output": 5.40},       # DeepSeek R1 distill on Bedrock
+    # OpenAI GPT-OSS (open-weight, Aug 2025)
+    "gpt-oss-20b": {"input": 0.15, "output": 0.30},    # Very cheap, comparable to Nova Lite
+    "gpt-oss-120b": {"input": 0.30, "output": 0.60},   # ~half of Claude 3 Haiku
 }
 
 
@@ -510,7 +522,8 @@ class ExperimentRunner:
 # Main
 # =============================================================================
 
-async def main(config_path: str, experiment_name: str | None = None) -> None:
+async def main(config_path: str, experiment_name: str | None = None,
+               questions_override: str | None = None) -> None:
     """Run an experiment with the given config."""
     config = load_config(config_path)
     config["_config_path"] = config_path
@@ -524,9 +537,14 @@ async def main(config_path: str, experiment_name: str | None = None) -> None:
 
     output_dir = Path(__file__).parent.parent / "artifacts" / "experiments" / experiment_name
 
-    # Load questions
+    # Load questions (CLI override takes precedence over config)
     project_root = Path(__file__).parent.parent
-    questions_path = project_root / config.get("questions", "data/train_QA.csv").lstrip("../")
+    if questions_override:
+        questions_path = Path(questions_override)
+        if not questions_path.is_absolute():
+            questions_path = project_root / questions_path
+    else:
+        questions_path = project_root / config.get("questions", "data/train_QA.csv").lstrip("../")
     questions_df = pd.read_csv(questions_path)
     print(f"Loaded {len(questions_df)} questions from {questions_path}")
 
@@ -575,9 +593,14 @@ def cli():
         default=None,
         help="Experiment name (default: auto-generated from model + timestamp)"
     )
+    parser.add_argument(
+        "--questions", "-q",
+        default=None,
+        help="Override questions CSV path (default: from config)"
+    )
 
     args = parser.parse_args()
-    asyncio.run(main(args.config, args.name))
+    asyncio.run(main(args.config, args.name, args.questions))
 
 
 if __name__ == "__main__":

@@ -53,6 +53,8 @@ MODEL_SIZES = {
     "llama4-maverick-17b": ("Llama 4 Maverick", 17, False, "17B active, 400B total MoE"),
     "mistral-small": ("Mistral Small", 24, False, "Open-source, confirmed 24B"),
     "deepseek": ("DeepSeek R1 (distill)", 70, False, "Llama 70B distill variant"),
+    "gpt-oss-20b": ("GPT-OSS 20B", 20, False, "OpenAI open-weight, confirmed 20B"),
+    "gpt-oss-120b": ("GPT-OSS 120B", 120, False, "OpenAI open-weight, confirmed 120B"),
 }
 
 
@@ -166,6 +168,7 @@ def load_experiments(experiments_dir: Path, name_filter: str | None = None) -> l
 FAMILY_COLORS = {
     "Claude": "#6366f1",      # Indigo
     "Llama": "#f59e0b",       # Amber
+    "GPT": "#22c55e",         # Green
     "Mistral": "#10b981",     # Emerald
     "DeepSeek": "#ef4444",    # Red
     "Nova": "#ec4899",        # Pink

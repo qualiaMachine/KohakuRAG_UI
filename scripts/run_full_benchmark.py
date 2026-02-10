@@ -37,13 +37,16 @@ MODELS = {
     "bedrock_llama3_70b": "llama3-70b-bench",
     "bedrock_llama4_scout": "llama4-scout-bench",
     "bedrock_llama4_maverick": "llama4-maverick-bench",
-    "bedrock_nova_pro": "nova-pro-bench",
     "bedrock_deepseek_v3": "deepseek-r1-bench",
+    "bedrock_gpt_oss_20b": "gpt-oss-20b-bench",
+    "bedrock_gpt_oss_120b": "gpt-oss-120b-bench",
+    # NOTE: bedrock_nova_pro dropped per Chris (slow + worst performer)
     # NOTE: bedrock_mistral_small excluded -- model not available in this account
 }
 
 
-def run_experiment(config_name: str, experiment_name: str, limit: int | None = None) -> tuple[bool, str]:
+def run_experiment(config_name: str, experiment_name: str,
+                   questions_path: str | None = None) -> tuple[bool, str]:
     """Run a single experiment. Returns (success, output_summary)."""
     config_path = f"configs/{config_name}.py"
 
@@ -56,12 +59,15 @@ def run_experiment(config_name: str, experiment_name: str, limit: int | None = N
         "--name", experiment_name,
     ]
 
+    if questions_path:
+        cmd.extend(["--questions", questions_path])
+
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=600,  # 10 minute timeout per model
+            timeout=1800,  # 30 minute timeout per model (needed for 282-question test set)
         )
 
         # Extract key metrics from output
@@ -100,6 +106,14 @@ def main():
         "--model", type=str, default=None,
         help="Run only a specific model (e.g., 'haiku', 'sonnet')",
     )
+    parser.add_argument(
+        "--questions", "-q", type=str, default=None,
+        help="Override questions CSV path (e.g., path/to/test_solutions.csv)",
+    )
+    parser.add_argument(
+        "--suffix", type=str, default="bench",
+        help="Experiment name suffix (default: 'bench'). Use 'test' for test set runs.",
+    )
     args = parser.parse_args()
 
     # Filter models if specific one requested
@@ -112,9 +126,14 @@ def main():
                 print(f"  {k}")
             return
 
+    # Override experiment names with custom suffix
+    if args.suffix != "bench":
+        models = {k: v.replace("-bench", f"-{args.suffix}") for k, v in models.items()}
+
     mode = "SMOKE TEST" if args.smoke_test else "FULL BENCHMARK"
+    q_info = f" | questions: {args.questions}" if args.questions else ""
     print(f"{'='*70}")
-    print(f"{mode}: {len(models)} models")
+    print(f"{mode}: {len(models)} models{q_info}")
     print(f"{'='*70}\n")
 
     results = {}
@@ -127,7 +146,7 @@ def main():
         print(f"[{i}/{len(models)}] {config_name} -> {exp_name}")
         start = time.time()
 
-        success, summary = run_experiment(config_name, exp_name)
+        success, summary = run_experiment(config_name, exp_name, args.questions)
         elapsed = time.time() - start
 
         status = "PASS" if success else "FAIL"
