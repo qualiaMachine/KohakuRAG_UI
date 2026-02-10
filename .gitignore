@@ -26,6 +26,8 @@ Thumbs.db
 
 # Test dataset (secret — not committed to repo)
 data/test_solutions.csv
+data/corpus/
+data/pdfs/
 
 # Experiment outputs (large, machine-specific)
 artifacts/raw_pdfs/
