@@ -69,6 +69,10 @@ MODEL_SIZES = {
     "phi-3.5-mini": ("Phi-3.5 Mini", 3.8, False, "Open-source, confirmed 3.8B"),
     "gemma-2-9b": ("Gemma 2 9B", 9, False, "Open-source, confirmed 9B"),
     "gemma-2-2b": ("Gemma 2 2B", 2, False, "Open-source, confirmed 2B"),
+    "mixtral-8x7b": ("Mixtral 8x7B", 13, False, "13B active, 46.7B total MoE"),
+    "mixtral-8x22b": ("Mixtral 8x22B", 39, False, "39B active, 141B total MoE"),
+    "qwen3-30b-a3b": ("Qwen3 30B-A3B", 3, False, "3B active, 30B total MoE"),
+    "olmoe-1b-7b": ("OLMoE 1B-7B", 1, False, "1B active, 7B total MoE"),
 }
 
 

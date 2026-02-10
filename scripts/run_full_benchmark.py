@@ -55,6 +55,9 @@ HF_LOCAL_MODELS = {
     # "hf_gemma2_9b": "gemma2-9b-bench",     # gated — needs HF_TOKEN
     # "hf_gemma2_27b": "gemma2-27b-bench",   # gated — needs HF_TOKEN
     "hf_mixtral_8x7b": "mixtral-8x7b-bench",
+    "hf_mixtral_8x22b": "mixtral-8x22b-bench",
+    "hf_qwen3_30b_a3b": "qwen3-30b-a3b-bench",
+    "hf_olmoe_1b7b": "olmoe-1b7b-bench",
 }
 
 # AWS Bedrock models (requires llm_bedrock module + AWS credentials)
@@ -206,6 +209,11 @@ def main():
         "--force", action="store_true",
         help="Re-run experiments even if results already exist",
     )
+    parser.add_argument(
+        "--split", type=str, default=None,
+        help="Append a suffix to experiment names (e.g. --split test → qwen7b-bench-test). "
+             "Use this to run on a different question set without overwriting existing results.",
+    )
     args = parser.parse_args()
 
     # Select model set
@@ -255,6 +263,8 @@ def main():
     for i, (config_name, exp_name) in enumerate(available_models.items(), 1):
         if args.smoke_test:
             exp_name = f"{exp_name}-smoke"
+        if args.split:
+            exp_name = f"{exp_name}-{args.split}"
 
         print(f"[{i}/{len(available_models)}] {config_name} -> {exp_name}")
 
