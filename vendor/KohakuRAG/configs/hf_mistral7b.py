@@ -1,7 +1,7 @@
 """
 WattBot Evaluation Config - Mistral 7B Instruct v0.3 (Local HF)
 
-Mistral 7B Instruct v0.3. Runs on a single GPU with ~16GB VRAM (bf16).
+Mistral 7B Instruct v0.3. Runs on a single GPU with ~6GB VRAM (4-bit NF4).
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_mistral7b.py
@@ -19,7 +19,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Mistral 7B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "mistralai/Mistral-7B-Instruct-v0.3"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

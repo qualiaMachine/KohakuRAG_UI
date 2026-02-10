@@ -1,7 +1,7 @@
 """
 WattBot Evaluation Config - Phi-3.5 Mini Instruct (Local HF)
 
-Microsoft's Phi-3.5 Mini Instruct (3.8B). Very efficient, runs on ~8GB VRAM.
+Microsoft's Phi-3.5 Mini Instruct (3.8B). Very efficient, runs on ~3GB VRAM (4-bit NF4).
 Good for quick testing or as a lightweight baseline.
 
 Usage:
@@ -20,7 +20,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Phi-3.5 Mini Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "microsoft/Phi-3.5-mini-instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

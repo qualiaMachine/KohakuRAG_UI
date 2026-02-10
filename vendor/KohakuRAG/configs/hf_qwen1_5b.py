@@ -1,7 +1,7 @@
 """
 WattBot Evaluation Config - Qwen 2.5 1.5B Instruct (Local HF)
 
-Qwen 2.5 1.5B is a lightweight model that can run on limited GPU VRAM (~4GB bf16).
+Qwen 2.5 1.5B is a lightweight model that can run on limited GPU VRAM (~2GB 4-bit NF4).
 Good as a fast baseline or for testing the pipeline quickly.
 
 Usage:
@@ -21,7 +21,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Qwen 2.5 1.5B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "Qwen/Qwen2.5-1.5B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

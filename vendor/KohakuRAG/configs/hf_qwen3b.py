@@ -1,7 +1,7 @@
 """
 WattBot Evaluation Config - Qwen 2.5 3B Instruct (Local HF)
 
-Qwen 2.5 3B sits between 1.5B and 7B. Runs on ~8GB VRAM (bf16).
+Qwen 2.5 3B sits between 1.5B and 7B. Runs on ~3GB VRAM (4-bit NF4).
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen3b.py
@@ -19,7 +19,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Qwen 2.5 3B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "Qwen/Qwen2.5-3B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

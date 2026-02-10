@@ -1,9 +1,8 @@
 """
 WattBot Evaluation Config - Gemma 2 27B Instruct (Local HF)
 
-Google's Gemma 2 27B instruction-tuned model. Requires ~55GB VRAM (bf16),
-so needs multi-GPU (2x A6000) or a single 80GB GPU. device_map="auto"
-handles GPU sharding.
+Google's Gemma 2 27B instruction-tuned model. Requires ~18GB VRAM (4-bit NF4).
+device_map="auto" handles GPU sharding if needed.
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_gemma2_27b.py
@@ -21,7 +20,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Gemma 2 27B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "google/gemma-2-27b-it"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

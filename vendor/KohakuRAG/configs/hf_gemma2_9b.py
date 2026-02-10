@@ -2,7 +2,7 @@
 WattBot Evaluation Config - Gemma 2 9B Instruct (Local HF)
 
 Google's Gemma 2 9B instruction-tuned model. Strong reasoning for its size.
-Runs on a single GPU with ~20GB VRAM (bf16).
+Runs on a single GPU with ~7GB VRAM (4-bit NF4).
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_gemma2_9b.py
@@ -20,7 +20,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Gemma 2 9B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "google/gemma-2-9b-it"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

@@ -1,7 +1,7 @@
 """
 WattBot Evaluation Config - Llama 3.1 8B Instruct (Local HF)
 
-Meta's Llama 3.1 8B Instruct. Runs on a single GPU with ~18GB VRAM (bf16).
+Meta's Llama 3.1 8B Instruct. Runs on a single GPU with ~6GB VRAM (4-bit NF4).
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_llama3_8b.py
@@ -19,7 +19,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Llama 3.1 8B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "meta-llama/Llama-3.1-8B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

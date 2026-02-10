@@ -2,18 +2,11 @@
 WattBot Evaluation Config - Qwen 2.5 72B Instruct (Local HF)
 
 Qwen 2.5 72B is the largest dense model in the Qwen 2.5 family.
-In bf16 it requires ~140GB VRAM, so it needs multi-GPU (e.g., 2x A100-80GB
-or 4x A6000-48GB). With 4-bit quantization it fits in ~40GB (1x A100 or
-2x A6000).
-
+With 4-bit NF4 quantization it fits in ~40GB VRAM.
 device_map="auto" handles multi-GPU sharding automatically.
 
 Usage:
-    # bf16 (needs ~140GB total VRAM)
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen72b.py
-
-    # 4-bit quantized (needs ~40GB total VRAM)
-    python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen72b_4bit.py
 """
 
 # Database settings
@@ -28,7 +21,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Qwen 2.5 72B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "Qwen/Qwen2.5-72B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 
