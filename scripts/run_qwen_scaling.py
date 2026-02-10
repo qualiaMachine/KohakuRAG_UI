@@ -2,38 +2,30 @@
 """
 Qwen Model Size Scaling Experiment
 
-Runs the WattBot RAG pipeline with Qwen 2.5 models at different sizes
-(1.5B, 3B, 7B, 14B, 32B) to measure how performance scales with model
-size. Collects hardware metrics (VRAM, energy, disk) at each point.
+Collects existing Qwen experiment results and generates a scaling comparison
+table. Optionally runs missing sizes that haven't been benchmarked yet.
 
-Each model is run sequentially (GPU memory is freed between runs) to get
-clean measurements. Results are saved per-model AND as a combined
-comparison CSV for easy analysis.
+Results are read from the standard experiment directory layout
+(artifacts/experiments/ or artifacts/experiments/<env>/) — the same results
+produced by run_experiment.py and run_full_benchmark.py. No duplicate
+experiment directory is created.
 
 Usage:
-    # Run all Qwen sizes that fit on your GPU
-    python scripts/run_qwen_scaling.py
+    # Collect existing results and produce comparison table
+    python scripts/run_qwen_scaling.py --env PowerEdge
 
-    # Specify which sizes to run
-    python scripts/run_qwen_scaling.py --sizes 1.5 3 7
+    # Also run any missing sizes that fit in VRAM
+    python scripts/run_qwen_scaling.py --env PowerEdge --run-missing
 
-    # Skip models already run (resume mode)
-    python scripts/run_qwen_scaling.py --skip-existing
+    # Specify which sizes to include
+    python scripts/run_qwen_scaling.py --sizes 1.5 3 7 --env PowerEdge
 
-    # Dry run (just show what would run)
-    python scripts/run_qwen_scaling.py --dry-run
+    # Dry run (show what would run)
+    python scripts/run_qwen_scaling.py --run-missing --dry-run --env PowerEdge
 
 Output:
-    artifacts/experiments/qwen-scaling/
-    ├── qwen1.5b/             # Per-model experiment dirs
-    │   ├── submission.csv
-    │   ├── results.json
-    │   └── summary.json      # Includes hardware metrics
-    ├── qwen3b/
-    ├── qwen7b/
-    ├── qwen14b/
-    ├── qwen32b/
-    └── scaling_comparison.csv  # Combined comparison table
+    artifacts/experiments/<env>/qwen_scaling_comparison.csv
+    artifacts/experiments/<env>/qwen_scaling_comparison.json
 """
 
 import argparse
@@ -45,6 +37,8 @@ import sys
 import time
 from pathlib import Path
 
+EXPERIMENTS_BASE = Path("artifacts/experiments")
+
 # =============================================================================
 # Qwen Model Registry
 # =============================================================================
@@ -52,42 +46,42 @@ from pathlib import Path
 QWEN_MODELS = {
     "1.5": {
         "config": "vendor/KohakuRAG/configs/hf_qwen1_5b.py",
-        "name": "qwen1.5b",
+        "bench_name": "qwen1.5b-bench",
         "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
         "params_b": 1.5,
         "approx_vram_gb": 2,
     },
     "3": {
         "config": "vendor/KohakuRAG/configs/hf_qwen3b.py",
-        "name": "qwen3b",
+        "bench_name": "qwen3b-bench",
         "model_id": "Qwen/Qwen2.5-3B-Instruct",
         "params_b": 3,
         "approx_vram_gb": 3,
     },
     "7": {
         "config": "vendor/KohakuRAG/configs/hf_qwen7b.py",
-        "name": "qwen7b",
+        "bench_name": "qwen7b-bench",
         "model_id": "Qwen/Qwen2.5-7B-Instruct",
         "params_b": 7,
         "approx_vram_gb": 6,
     },
     "14": {
         "config": "vendor/KohakuRAG/configs/hf_qwen14b.py",
-        "name": "qwen14b",
+        "bench_name": "qwen14b-bench",
         "model_id": "Qwen/Qwen2.5-14B-Instruct",
         "params_b": 14,
         "approx_vram_gb": 10,
     },
     "32": {
         "config": "vendor/KohakuRAG/configs/hf_qwen32b.py",
-        "name": "qwen32b",
+        "bench_name": "qwen32b-bench",
         "model_id": "Qwen/Qwen2.5-32B-Instruct",
         "params_b": 32,
         "approx_vram_gb": 20,
     },
     "72": {
         "config": "vendor/KohakuRAG/configs/hf_qwen72b.py",
-        "name": "qwen72b",
+        "bench_name": "qwen72b-bench",
         "model_id": "Qwen/Qwen2.5-72B-Instruct",
         "params_b": 72,
         "approx_vram_gb": 40,
@@ -115,22 +109,41 @@ def get_available_vram_gb() -> float:
     return 0.0
 
 
-def run_single_model(config_path: str, experiment_name: str, env: str = "",
+def find_existing_summary(bench_name: str, env: str = "") -> dict | None:
+    """Search for an existing summary.json matching this bench name."""
+    # Try env-specific path first, then flat
+    candidates = []
+    if env:
+        candidates.append(EXPERIMENTS_BASE / env / bench_name / "summary.json")
+    candidates.append(EXPERIMENTS_BASE / bench_name / "summary.json")
+
+    for path in candidates:
+        if path.exists():
+            with open(path) as f:
+                return json.load(f)
+
+    # Fallback: search recursively for any match
+    for path in EXPERIMENTS_BASE.glob(f"**/{bench_name}/summary.json"):
+        with open(path) as f:
+            return json.load(f)
+
+    return None
+
+
+def run_single_model(config_path: str, bench_name: str, env: str = "",
                      precision: str = "4bit") -> tuple[bool, dict | None]:
     """Run a single experiment via subprocess, return (success, summary_dict)."""
-    output_dir = Path("artifacts/experiments/qwen-scaling") / experiment_name
-
     cmd = [
         sys.executable, "scripts/run_experiment.py",
         "--config", config_path,
-        "--name", f"qwen-scaling/{experiment_name}",
+        "--name", bench_name,
         "--precision", precision,
     ]
     if env:
         cmd.extend(["--env", env])
 
     print(f"\n{'='*70}")
-    print(f"Running: {experiment_name} ({config_path})")
+    print(f"Running: {bench_name} ({config_path})")
     print(f"{'='*70}")
 
     start = time.time()
@@ -144,21 +157,19 @@ def run_single_model(config_path: str, experiment_name: str, env: str = "",
         success = result.returncode == 0
 
         if success:
-            summary_path = output_dir / "summary.json"
-            if summary_path.exists():
-                with open(summary_path) as f:
-                    summary = json.load(f)
-                print(f"\n[OK] {experiment_name} completed in {elapsed:.0f}s (score: {summary.get('overall_score', 0):.3f})")
+            summary = find_existing_summary(bench_name, env)
+            if summary:
+                print(f"\n[OK] {bench_name} completed in {elapsed:.0f}s (score: {summary.get('overall_score', 0):.3f})")
                 return True, summary
             else:
-                print(f"\n[WARN] {experiment_name} completed but no summary.json found")
+                print(f"\n[WARN] {bench_name} completed but no summary.json found")
                 return True, None
         else:
-            print(f"\n[FAIL] {experiment_name} failed after {elapsed:.0f}s")
+            print(f"\n[FAIL] {bench_name} failed after {elapsed:.0f}s")
             return False, None
 
     except subprocess.TimeoutExpired:
-        print(f"\n[TIMEOUT] {experiment_name} exceeded 1 hour")
+        print(f"\n[TIMEOUT] {bench_name} exceeded 1 hour")
         return False, None
 
 
@@ -242,7 +253,7 @@ def print_comparison_table(summaries: dict):
         s = summaries[size_key]
         if s is None:
             model_name = QWEN_MODELS.get(size_key, {}).get("model_id", f"Qwen {size_key}B")
-            print(f"{model_name:<30s} {'FAILED':>7s}")
+            print(f"{model_name:<30s} {'--':>7s}")
             continue
 
         hw = s.get("hardware", {})
@@ -263,16 +274,16 @@ def print_comparison_table(summaries: dict):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run Qwen model size scaling experiment",
+        description="Qwen model size scaling comparison",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--sizes", nargs="+", default=None,
-        help="Which sizes to run (e.g., 1.5 3 7). Default: all that fit in VRAM.",
+        help="Which sizes to include (e.g., 1.5 3 7). Default: all.",
     )
     parser.add_argument(
-        "--skip-existing", action="store_true",
-        help="Skip models that already have a summary.json",
+        "--run-missing", action="store_true",
+        help="Run experiments for sizes that don't have existing results",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -284,7 +295,7 @@ def main():
     )
     parser.add_argument(
         "--env", "-e", default="",
-        help="Run environment label (e.g. 'GB10', 'PowerEdge') for cross-machine comparison",
+        help="Run environment label (e.g. 'GB10', 'PowerEdge')",
     )
     parser.add_argument(
         "--precision", "-p", default="4bit",
@@ -294,107 +305,99 @@ def main():
 
     args = parser.parse_args()
 
-    # Determine which sizes to run
+    # Determine which sizes to include
     if args.sizes:
-        sizes_to_run = [s for s in args.sizes if s in QWEN_MODELS]
-        if not sizes_to_run:
+        sizes = [s for s in args.sizes if s in QWEN_MODELS]
+        if not sizes:
             print(f"No valid sizes. Choose from: {list(QWEN_MODELS.keys())}")
             return
     else:
-        sizes_to_run = list(QWEN_MODELS.keys())
+        sizes = list(QWEN_MODELS.keys())
 
-    # Check available VRAM
-    available_vram = get_available_vram_gb()
-    if available_vram > 0 and not args.force_all:
-        print(f"Available VRAM: ~{available_vram:.1f} GB")
-        # Filter to models that likely fit (with some headroom)
-        original = len(sizes_to_run)
-        sizes_to_run = [
-            s for s in sizes_to_run
-            if QWEN_MODELS[s]["approx_vram_gb"] <= available_vram * 0.95
-        ]
-        if len(sizes_to_run) < original:
-            skipped = original - len(sizes_to_run)
-            print(f"Skipping {skipped} model(s) that likely won't fit. Use --force-all to override.")
-
-    # Check for existing results
-    scaling_dir = Path("artifacts/experiments/qwen-scaling")
-    if args.skip_existing:
-        original = len(sizes_to_run)
-        sizes_to_run = [
-            s for s in sizes_to_run
-            if not (scaling_dir / QWEN_MODELS[s]["name"] / "summary.json").exists()
-        ]
-        skipped = original - len(sizes_to_run)
-        if skipped:
-            print(f"Skipping {skipped} model(s) with existing results.")
-
-    # Check configs exist
-    missing = [s for s in sizes_to_run if not Path(QWEN_MODELS[s]["config"]).exists()]
-    if missing:
-        print(f"Missing config files for sizes: {missing}")
-        sizes_to_run = [s for s in sizes_to_run if s not in missing]
-
-    if not sizes_to_run:
-        print("No models to run!")
-        return
-
-    print(f"\nModels to run: {[QWEN_MODELS[s]['name'] for s in sizes_to_run]}")
-    print(f"Results will be saved to: {scaling_dir}/")
-
-    if args.dry_run:
-        print("\n[DRY RUN] Would run the above models. Exiting.")
-        return
-
-    # Run each model sequentially
+    # Collect existing results
     summaries = {}
-    total_start = time.time()
+    missing_sizes = []
 
-    for size_key in sorted(sizes_to_run, key=_sort_key):
+    for size_key in sizes:
         model_info = QWEN_MODELS[size_key]
-        success, summary = run_single_model(model_info["config"], model_info["name"],
-                                            env=args.env, precision=args.precision)
-        summaries[size_key] = summary
+        summary = find_existing_summary(model_info["bench_name"], args.env)
+        if summary:
+            summaries[size_key] = summary
+            print(f"  [FOUND] {model_info['bench_name']}: score={summary.get('overall_score', 0):.3f}")
+        else:
+            summaries[size_key] = None
+            missing_sizes.append(size_key)
+            print(f"  [MISSING] {model_info['bench_name']}")
 
-        # Force garbage collection between models to free VRAM
-        gc.collect()
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except (ImportError, RuntimeError):
-            pass
+    print(f"\nFound {len(sizes) - len(missing_sizes)}/{len(sizes)} Qwen results")
 
-    total_elapsed = time.time() - total_start
+    # Optionally run missing sizes
+    if missing_sizes and args.run_missing:
+        # Check available VRAM
+        available_vram = get_available_vram_gb()
+        if available_vram > 0 and not args.force_all:
+            print(f"Available VRAM: ~{available_vram:.1f} GB")
+            runnable = [
+                s for s in missing_sizes
+                if QWEN_MODELS[s]["approx_vram_gb"] <= available_vram * 0.95
+            ]
+            skipped_vram = len(missing_sizes) - len(runnable)
+            if skipped_vram:
+                print(f"Skipping {skipped_vram} model(s) that likely won't fit. Use --force-all to override.")
+            missing_sizes = runnable
 
-    # Load any existing results we skipped
-    if args.skip_existing:
-        for size_key, model_info in QWEN_MODELS.items():
-            if size_key not in summaries:
-                summary_path = scaling_dir / model_info["name"] / "summary.json"
-                if summary_path.exists():
-                    with open(summary_path) as f:
-                        summaries[size_key] = json.load(f)
+        # Check configs exist
+        missing_configs = [s for s in missing_sizes if not Path(QWEN_MODELS[s]["config"]).exists()]
+        if missing_configs:
+            print(f"Missing config files for sizes: {missing_configs}")
+            missing_sizes = [s for s in missing_sizes if s not in missing_configs]
+
+        if missing_sizes:
+            print(f"\nWill run: {[QWEN_MODELS[s]['bench_name'] for s in missing_sizes]}")
+
+            if args.dry_run:
+                print("[DRY RUN] Would run the above models. Exiting.")
+            else:
+                for size_key in sorted(missing_sizes, key=_sort_key):
+                    model_info = QWEN_MODELS[size_key]
+                    success, summary = run_single_model(
+                        model_info["config"], model_info["bench_name"],
+                        env=args.env, precision=args.precision,
+                    )
+                    summaries[size_key] = summary
+
+                    # Free VRAM between models
+                    gc.collect()
+                    try:
+                        import torch
+                        torch.cuda.empty_cache()
+                    except (ImportError, RuntimeError):
+                        pass
+    elif missing_sizes and not args.run_missing:
+        print(f"\n{len(missing_sizes)} size(s) missing. Use --run-missing to run them.")
 
     # Generate comparison outputs
-    comparison_csv = scaling_dir / "scaling_comparison.csv"
+    found = {k: v for k, v in summaries.items() if v is not None}
+    if not found:
+        print("\nNo results to compare.")
+        return
+
+    output_dir = EXPERIMENTS_BASE / args.env if args.env else EXPERIMENTS_BASE
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    comparison_csv = output_dir / "qwen_scaling_comparison.csv"
     generate_comparison_csv(summaries, comparison_csv)
 
-    # Also save as JSON for programmatic access
-    comparison_json = scaling_dir / "scaling_comparison.json"
+    comparison_json = output_dir / "qwen_scaling_comparison.json"
     with open(comparison_json, "w") as f:
         json.dump(summaries, f, indent=2)
     print(f"Comparison JSON saved to: {comparison_json}")
 
-    # Print table
     print_comparison_table(summaries)
 
-    passed = sum(1 for s in summaries.values() if s is not None)
-    failed = sum(1 for s in summaries.values() if s is None)
-    print(f"\nTotal time: {total_elapsed:.0f}s ({total_elapsed/60:.1f} min)")
-    print(f"Passed: {passed}, Failed: {failed}")
-
-    if failed:
-        sys.exit(1)
+    found_count = len(found)
+    missing_count = sum(1 for v in summaries.values() if v is None)
+    print(f"\nFound: {found_count}, Missing: {missing_count}")
 
 
 if __name__ == "__main__":

@@ -56,7 +56,9 @@ def main():
         default=[
             "artifacts/submission_*.csv",
             "artifacts/experiments/*/submission.csv",
-            "artifacts/experiments/*/*.csv"
+            "artifacts/experiments/*/*.csv",
+            "artifacts/experiments/*/*/submission.csv",
+            "artifacts/experiments/*/*/*.csv",
         ],
         help="List of submission CSV files (supports glob patterns)"
     )

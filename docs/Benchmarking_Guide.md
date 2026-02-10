@@ -573,38 +573,39 @@ To measure how WattBot performance scales with model size (keeping
 everything else constant), there's a dedicated script:
 
 ```bash
-# Run all Qwen sizes that fit in your GPU (always tag the machine!)
-python scripts/run_qwen_scaling.py --env GB10
+# Collect existing Qwen results into a comparison table
+python scripts/run_qwen_scaling.py --env PowerEdge
 
-# Run specific sizes only
+# Also run any missing sizes that fit in VRAM
+python scripts/run_qwen_scaling.py --env PowerEdge --run-missing
+
+# Specific sizes only
 python scripts/run_qwen_scaling.py --sizes 1.5 3 7 --env PowerEdge
 
-# Skip sizes already run (resume after crash)
-python scripts/run_qwen_scaling.py --skip-existing --env GB10
+# Dry run (show what would run)
+python scripts/run_qwen_scaling.py --run-missing --dry-run --env PowerEdge
 
-# See what would run without running
-python scripts/run_qwen_scaling.py --dry-run
-
-# Run in bf16 (full precision) instead of default 4-bit
-python scripts/run_qwen_scaling.py --precision bf16 --env PowerEdge
+# Run in bf16 instead of default 4-bit
+python scripts/run_qwen_scaling.py --run-missing --precision bf16 --env PowerEdge
 ```
 
 Available Qwen sizes (4-bit VRAM): 1.5B (~2GB), 3B (~3GB), 7B (~6GB), 14B (~10GB),
 32B (~20GB), 72B (~40GB). Pass `--precision bf16` for full precision (roughly 4× more).
 
 The script:
-- Runs models **sequentially** (frees GPU between runs for clean measurements)
+- **Reuses existing results** from `run_full_benchmark.py` — no duplicate runs
+- Optionally runs missing sizes with `--run-missing` (sequential, frees GPU between runs)
 - Auto-skips models that won't fit in available VRAM
-- Produces per-model results + a combined comparison table
+- Produces a combined comparison table (CSV + JSON)
 
 Output:
 ```
-artifacts/experiments/qwen-scaling/
-├── qwen1.5b/submission.csv, results.json, summary.json
-├── qwen3b/...
-├── qwen7b/...
-├── scaling_comparison.csv    ← side-by-side comparison
-└── scaling_comparison.json   ← same data, for notebooks
+artifacts/experiments/<env>/
+├── qwen1.5b-bench/...                  ← standard experiment results
+├── qwen3b-bench/...
+├── qwen7b-bench/...
+├── qwen_scaling_comparison.csv         ← side-by-side comparison
+└── qwen_scaling_comparison.json        ← same data, for notebooks
 ```
 
 The `scaling_comparison.csv` has columns for scores, latency, VRAM, disk
