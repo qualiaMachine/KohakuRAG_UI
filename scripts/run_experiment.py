@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import Any
 
 # Add paths for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "KohakuRAG" / "src"))
+_repo_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_repo_root / "vendor" / "KohakuRAG" / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 import pandas as pd
@@ -334,7 +334,8 @@ class ExperimentRunner:
         """Initialize the RAG pipeline with config settings."""
         project_root = Path(__file__).parent.parent
 
-        db_path = project_root / self.config.get("db", "artifacts/wattbot_jinav4.db").lstrip("../")
+        db_raw = self.config.get("db", "artifacts/wattbot_jinav4.db")
+        db_path = project_root / db_raw.removeprefix("../").removeprefix("../")
         if not db_path.exists():
             raise FileNotFoundError(f"Database not found: {db_path}")
 
@@ -572,7 +573,8 @@ async def main(config_path: str, experiment_name: str | None = None) -> None:
 
     # Load questions
     project_root = Path(__file__).parent.parent
-    questions_path = project_root / config.get("questions", "data/train_QA.csv").lstrip("../")
+    q_raw = config.get("questions", "data/train_QA.csv")
+    questions_path = project_root / q_raw.removeprefix("../").removeprefix("../")
     questions_df = pd.read_csv(questions_path)
     print(f"Loaded {len(questions_df)} questions from {questions_path}")
 

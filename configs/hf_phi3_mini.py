@@ -9,13 +9,13 @@ Usage:
 """
 
 # Database settings
-db = "../artifacts/wattbot_jinav4.db"
+db = "artifacts/wattbot_jinav4.db"
 table_prefix = "wattbot_jv4"
 
 # Input/output
-questions = "../data/train_QA.csv"
-output = "../artifacts/submission_phi3_mini.csv"
-metadata = "../data/metadata.csv"
+questions = "data/train_QA.csv"
+output = "artifacts/submission_phi3_mini.csv"
+metadata = "data/metadata.csv"
 
 # LLM settings - Phi-3.5 Mini Instruct (local)
 llm_provider = "hf_local"

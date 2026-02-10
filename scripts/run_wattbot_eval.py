@@ -40,8 +40,8 @@ from pathlib import Path
 from typing import Any
 
 # Add paths for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-sys.path.insert(0, str(Path(__file__).parent.parent / "KohakuRAG" / "src"))
+_repo_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_repo_root / "vendor" / "KohakuRAG" / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
 
 import pandas as pd

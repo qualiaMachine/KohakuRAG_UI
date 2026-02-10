@@ -10,13 +10,13 @@ Usage:
 """
 
 # Database settings
-db = "../artifacts/wattbot_jinav4.db"
+db = "artifacts/wattbot_jinav4.db"
 table_prefix = "wattbot_jv4"
 
 # Input/output
-questions = "../data/train_QA.csv"
-output = "../artifacts/submission_qwen1_5b.csv"
-metadata = "../data/metadata.csv"
+questions = "data/train_QA.csv"
+output = "artifacts/submission_qwen1_5b.csv"
+metadata = "data/metadata.csv"
 
 # LLM settings - Qwen 2.5 1.5B Instruct (local)
 llm_provider = "hf_local"
