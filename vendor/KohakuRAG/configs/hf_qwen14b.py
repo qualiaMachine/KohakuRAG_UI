@@ -1,7 +1,7 @@
 """
 WattBot Evaluation Config - Qwen 2.5 14B Instruct (Local HF)
 
-Qwen 2.5 14B. Requires ~30GB VRAM (bf16). Good for multi-GPU setups.
+Qwen 2.5 14B. Requires ~10GB VRAM (4-bit NF4).
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen14b.py
@@ -19,7 +19,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Qwen 2.5 14B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "Qwen/Qwen2.5-14B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

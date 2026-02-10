@@ -2,7 +2,7 @@
 WattBot Evaluation Config - Qwen 2.5 7B Instruct (Local HF)
 
 Qwen 2.5 7B is a strong open-source instruction-tuned model from Alibaba.
-Runs locally on a single GPU with ~16GB VRAM (bf16).
+Runs locally on a single GPU with ~6GB VRAM (4-bit NF4).
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen7b.py
@@ -21,7 +21,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Qwen 2.5 7B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "Qwen/Qwen2.5-7B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

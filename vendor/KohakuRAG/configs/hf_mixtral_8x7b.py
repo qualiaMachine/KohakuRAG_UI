@@ -3,7 +3,7 @@ WattBot Evaluation Config - Mixtral 8x7B Instruct (Local HF)
 
 Mistral's Mixture-of-Experts model (8 experts, 2 active per token).
 46.7B total parameters but only ~13B active per inference.
-Requires ~24GB VRAM (bf16) due to loading all expert weights.
+Requires ~14GB VRAM (4-bit NF4) due to loading all expert weights.
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_mixtral_8x7b.py
@@ -21,7 +21,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Mixtral 8x7B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 

@@ -1,8 +1,8 @@
 """
 WattBot Evaluation Config - Qwen 2.5 32B Instruct (Local HF)
 
-Qwen 2.5 32B. Requires ~65GB VRAM (bf16), so needs multi-GPU (2x A6000)
-or a single 80GB GPU (A100/H100). device_map="auto" handles GPU sharding.
+Qwen 2.5 32B. Requires ~20GB VRAM (4-bit NF4).
+device_map="auto" handles GPU sharding if needed.
 
 Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen32b.py
@@ -20,7 +20,7 @@ metadata = "../../data/metadata.csv"
 # LLM settings - Qwen 2.5 32B Instruct (local)
 llm_provider = "hf_local"
 hf_model_id = "Qwen/Qwen2.5-32B-Instruct"
-hf_dtype = "bf16"
+hf_dtype = "4bit"
 hf_max_new_tokens = 512
 hf_temperature = 0.2
 
