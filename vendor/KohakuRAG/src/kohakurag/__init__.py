@@ -6,9 +6,14 @@ from .datastore import (
     KVaultNodeStore,
     matches_to_snippets,
 )
-from .embeddings import EmbeddingModel, JinaEmbeddingModel, average_embeddings
+from .embeddings import (
+    EmbeddingModel,
+    JinaEmbeddingModel,
+    LocalHFEmbeddingModel,
+    average_embeddings,
+)
 from .indexer import DocumentIndexer
-from .llm import OpenAIChatModel
+from .llm import HuggingFaceLocalChatModel, OpenAIChatModel
 from .parsers import (
     dict_to_payload,
     markdown_to_payload,
@@ -41,9 +46,11 @@ __all__ = [
     "DocumentPayload",
     "EmbeddingModel",
     "HierarchicalNodeStore",
+    "HuggingFaceLocalChatModel",
     "InMemoryNodeStore",
     "KVaultNodeStore",
     "JinaEmbeddingModel",
+    "LocalHFEmbeddingModel",
     "MockChatModel",
     "NodeKind",
     "OpenAIChatModel",
