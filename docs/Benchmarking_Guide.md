@@ -10,24 +10,51 @@ All commands assume you are at the **repo root** with your venv active.
 ## 0) Prerequisites — Build the vector index
 
 Before running any experiments, you need a vector database. The config files
-reference `artifacts/wattbot_jinav4.db`, which is built by the KohakuRAG
-indexing pipeline.
+reference `artifacts/wattbot_jinav4.db`, which is built by the indexing pipeline.
+
+### Install dependencies
 
 ```bash
-# 1. Prepare documents: download PDFs and extract structured docs
-#    (see vendor/KohakuRAG/docs/wattbot.md for full details)
+uv pip install kohaku-engine==0.0.2   # config runner for indexing scripts
+```
 
-# 2. Build the JinaV4 index
+This is already listed in `local_requirements.txt`, so if you've run
+`uv pip install -r local_requirements.txt` it should be available.
+
+### Build the index with kogine
+
+```bash
+# From repo root — run the indexing script with JinaV4 config
 cd vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 cd ../..
 
-# 3. Verify the database exists
+# Verify the database was created
 ls -lh artifacts/wattbot_jinav4.db
 ```
 
-You also need `data/train_QA.csv` (the ground-truth question set) and
-`data/metadata.csv`. These should already be in the repo.
+This requires:
+- `data/metadata.csv` — document bibliography
+- `artifacts/docs/` or `artifacts/docs_with_images/` — structured JSON docs
+  from the PDF parsing pipeline (see `vendor/KohakuRAG/docs/wattbot.md`)
+
+### Alternative: standalone build script (no kogine)
+
+If you prefer not to install KohakuEngine:
+
+```bash
+# Full indexing
+python scripts/build_index.py --config vendor/KohakuRAG/configs/jinav4/index.py
+
+# Quick start with just metadata.csv (no parsed PDFs needed, lower quality)
+python scripts/build_index.py --config vendor/KohakuRAG/configs/jinav4/index.py --use-citations
+```
+
+### Data prerequisites
+
+You need `data/train_QA.csv` (the ground-truth question set) and
+`data/metadata.csv`. `train_QA.csv` should already be in the repo.
+For `metadata.csv`, see `vendor/KohakuRAG/docs/wattbot.md`.
 
 ---
 
@@ -481,6 +508,7 @@ KohakuRAG_UI/
 │   ├── hf_phi3_mini.py
 │   └── ...
 ├── scripts/                  # Benchmarking & analysis tools
+│   ├── build_index.py        # Build vector index (no kogine needed)
 │   ├── run_experiment.py     # Run one experiment (+ hardware metrics)
 │   ├── run_qwen_scaling.py   # Qwen size scaling experiment
 │   ├── run_full_benchmark.py # Run all models

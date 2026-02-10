@@ -195,13 +195,11 @@ class WattBotEvaluator:
             raise FileNotFoundError(
                 f"Vector database not found at {db_path}.\n\n"
                 f"The vector database must be built before running experiments.\n"
-                f"To build the index, run from the vendor/KohakuRAG directory:\n\n"
-                f"  cd vendor/KohakuRAG\n"
-                f"  kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py\n\n"
-                f"Or directly:\n\n"
-                f"  python vendor/KohakuRAG/scripts/wattbot_build_index.py\n\n"
-                f"This requires documents in artifacts/docs/ and metadata in data/metadata.csv.\n"
-                f"See vendor/KohakuRAG/docs/wattbot.md for details."
+                f"Run from the repo root:\n\n"
+                f"  python scripts/build_index.py --config vendor/KohakuRAG/configs/jinav4/index.py\n\n"
+                f"Or for a quick start using only metadata.csv (no parsed docs needed):\n\n"
+                f"  python scripts/build_index.py --config vendor/KohakuRAG/configs/jinav4/index.py --use-citations\n\n"
+                f"See docs/Benchmarking_Guide.md section 0 for full details."
             )
 
         provider = self.config.get("llm_provider", DEFAULT_PROVIDER)
