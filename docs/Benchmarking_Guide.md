@@ -231,14 +231,25 @@ inconsistencies, duplicate model runs.
 
 ## 5) Generating plots
 
-### Model size vs. performance (7 plots)
+### Generate all plots
 
 ```bash
-python scripts/plot_model_size.py
-# Output: artifacts/plots/size_vs_scores.png, overall_ranking.png, etc.
+# 1. Build the results matrix (required by plot_from_matrix.py)
+python scripts/generate_results_matrix.py
+
+# 2. Generate all plots
+python scripts/plot_model_size.py        # size/latency/cost vs. performance (7 plots)
+python scripts/plot_from_matrix.py       # matrix-based comparisons (6 plots)
+python scripts/plot_score_breakdown.py   # score component breakdown (1 plot)
 ```
 
-Plots generated:
+All output goes to `artifacts/plots/`.
+
+Ground truth is auto-detected: `data/test_solutions.csv` if present, otherwise
+`data/train_QA.csv`. Override with `--ground-truth <path>`.
+
+### plot_model_size.py — Size & scaling analysis (7 plots)
+
 1. **Size vs. Scores** — 4-panel (overall, value accuracy, ref overlap, NA)
 2. **Size vs. Latency** — per-question average
 3. **Size vs. Cost** — API cost (local models show $0)
@@ -249,21 +260,19 @@ Plots generated:
 
 Local HF models show as **squares**, API models as **circles**.
 
-### Results matrix plots (6 plots)
+### plot_from_matrix.py — Matrix-based comparisons (6 plots)
 
-```bash
-# First generate the matrix
-python scripts/generate_results_matrix.py
+1. **Overall scores** — bar chart with 95% CI
+2. **Accuracy by type** — Table / Figure / Quote / Math / NA breakdown
+3. **Agreement heatmap** — pairwise model agreement
+4. **Unique wins** — questions only one model got right
+5. **Refusal rates** — % of "unable to answer" responses
+6. **Cost vs. score** — scatter (requires summary.json cost data)
 
-# Then plot
-python scripts/plot_from_matrix.py
-```
+### plot_score_breakdown.py — Component breakdown (1 plot)
 
-### Score component breakdown
-
-```bash
-python scripts/plot_score_breakdown.py
-```
+Grouped bars showing Value Accuracy, Ref Overlap, and NA Recall per model
+with 95% Wilson CI error bars.
 
 ---
 
