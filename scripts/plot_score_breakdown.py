@@ -235,8 +235,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate score breakdown chart")
     parser.add_argument(
         "--ground-truth", "-g",
-        default="data/train_QA.csv",
-        help="Path to ground truth CSV",
+        default=None,
+        help="Path to ground truth CSV (auto-detects test_solutions.csv or train_QA.csv)",
     )
     parser.add_argument(
         "--experiments", "-e",
@@ -252,9 +252,16 @@ def main():
     args = parser.parse_args()
 
     project_root = Path(__file__).parent.parent
-    gt_path = project_root / args.ground_truth
     experiments_dir = project_root / args.experiments
     output_path = project_root / args.output
+
+    # Auto-detect ground truth: prefer test_solutions.csv, fall back to train_QA.csv
+    if args.ground_truth:
+        gt_path = project_root / args.ground_truth
+    else:
+        gt_path = project_root / "data" / "test_solutions.csv"
+        if not gt_path.exists():
+            gt_path = project_root / "data" / "train_QA.csv"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
