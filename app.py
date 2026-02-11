@@ -12,12 +12,16 @@ import asyncio
 import gc
 import importlib.util
 import json
+import logging
 import sys
 import time
+import traceback
 from collections import Counter
 from pathlib import Path
 
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -86,6 +90,12 @@ PRECISION_MULTIPLIER = {"4bit": 1.0, "bf16": 4.0, "fp16": 4.0, "auto": 4.0}
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
+def _debug(msg: str) -> None:
+    """Print debug info to terminal and, if debug mode is on, to the Streamlit UI."""
+    logger.info(msg)
+    print(f"[DEBUG] {msg}", flush=True)
+
+
 def discover_configs() -> dict[str, Path]:
     """Find all hf_*.py config files and return {display_name: path}."""
     return {p.stem: p for p in sorted(CONFIGS_DIR.glob("hf_*.py"))}
@@ -174,17 +184,35 @@ def plan_ensemble(config_names: list[str], precision: str, gpu_info: dict) -> di
 # ---------------------------------------------------------------------------
 def _load_shared_resources(config: dict) -> tuple[JinaV4EmbeddingModel, KVaultNodeStore]:
     """Load embedder and vector store from config."""
-    embedder = JinaV4EmbeddingModel(
-        task=config.get("embedding_task", "retrieval"),
-        truncate_dim=config.get("embedding_dim", 1024),
-    )
+    embedding_dim = config.get("embedding_dim", 1024)
+    embedding_task = config.get("embedding_task", "retrieval")
     db_raw = config.get("db", "data/embeddings/wattbot_jinav4.db")
     db_path = _repo_root / db_raw.removeprefix("../").removeprefix("../")
+    table_prefix = config.get("table_prefix", "wattbot_jv4")
+
+    _debug(
+        f"Loading shared resources:\n"
+        f"  db_path       = {db_path} (exists={db_path.exists()})\n"
+        f"  table_prefix  = {table_prefix}\n"
+        f"  embedding_dim = {embedding_dim}\n"
+        f"  embedding_task= {embedding_task}"
+    )
+
+    embedder = JinaV4EmbeddingModel(
+        task=embedding_task,
+        truncate_dim=embedding_dim,
+    )
+    _debug(f"Embedder loaded: dimension={embedder.dimension}")
+
     store = KVaultNodeStore(
         db_path,
-        table_prefix=config.get("table_prefix", "wattbot_jv4"),
-        dimensions=config.get("embedding_dim", 1024),
+        table_prefix=table_prefix,
+        dimensions=embedding_dim,
         paragraph_search_mode="averaged",
+    )
+    _debug(
+        f"Store opened: dimensions={store._dimensions}, "
+        f"vec_count={store._vectors.info().get('count', '?')}"
     )
     return embedder, store
 
@@ -471,8 +499,12 @@ def main():
                     tuple(selected_configs), precision,
                 )
             # sequential doesn't pre-load models
-    except FileNotFoundError as e:
-        st.error(str(e))
+    except Exception as e:
+        st.error(f"Failed to load pipeline: {e}")
+        tb = traceback.format_exc()
+        _debug(f"Load error:\n{tb}")
+        with st.expander("Full traceback"):
+            st.code(tb, language="python")
         return
 
     # ---- Chat interface ----
@@ -501,6 +533,10 @@ def main():
                         result = run_single_query(pipeline, question, top_k)
                     except Exception as e:
                         st.error(f"Pipeline error: {e}")
+                        tb = traceback.format_exc()
+                        _debug(f"Pipeline error:\n{tb}")
+                        with st.expander("Full traceback"):
+                            st.code(tb, language="python")
                         return
                 elapsed = time.time() - t0
                 _display_single_result(result, elapsed)
@@ -528,6 +564,10 @@ def main():
                         status.update(label="Aggregating results...", state="complete")
                 except Exception as e:
                     st.error(f"Ensemble error: {e}")
+                    tb = traceback.format_exc()
+                    _debug(f"Ensemble error:\n{tb}")
+                    with st.expander("Full traceback"):
+                        st.code(tb, language="python")
                     return
 
                 elapsed = time.time() - t0
