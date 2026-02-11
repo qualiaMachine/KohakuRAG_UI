@@ -359,6 +359,56 @@ The individual experiments (`qwen72b-bench`, `qwen32b-bench`, `qwen14b-bench`)
 must already exist under `artifacts/experiments/<env>/<datafile>/`. Run them
 first with `run_full_benchmark.py` or `run_experiment.py` if they don't.
 
+### Recommended ensemble: Top-5 majority vote
+
+For environments with more VRAM headroom or when maximum accuracy matters more
+than latency, extending the ensemble to **5 models** adds two high-performing
+architectures while keeping majority-vote semantics (3-of-5 agreement).
+
+| Model              | WattBot Score | NA Recall | Unique Wins | Latency | VRAM (4-bit) |
+|--------------------|:---:|:---:|:---:|:---:|:---:|
+| Qwen 2.5 72B      | 0.752 | 0.938 | 0 | 15.7s | ~33 GB |
+| Qwen3 30B-A3B     | 0.724 | 0.813 | 1 | 76.3s | ~18 GB |
+| Qwen 2.5 32B      | 0.710 | **1.000** | 2 | **8.4s** | ~22 GB |
+| Qwen 2.5 14B      | 0.660 | 0.875 | **4** | 16.0s | ~15 GB |
+| Mixtral 8x22B      | 0.643 | 0.875 | 0 | 17.3s | ~80 GB |
+
+**Why these five:**
+
+- The **top-3 core** (72B + 32B + 14B) is unchanged; see rationale above.
+- **Qwen3 30B-A3B** is the #2 individual scorer (0.724) and a MoE
+  architecture, so its error profile differs from the dense Qwen 2.5 models.
+  The latency penalty is acceptable here because each model only runs once in
+  a cross-model ensemble.
+- **Mixtral 8x22B** (0.643) adds a completely different model family.
+  Architectural diversity is the primary benefit — it breaks Qwen-family
+  correlated errors. Its agreement with 72B is lower than any other Qwen
+  model, maximising the value of a fifth vote.
+- Combined VRAM is ~168 GB (sequential loading) or can be distributed across
+  multiple GPUs. The 3-of-5 majority threshold means any two models can be
+  wrong on a question and the ensemble still answers correctly.
+
+```bash
+# Run the top-5 ensemble on test_solutions
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench mixtral-8x22b-bench \
+    --name ensemble-top5-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile test_solutions
+
+# Same ensemble on train_QA
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench mixtral-8x22b-bench \
+    --name ensemble-top5-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile train_QA
+```
+
+The same `--ignore-blank` rationale from the top-3 ensemble applies: blank
+votes from lower-scoring models must not outvote correct answers.
+
 ### Audit experiment quality
 
 ```bash
