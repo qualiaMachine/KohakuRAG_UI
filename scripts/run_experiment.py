@@ -179,114 +179,14 @@ def estimate_cost(model_id: str, input_tokens: int, output_tokens: int) -> float
 
 
 # =============================================================================
-# Answer Value Normalization
+# Answer / Ref Normalisation  (canonical logic lives in posthoc.py)
 # =============================================================================
+# Imported here so that callers that historically relied on these names from
+# run_experiment still work (e.g. ensemble scripts).  The experiment runner
+# itself no longer calls them inline — raw model output is saved to
+# results.json, and posthoc.py normalises + scores in a separate step.
 
-import re as _re
-
-_TRUE_TOKENS = {"true", "yes"}
-_FALSE_TOKENS = {"false", "no"}
-
-# Patterns for numeric ranges: "80-90", "80 - 90", "80 to 90", "from 80 to 90"
-_RANGE_RE = _re.compile(
-    r"^(?:from\s+)?"          # optional leading "from "
-    r"(-?[\d.]+)"             # first number (lo)
-    r"\s*(?:[-–—]|to)\s*"     # separator: dash variants or "to"
-    r"(-?[\d.]+)$",           # second number (hi)
-    _re.IGNORECASE,
-)
-
-
-def normalize_answer_value(raw: str) -> str:
-    """Normalize LLM answer_value to match expected ground-truth formats.
-
-    Transformations applied:
-      - True / False / Yes / No  →  "1" / "0"
-      - Numeric range "80-90" or "80 to 90"  →  "[80,90]" (lo ≤ hi)
-    """
-    s = str(raw).strip()
-    if not s:
-        return s
-
-    low = s.lower()
-
-    # Boolean normalization
-    if low in _TRUE_TOKENS:
-        return "1"
-    if low in _FALSE_TOKENS:
-        return "0"
-
-    # Numeric range normalization
-    m = _RANGE_RE.match(s)
-    if m:
-        try:
-            a, b = float(m.group(1)), float(m.group(2))
-            lo, hi = (a, b) if a <= b else (b, a)
-            # Format: drop trailing .0 for integers
-            fmt = lambda v: str(int(v)) if v == int(v) else str(v)
-            return f"[{fmt(lo)},{fmt(hi)}]"
-        except ValueError:
-            pass
-
-    return s
-
-
-# Patterns for ref_id normalization
-_REF_ID_MARKER_RE = _re.compile(r"\[ref_id=([^\]]+)\]", _re.IGNORECASE)
-
-_BLANK_REF_TOKENS = {"", "is_blank", "na", "n/a", "none", "null"}
-
-
-def _extract_refs_from_string(s: str) -> list[str]:
-    """Extract clean ref IDs from a single (possibly messy) string.
-
-    Handles:
-      - "[ref_id=xxx]" markers (one or more, space-separated)
-      - Comma-separated lists "a, b, c"
-      - Plain single ref ID "xxx"
-    """
-    s = s.strip()
-    if not s or s.lower() in _BLANK_REF_TOKENS:
-        return []
-
-    # If string contains [ref_id=...] markers, extract all of them
-    markers = _REF_ID_MARKER_RE.findall(s)
-    if markers:
-        return [m.strip() for m in markers if m.strip()]
-
-    # Comma-separated refs within a single element
-    if "," in s:
-        return [p.strip() for p in s.split(",") if p.strip() and p.strip().lower() not in _BLANK_REF_TOKENS]
-
-    return [s]
-
-
-def normalize_ref_id(raw_ref) -> list | str:
-    """Normalize LLM ref_id output to clean list of document IDs.
-
-    Handles common model artifacts:
-      - "[ref_id=xxx]" wrapper            →  "xxx"
-      - "[ref_id=a] [ref_id=b]" in one string  →  ["a", "b"]
-      - Comma-separated single string "a, b"   →  ["a", "b"]
-      - ["is_blank"] list                 →  "is_blank"  (scalar)
-    """
-    if isinstance(raw_ref, list):
-        cleaned = []
-        for item in raw_ref:
-            cleaned.extend(_extract_refs_from_string(str(item)))
-        return cleaned if cleaned else "is_blank"
-
-    # Scalar string
-    s = str(raw_ref).strip()
-    if s.lower() in _BLANK_REF_TOKENS:
-        return "is_blank"
-
-    extracted = _extract_refs_from_string(s)
-    if not extracted:
-        return "is_blank"
-    if len(extracted) == 1:
-        return extracted[0]
-    return extracted
+from posthoc import normalize_answer_value, normalize_ref_id  # noqa: F401
 
 
 # =============================================================================
@@ -322,6 +222,14 @@ Return STRICT JSON with the following keys, in this order:
 - ref_id               (list of document ids from the context used as evidence; or "is_blank")
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
+
+CRITICAL formatting rules for answer_value:
+- Write full numbers without commas or abbreviations: "2000000000" not "2B" or "2,000,000,000"
+- For numeric ranges, use bracket notation: "[80,90]" not "80-90" or "80 to 90"
+- Do NOT include units in answer_value — units belong in answer_unit only
+- Do NOT include hedging words like "approximately", "more than", "~", etc.
+- Do NOT add parenthetical abbreviations: "Compute Time Calibration Function" not "Compute Time Calibration Function (CTCF)"
+- For percentages, give just the number: "4" not "4%" (the unit field carries "percent")
 
 JSON Answer:
 """.strip()
@@ -681,8 +589,10 @@ class ExperimentRunner:
                     if attempt < self.max_retries:
                         print(f"  [{row['id']}] Blank answer at top_k={current_top_k}, deepening retrieval...")
 
-                pred_value = normalize_answer_value(result.answer.answer_value)
-                pred_ref = normalize_ref_id(result.answer.ref_id)
+                # Store raw model output — normalisation is applied post-hoc
+                # by scripts/posthoc.py (single source of truth).
+                pred_value = str(result.answer.answer_value).strip()
+                pred_ref = result.answer.ref_id  # raw list from pipeline
                 pred_explanation = result.answer.explanation
                 raw_response = getattr(result, "raw_response", "")
                 timing = getattr(result, "timing", {})
