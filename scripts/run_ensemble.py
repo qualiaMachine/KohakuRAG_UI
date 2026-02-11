@@ -234,7 +234,6 @@ def run_ensemble(
     strategy: str = "majority",
     ignore_blank: bool = False,
     model_weights: dict[str, float] | None = None,
-    ignore_blank: bool = False,
 ) -> list[dict]:
     """Combine results from multiple runs/models.
 
@@ -281,9 +280,13 @@ def run_ensemble(
             final_value = aggregate_first_non_blank(answers)
             final_ref = aggregate_refs_union(refs)
         else:
-            # majority (default)
+            # majority (default) — scope refs to winning voters only
             final_value = aggregate_majority(answers, ignore_blank=ignore_blank)
-            final_ref = aggregate_refs_union(refs)
+            winning_refs = [
+                ref for ans, ref in zip(answers, refs)
+                if ans == final_value
+            ]
+            final_ref = aggregate_refs_union(winning_refs)
 
         # Get metadata from first run's result
         first_result = results_by_id[first_model].get(qid, {})
@@ -565,13 +568,6 @@ Examples:
         action="store_true",
         default=False,
         help="Disable abstention-aware voting",
-    )
-    parser.add_argument(
-        "--ignore-blank",
-        action="store_true",
-        default=False,
-        help="Filter out is_blank/refusal answers before majority voting. "
-             "Prevents weaker models from outvoting stronger ones via refusals."
     )
 
     args = parser.parse_args()
