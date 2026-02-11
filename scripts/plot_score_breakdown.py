@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -48,22 +49,150 @@ def wilson_ci(successes, n, confidence=0.95):
     return max(0, center - spread), min(1, center + spread)
 
 
-def load_and_score(gt_path: Path, experiments_dir: Path):
-    """Load ground truth and calculate component scores for each model."""
-    gt_df = pd.read_csv(gt_path)
-    gt_df["id"] = gt_df["id"].astype(str)
-    gt_df = gt_df.set_index("id")
+def _compute_ci(val_scores, ref_scores, na_gt_scores, val_acc, ref_acc, na_recall, overall):
+    """Compute Wilson CIs for score components and propagated overall CI."""
+    n_val = len(val_scores)
+    n_ref = len(ref_scores)
+    n_na = len(na_gt_scores)
+    val_ci = wilson_ci(sum(val_scores), n_val) if n_val > 0 else (0, 0)
+    if n_ref > 1:
+        ref_se_raw = np.std(ref_scores) / np.sqrt(n_ref)
+        ref_ci = (max(0, ref_acc - 1.96 * ref_se_raw), min(1, ref_acc + 1.96 * ref_se_raw))
+    else:
+        ref_ci = (ref_acc, ref_acc)
+    na_ci = wilson_ci(sum(na_gt_scores), n_na) if n_na > 0 else (1, 1)
+
+    val_se = (val_ci[1] - val_ci[0]) / (2 * 1.96) if n_val > 0 else 0
+    ref_se = (ref_ci[1] - ref_ci[0]) / (2 * 1.96) if n_ref > 0 else 0
+    na_se = (na_ci[1] - na_ci[0]) / (2 * 1.96) if n_na > 0 else 0
+    overall_se = np.sqrt((0.75 * val_se)**2 + (0.15 * ref_se)**2 + (0.10 * na_se)**2)
+
+    return {
+        "val_ci": val_ci,
+        "ref_ci": ref_ci,
+        "na_ci": na_ci,
+        "overall_ci": (overall - 1.96 * overall_se, overall + 1.96 * overall_se),
+    }
+
+
+def _score_from_results_json(results_path: Path):
+    """Compute component scores from per-question results.json.
+
+    This is the preferred source because it contains data from the full
+    experiment run (same ground truth the summary was computed against),
+    avoiding mismatches when a smaller GT CSV is used for plotting.
+    """
+    with open(results_path) as f:
+        items = json.load(f)
+
+    val_scores = []
+    ref_scores = []
+    na_gt_scores = []
+
+    for item in items:
+        if item.get("error"):
+            continue
+        val_scores.append(bool(item["value_correct"]))
+        ref_scores.append(float(item["ref_score"]))
+        gt_val = str(item.get("gt_value", ""))
+        if is_blank(gt_val):
+            na_gt_scores.append(bool(item["na_correct"]))
+
+    if not val_scores:
+        return None
+
+    val_acc = float(np.mean(val_scores))
+    ref_acc = float(np.mean(ref_scores))
+    na_recall = float(np.mean(na_gt_scores)) if na_gt_scores else 1.0
+    overall = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_recall
+
+    result = {
+        "Value Accuracy": val_acc,
+        "Ref Overlap": ref_acc,
+        "NA Recall": na_recall,
+        "Overall": overall,
+    }
+    result.update(_compute_ci(val_scores, ref_scores, na_gt_scores,
+                              val_acc, ref_acc, na_recall, overall))
+    return result
+
+
+def _score_from_submission(gt_df: pd.DataFrame, sub_path: Path):
+    """Fallback: re-score a submission against a GT DataFrame."""
+    sub_df = pd.read_csv(sub_path)
+    sub_df["id"] = sub_df["id"].astype(str)
+    sub_df = sub_df.set_index("id")
+
+    common_ids = gt_df.index.intersection(sub_df.index)
+
+    val_scores = []
+    ref_scores = []
+    na_gt_scores = []
+
+    for qid in common_ids:
+        gt_row = gt_df.loc[qid]
+        sub_row = sub_df.loc[qid]
+
+        gt_val = str(gt_row.get("answer_value", ""))
+        bits = row_bits(
+            sol={
+                "answer_value": gt_val,
+                "answer_unit": str(gt_row.get("answer_unit", "")),
+                "ref_id": str(gt_row.get("ref_id", "")),
+            },
+            sub={
+                "answer_value": str(sub_row.get("answer_value", "")),
+                "answer_unit": str(sub_row.get("answer_unit", "")),
+                "ref_id": str(sub_row.get("ref_id", "")),
+            },
+        )
+        val_scores.append(bits["val"])
+        ref_scores.append(bits["ref"])
+        if is_blank(gt_val):
+            na_gt_scores.append(bits["na"])
+
+    if not val_scores:
+        return None
+
+    val_acc = float(np.mean(val_scores))
+    ref_acc = float(np.mean(ref_scores))
+    na_recall = float(np.mean(na_gt_scores)) if na_gt_scores else 1.0
+    overall = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_recall
+
+    result = {
+        "Value Accuracy": val_acc,
+        "Ref Overlap": ref_acc,
+        "NA Recall": na_recall,
+        "Overall": overall,
+    }
+    result.update(_compute_ci(val_scores, ref_scores, na_gt_scores,
+                              val_acc, ref_acc, na_recall, overall))
+    return result
+
+
+def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = None):
+    """Load and calculate component scores for each model.
+
+    Prefers per-question ``results.json`` from the experiment run so that
+    scores are computed over the *same* question set as the original
+    experiment.  Falls back to re-scoring ``submission.csv`` against
+    ``gt_path`` when ``results.json`` is unavailable.
+
+    When *datafile* is given (e.g. ``"train_QA"``), only experiments
+    whose path contains that subfolder are included.
+    """
+    # Only load GT if we actually need it (fallback path)
+    gt_df = None
 
     results = {}
 
-    # Find all experiment dirs (supports both flat and <env>/<name>/ layouts)
+    # Find all experiment dirs
     all_exp_dirs = sorted(
         p.parent for p in experiments_dir.glob("**/submission.csv")
+        if datafile is None or datafile in p.parts
     )
 
     for exp_dir in all_exp_dirs:
-        sub_path = exp_dir / "submission.csv"
-
         model_name = exp_dir.name
 
         # Skip v1 versions if v2 exists (check sibling directory)
@@ -72,73 +201,19 @@ def load_and_score(gt_path: Path, experiments_dir: Path):
             if (exp_dir.parent / v2_name).exists():
                 continue
 
-        sub_df = pd.read_csv(sub_path)
-        sub_df["id"] = sub_df["id"].astype(str)
-        sub_df = sub_df.set_index("id")
-
-        common_ids = gt_df.index.intersection(sub_df.index)
-
-        val_scores = []
-        ref_scores = []
-        na_gt_scores = []  # only for truly-NA questions
-
-        for qid in common_ids:
-            gt_row = gt_df.loc[qid]
-            sub_row = sub_df.loc[qid]
-
-            gt_val = str(gt_row.get("answer_value", ""))
-            bits = row_bits(
-                sol={
-                    "answer_value": gt_val,
-                    "answer_unit": str(gt_row.get("answer_unit", "")),
-                    "ref_id": str(gt_row.get("ref_id", "")),
-                },
-                sub={
-                    "answer_value": str(sub_row.get("answer_value", "")),
-                    "answer_unit": str(sub_row.get("answer_unit", "")),
-                    "ref_id": str(sub_row.get("ref_id", "")),
-                },
-            )
-            val_scores.append(bits["val"])
-            ref_scores.append(bits["ref"])
-            # Only track NA for truly-NA questions (recall, not accuracy)
-            if is_blank(gt_val):
-                na_gt_scores.append(bits["na"])
-
-        val_acc = np.mean(val_scores)
-        ref_acc = np.mean(ref_scores)
-        na_recall = np.mean(na_gt_scores) if na_gt_scores else 1.0
-        overall = 0.75 * val_acc + 0.15 * ref_acc + 0.10 * na_recall
-
-        # Wilson CI for binary components, normal CI for continuous ref overlap
-        n_val = len(val_scores)
-        n_ref = len(ref_scores)
-        n_na = len(na_gt_scores)
-        val_ci = wilson_ci(sum(val_scores), n_val) if n_val > 0 else (0, 0)
-        # Ref overlap is continuous (0-1), use normal CI
-        if n_ref > 1:
-            ref_se_raw = np.std(ref_scores) / np.sqrt(n_ref)
-            ref_ci = (max(0, ref_acc - 1.96 * ref_se_raw), min(1, ref_acc + 1.96 * ref_se_raw))
+        results_path = exp_dir / "results.json"
+        if results_path.exists():
+            scored = _score_from_results_json(results_path)
         else:
-            ref_ci = (ref_acc, ref_acc)
-        na_ci = wilson_ci(sum(na_gt_scores), n_na) if n_na > 0 else (1, 1)
+            # Lazy-load GT only when needed
+            if gt_df is None:
+                gt_df = pd.read_csv(gt_path)
+                gt_df["id"] = gt_df["id"].astype(str)
+                gt_df = gt_df.set_index("id")
+            scored = _score_from_submission(gt_df, exp_dir / "submission.csv")
 
-        # Overall CI via error propagation
-        val_se = (val_ci[1] - val_ci[0]) / (2 * 1.96) if n_val > 0 else 0
-        ref_se = (ref_ci[1] - ref_ci[0]) / (2 * 1.96) if n_ref > 0 else 0
-        na_se = (na_ci[1] - na_ci[0]) / (2 * 1.96) if n_na > 0 else 0
-        overall_se = np.sqrt((0.75 * val_se)**2 + (0.15 * ref_se)**2 + (0.10 * na_se)**2)
-
-        results[model_name] = {
-            "Value Accuracy": val_acc,
-            "Ref Overlap": ref_acc,
-            "NA Recall": na_recall,
-            "Overall": overall,
-            "val_ci": val_ci,
-            "ref_ci": ref_ci,
-            "na_ci": na_ci,
-            "overall_ci": (overall - 1.96 * overall_se, overall + 1.96 * overall_se),
-        }
+        if scored is not None:
+            results[model_name] = scored
 
     return results
 
@@ -235,13 +310,19 @@ def main():
     parser = argparse.ArgumentParser(description="Generate score breakdown chart")
     parser.add_argument(
         "--ground-truth", "-g",
-        default="data/train_QA.csv",
-        help="Path to ground truth CSV",
+        default=None,
+        help="Path to ground truth CSV (auto-detects test_solutions.csv or train_QA.csv)",
     )
     parser.add_argument(
         "--experiments", "-e",
         default="artifacts/experiments",
         help="Path to experiments directory",
+    )
+    parser.add_argument(
+        "--datafile", "-d",
+        default=None,
+        help="Filter to experiments from this datafile subfolder "
+             "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
     )
     parser.add_argument(
         "--output", "-o",
@@ -252,14 +333,25 @@ def main():
     args = parser.parse_args()
 
     project_root = Path(__file__).parent.parent
-    gt_path = project_root / args.ground_truth
     experiments_dir = project_root / args.experiments
     output_path = project_root / args.output
+    if args.datafile:
+        output_path = output_path.parent / args.datafile / output_path.name
+
+    # Auto-detect ground truth: prefer test_solutions.csv, fall back to train_QA.csv
+    if args.ground_truth:
+        gt_path = project_root / args.ground_truth
+    else:
+        gt_path = project_root / "data" / "test_solutions.csv"
+        if not gt_path.exists():
+            gt_path = project_root / "data" / "train_QA.csv"
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if args.datafile:
+        print(f"Filtering to datafile: {args.datafile}")
     print("Loading and scoring experiments...")
-    results = load_and_score(gt_path, experiments_dir)
+    results = load_and_score(gt_path, experiments_dir, datafile=args.datafile)
 
     print(f"\nResults ({len(results)} models):")
     print("-" * 70)

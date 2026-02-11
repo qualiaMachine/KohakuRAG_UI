@@ -55,35 +55,39 @@ def wilson_ci(successes, n, confidence=0.95):
     spread = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denom
     return max(0, center - spread), min(1, center + spread)
 
-def load_costs(experiments_dir="artifacts/experiments"):
-    """Load cost data from summary.json files."""
+def load_costs(experiments_dir="artifacts/experiments", datafile=None):
+    """Load cost data from summary.json files.
+
+    When *datafile* is given (e.g. ``"train_QA"``), only summaries whose
+    path contains that subfolder are included.
+    """
     costs = {} # model_name -> cost_usd
-    
+
     # search patterns
     patterns = [
         f"{experiments_dir}/**/summary.json",
         f"artifacts/**/summary.json"
     ]
-    
+
     for pattern in patterns:
         for p in glob.glob(pattern, recursive=True):
+            path = Path(p)
+            if datafile is not None and datafile not in path.parts:
+                continue
             try:
-                path = Path(p)
                 with open(path, "r") as f:
                     data = json.load(f)
-                    
+
                 # Try to derive model name from path or data
-                # Path likely: .../experiments/model_name/summary.json
+                # Path likely: .../experiments/<datafile>/model_name/summary.json
                 model_name = path.parent.name.replace("-v1", "").replace("bedrock_", "")
-                
+
                 cost = data.get("estimated_cost_usd") or data.get("total_cost_usd") or data.get("cost_usd") or 0.0
                 if cost > 0:
                      costs[model_name] = cost
-                     
-                # Also try matching by config name if explicitly stored (unlikely standard param)
             except Exception as e:
                 print(f"Warning: Failed to load cost from {p}: {e}")
-                
+
     return costs
 
 def main():
@@ -102,11 +106,19 @@ def main():
         default="artifacts/plots",
         help="Directory to save plots"
     )
-    
+    parser.add_argument(
+        "--datafile", "-d",
+        default=None,
+        help="Filter cost data to this datafile subfolder "
+             "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
+    )
+
     args = parser.parse_args()
-    
+
     # Load Costs
-    model_costs = load_costs()
+    if args.datafile:
+        print(f"Filtering costs to datafile: {args.datafile}")
+    model_costs = load_costs(datafile=args.datafile)
     print(f"Loaded costs for {len(model_costs)} models: {list(model_costs.keys())}")
     
     matrix_path = Path(args.matrix)
@@ -139,6 +151,8 @@ def main():
     print(f"Selected {len(models)} models after filtering: {models}")
     
     output_dir = Path(args.output_dir)
+    if args.datafile:
+        output_dir = output_dir / args.datafile
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Helper for plot aesthetics
@@ -285,9 +299,14 @@ def main():
                 continue
 
             for model in models:
-                val_col = f"{model}_ValCorrect"
-                if val_col in subset.columns:
-                    successes = subset[val_col].sum()
+                # For NA questions, use NACorrect (ValCorrect is always True
+                # when GT is blank, so it's meaningless for NA detection)
+                if qtype == "is_NA":
+                    score_col = f"{model}_NACorrect"
+                else:
+                    score_col = f"{model}_ValCorrect"
+                if score_col in subset.columns:
+                    successes = subset[score_col].sum()
                     acc = successes / n_type if n_type > 0 else 0
                     type_scores[model][qtype] = acc
 
@@ -310,8 +329,8 @@ def main():
                 if t in type_ci[model]:
                     ci_low, ci_high = type_ci[model][t]
                     score = type_scores[model].get(t, 0)
-                    yerr_lower.append(score - ci_low)
-                    yerr_upper.append(ci_high - score)
+                    yerr_lower.append(max(0, score - ci_low))
+                    yerr_upper.append(max(0, ci_high - score))
                 else:
                     yerr_lower.append(0)
                     yerr_upper.append(0)

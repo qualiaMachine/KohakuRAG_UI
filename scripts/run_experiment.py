@@ -17,9 +17,11 @@ Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/hf_qwen7b.py --name "qwen7b-test"
 
 Output:
-    - artifacts/experiments/<name>/submission.csv - Kaggle format submission
-    - artifacts/experiments/<name>/results.json - Detailed per-question results
-    - artifacts/experiments/<name>/summary.json - Overall metrics and timing
+    - artifacts/experiments/<datafile>/<name>/submission.csv - Kaggle format submission
+    - artifacts/experiments/<datafile>/<name>/results.json - Detailed per-question results
+    - artifacts/experiments/<datafile>/<name>/summary.json - Overall metrics and timing
+
+    Where <datafile> is the stem of the questions CSV (e.g. "train_QA", "test_solutions").
 """
 
 import argparse
@@ -41,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import pandas as pd
 
-from kohakurag import RAGPipeline
+from kohakurag import RAGPipeline, LLMQueryPlanner
 from kohakurag.datastore import KVaultNodeStore
 from kohakurag.embeddings import JinaEmbeddingModel, JinaV4EmbeddingModel, LocalHFEmbeddingModel
 from kohakurag.llm import HuggingFaceLocalChatModel, OpenAIChatModel, OpenRouterChatModel
@@ -177,7 +179,118 @@ def estimate_cost(model_id: str, input_tokens: int, output_tokens: int) -> float
 
 
 # =============================================================================
-# Prompts
+# Answer Value Normalization
+# =============================================================================
+
+import re as _re
+
+_TRUE_TOKENS = {"true", "yes"}
+_FALSE_TOKENS = {"false", "no"}
+
+# Patterns for numeric ranges: "80-90", "80 - 90", "80 to 90", "from 80 to 90"
+_RANGE_RE = _re.compile(
+    r"^(?:from\s+)?"          # optional leading "from "
+    r"(-?[\d.]+)"             # first number (lo)
+    r"\s*(?:[-–—]|to)\s*"     # separator: dash variants or "to"
+    r"(-?[\d.]+)$",           # second number (hi)
+    _re.IGNORECASE,
+)
+
+
+def normalize_answer_value(raw: str) -> str:
+    """Normalize LLM answer_value to match expected ground-truth formats.
+
+    Transformations applied:
+      - True / False / Yes / No  →  "1" / "0"
+      - Numeric range "80-90" or "80 to 90"  →  "[80,90]" (lo ≤ hi)
+    """
+    s = str(raw).strip()
+    if not s:
+        return s
+
+    low = s.lower()
+
+    # Boolean normalization
+    if low in _TRUE_TOKENS:
+        return "1"
+    if low in _FALSE_TOKENS:
+        return "0"
+
+    # Numeric range normalization
+    m = _RANGE_RE.match(s)
+    if m:
+        try:
+            a, b = float(m.group(1)), float(m.group(2))
+            lo, hi = (a, b) if a <= b else (b, a)
+            # Format: drop trailing .0 for integers
+            fmt = lambda v: str(int(v)) if v == int(v) else str(v)
+            return f"[{fmt(lo)},{fmt(hi)}]"
+        except ValueError:
+            pass
+
+    return s
+
+
+# Patterns for ref_id normalization
+_REF_ID_MARKER_RE = _re.compile(r"\[ref_id=([^\]]+)\]", _re.IGNORECASE)
+
+_BLANK_REF_TOKENS = {"", "is_blank", "na", "n/a", "none", "null"}
+
+
+def _extract_refs_from_string(s: str) -> list[str]:
+    """Extract clean ref IDs from a single (possibly messy) string.
+
+    Handles:
+      - "[ref_id=xxx]" markers (one or more, space-separated)
+      - Comma-separated lists "a, b, c"
+      - Plain single ref ID "xxx"
+    """
+    s = s.strip()
+    if not s or s.lower() in _BLANK_REF_TOKENS:
+        return []
+
+    # If string contains [ref_id=...] markers, extract all of them
+    markers = _REF_ID_MARKER_RE.findall(s)
+    if markers:
+        return [m.strip() for m in markers if m.strip()]
+
+    # Comma-separated refs within a single element
+    if "," in s:
+        return [p.strip() for p in s.split(",") if p.strip() and p.strip().lower() not in _BLANK_REF_TOKENS]
+
+    return [s]
+
+
+def normalize_ref_id(raw_ref) -> list | str:
+    """Normalize LLM ref_id output to clean list of document IDs.
+
+    Handles common model artifacts:
+      - "[ref_id=xxx]" wrapper            →  "xxx"
+      - "[ref_id=a] [ref_id=b]" in one string  →  ["a", "b"]
+      - Comma-separated single string "a, b"   →  ["a", "b"]
+      - ["is_blank"] list                 →  "is_blank"  (scalar)
+    """
+    if isinstance(raw_ref, list):
+        cleaned = []
+        for item in raw_ref:
+            cleaned.extend(_extract_refs_from_string(str(item)))
+        return cleaned if cleaned else "is_blank"
+
+    # Scalar string
+    s = str(raw_ref).strip()
+    if s.lower() in _BLANK_REF_TOKENS:
+        return "is_blank"
+
+    extracted = _extract_refs_from_string(s)
+    if not extracted:
+        return "is_blank"
+    if len(extracted) == 1:
+        return extracted[0]
+    return extracted
+
+
+# =============================================================================
+# Prompts  (Q→C ordering: question appears before context in the template)
 # =============================================================================
 
 SYSTEM_PROMPT = """
@@ -406,12 +519,21 @@ class ExperimentRunner:
             paragraph_search_mode="averaged",
         )
 
+        # Query planning: expand each question into multiple diverse retrieval
+        # queries (default 3) to capture different terminologies / sub-questions.
+        max_queries = self.config.get("planner_max_queries", 3)
+        planner = LLMQueryPlanner(self.chat_model, max_queries=max_queries)
+        print(f"[init] Query planner: LLMQueryPlanner (max_queries={max_queries})")
+
         print("[init] Building RAG pipeline...")
         self.pipeline = RAGPipeline(
             store=store,
             embedder=embedder,
             chat_model=self.chat_model,
-            planner=None,
+            planner=planner,
+            deduplicate_retrieval=self.config.get("deduplicate_retrieval", True),
+            rerank_strategy=self.config.get("rerank_strategy", "combined"),
+            top_k_final=self.config.get("top_k_final", None),
         )
 
         max_concurrent = self.config.get("max_concurrent", 5)
@@ -444,8 +566,8 @@ class ExperimentRunner:
                     additional_info=additional_info,
                 )
 
-                pred_value = result.answer.answer_value
-                pred_ref = result.answer.ref_id
+                pred_value = normalize_answer_value(result.answer.answer_value)
+                pred_ref = normalize_ref_id(result.answer.ref_id)
                 pred_explanation = result.answer.explanation
                 raw_response = getattr(result, "raw_response", "")
                 timing = getattr(result, "timing", {})
@@ -711,13 +833,6 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"{model_short}_{timestamp}"
 
-    # Organize output by env: artifacts/experiments/<env>/<name>/
-    experiments_base = Path(__file__).parent.parent / "artifacts" / "experiments"
-    if run_environment:
-        output_dir = experiments_base / run_environment / experiment_name
-    else:
-        output_dir = experiments_base / experiment_name
-
     # Load questions (CLI --questions overrides config)
     project_root = Path(__file__).parent.parent
     if questions_override:
@@ -727,6 +842,16 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
         q_raw = config.get("questions", "data/train_QA.csv")
         questions_path = project_root / q_raw.removeprefix("../").removeprefix("../")
     config["_questions_file"] = str(questions_path.name)
+
+    # Derive datafile subfolder from questions filename (e.g. "train_QA", "test_solutions")
+    datafile_stem = questions_path.stem
+
+    # Organize output: artifacts/experiments/<env>/<datafile>/<name>/
+    experiments_base = Path(__file__).parent.parent / "artifacts" / "experiments"
+    if run_environment:
+        output_dir = experiments_base / run_environment / datafile_stem / experiment_name
+    else:
+        output_dir = experiments_base / datafile_stem / experiment_name
     questions_df = pd.read_csv(questions_path)
     print(f"Loaded {len(questions_df)} questions from {questions_path}")
 
