@@ -127,30 +127,40 @@ def main():
 
     print(f"Loading {len(unique_files)} submission files...")
 
-    # Load Ground Truth from CSV
+    # Load Ground Truth — prefer results.json (full experiment data) over
+    # the CSV, which may be a smaller subset (e.g. train split only).
     gt_df = None
     gt_path = Path(args.ground_truth)
-    if gt_path.exists():
+
+    results_gt = build_gt_from_results_json(unique_files)
+
+    if results_gt is not None:
+        # Prefer results.json: it covers all questions that were actually
+        # tested, avoiding score mismatches when the CSV is a subset.
+        if gt_path.exists():
+            try:
+                csv_gt = load_ground_truth(gt_path)
+                if len(results_gt) > len(csv_gt):
+                    print(f"Using results.json ground truth ({len(results_gt)} questions) "
+                          f"over CSV ({len(csv_gt)} questions).")
+                    gt_df = results_gt
+                else:
+                    gt_df = csv_gt
+            except Exception:
+                gt_df = results_gt
+        else:
+            gt_df = results_gt
+        if gt_df is results_gt:
+            print(f"Reconstructed ground truth for {len(gt_df)} questions from results.json files.")
+    elif gt_path.exists():
         try:
             gt_df = load_ground_truth(gt_path)
         except Exception as e:
-            print(f"Warning: Could not load ground truth CSV: {e}")
-
-    # Check if GT IDs overlap with any submission IDs
-    # If not, fall back to extracting GT from results.json
-    if gt_df is not None:
-        sample_sub = load_submission(unique_files[0])
-        if sample_sub is not None and len(gt_df.index.intersection(sample_sub.index)) == 0:
-            print("Ground truth CSV IDs do not match submission IDs.")
-            print("Attempting to reconstruct ground truth from results.json files...")
-            gt_df = None
-
-    if gt_df is None:
-        gt_df = build_gt_from_results_json(unique_files)
-        if gt_df is None:
-            print("Error: No ground truth found (neither CSV nor results.json).")
+            print(f"Error: Could not load ground truth: {e}")
             sys.exit(1)
-        print(f"Reconstructed ground truth for {len(gt_df)} questions from results.json files.")
+    else:
+        print("Error: No ground truth found (neither results.json nor CSV).")
+        sys.exit(1)
 
     # Initialize Master DataFrame with GT
     # Select relevant GT columns
