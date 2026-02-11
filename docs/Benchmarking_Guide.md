@@ -76,6 +76,15 @@ python scripts/run_experiment.py \
 quantization via `bitsandbytes`). Override with `--precision bf16`, `fp16`, or
 `auto`. Precision is saved to `summary.json` as the `quantization` field.
 
+**Retry & prompt ordering:** Two pipeline config keys control robustness:
+
+| Config key              | Default | Effect |
+|-------------------------|---------|--------|
+| `max_retries`           | `3`     | If the LLM answer is blank, re-run retrieval with increasing `top_k` (iterative deepening: 2x, 3x, ...) |
+| `use_reordered_prompt`  | `False` | When `True`, context is placed **before** the question (C→Q ordering) to combat the "lost in the middle" effect |
+
+Both can be set in any config file (e.g. `hf_qwen7b.py`).
+
 ### Using the test dataset
 
 The competition test set (`test_solutions.csv`) is **not** stored in the repo.
@@ -99,10 +108,22 @@ Results are organized by environment and datafile:
 
 ```
 artifacts/experiments/PowerEdge/train_QA/qwen7b-v1/
-├── submission.csv   # Kaggle-format predictions
-├── results.json     # Per-question details (latency, scores, raw LLM output)
-└── summary.json     # Aggregate metrics (overall score, timing, dataset info)
+├── results.json     # Per-question details (raw LLM output, latency, scores)
+├── summary.json     # Aggregate metrics (overall score, timing, dataset info)
+└── submission.csv   # Normalised Kaggle-format predictions (created by posthoc.py)
 ```
+
+**Important:** `results.json` stores **raw model output** (un-normalised).
+To produce a normalised `submission.csv` for Kaggle and get the final score,
+run the post-hoc processing step:
+
+```bash
+python scripts/posthoc.py artifacts/experiments/PowerEdge/train_QA/qwen7b-v1/
+```
+
+This applies answer normalisation (comma stripping, range formatting,
+abbreviation expansion, etc.) and re-scores against ground truth.
+See `scripts/posthoc.py` for details.
 
 The `<datafile>` subfolder is derived from the questions CSV filename
 (e.g. `train_QA` from `data/train_QA.csv`, `test_solutions` from
@@ -189,6 +210,19 @@ The benchmark runner:
 
 ## 4) Comparing results across runs
 
+### Post-hoc normalisation and scoring
+
+After an experiment completes, run post-hoc processing to normalise raw
+model output and produce a Kaggle-ready `submission.csv`:
+
+```bash
+# Process a single experiment (auto-finds results.json)
+python scripts/posthoc.py artifacts/experiments/PowerEdge/train_QA/qwen7b-v1/
+
+# Dry-run: see the score without writing files
+python scripts/posthoc.py artifacts/experiments/PowerEdge/train_QA/qwen7b-v1/ --dry-run
+```
+
 ### Score a submission against ground truth
 
 ```bash
@@ -217,7 +251,32 @@ This produces a CSV where each row is a question and columns show each model's
 prediction + correctness, making it easy to spot which questions each model
 gets right or wrong.
 
-### Ensemble voting (combine multiple models)
+### Ensemble voting
+
+The ensemble runner supports two modes:
+
+**Mode 1 — Same-model ensemble** (KohakuRAG competition strategy): Run *m*
+independent inference passes of the **same model** and aggregate via voting.
+This was the only strategy that remained #1 on both public and private
+leaderboard partitions.
+
+```bash
+# 5 independent runs of qwen7b, answer_priority voting (default)
+python scripts/run_ensemble.py \
+    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
+    --num-runs 5 --name qwen7b-ens5 --env GB10
+
+# 9 runs (closer to competition setup), majority voting
+python scripts/run_ensemble.py \
+    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
+    --num-runs 9 --strategy majority --name qwen7b-ens9 --env PowerEdge
+```
+
+Each run is executed as a separate subprocess for completely independent model
+state.  LLM sampling temperature introduces per-run diversity.
+
+**Mode 2 — Cross-model ensemble**: Aggregate results from previously completed
+experiments (different models).
 
 ```bash
 python scripts/run_ensemble.py \
@@ -230,7 +289,178 @@ python scripts/run_ensemble.py \
     --name ensemble-test --env PowerEdge --datafile test_solutions
 ```
 
-Aggregation strategies: `majority` (default), `first_non_blank`, `confidence`.
+**Aggregation strategies:**
+
+| Strategy          | Description |
+|-------------------|-------------|
+| `answer_priority` | (Default) Vote on answer first, then collect refs only from matching runs — ensures citation consistency |
+| `majority`        | Most common answer wins; union of all refs |
+| `first_non_blank` | First non-blank answer wins |
+
+**Abstention-aware voting** (`--ignore-blank`): If any run produces a non-blank
+answer, blank ("is_blank") runs are filtered out before voting.  Enabled by
+default for same-model ensembles.
+
+### Recommended ensemble: Top-3 majority vote
+
+Based on test_solutions benchmarking (n=282), the recommended production
+ensemble is **Qwen 2.5 72B + Qwen 2.5 32B + Qwen 2.5 14B** using majority
+voting. This combination was selected for complementary strengths:
+
+| Model          | WattBot Score | NA Recall | Unique Wins | Latency | VRAM (4-bit) |
+|----------------|:---:|:---:|:---:|:---:|:---:|
+| Qwen 2.5 72B  | 0.752 | 0.938 | 0 | 15.7s | ~33 GB |
+| Qwen 2.5 32B  | 0.710 | **1.000** | 2 | **8.4s** | ~22 GB |
+| Qwen 2.5 14B  | 0.660 | 0.875 | **4** | 16.0s | ~15 GB |
+
+**Why these three:**
+
+- **72B** is the top scorer overall (highest value accuracy and ref overlap).
+- **32B** has perfect NA recall (1.0) — it never misclassifies an
+  unanswerable question, acting as a safety anchor in the vote.
+- **14B** has the most unique wins (4 questions only it gets right) and
+  the lowest agreement with the other two (~0.82), providing the diversity
+  that makes ensembling worthwhile.
+- All three are Qwen 2.5 family at 4-bit, so inference infrastructure is
+  uniform. Combined VRAM is ~70 GB (fits sequentially on a single 96 GB GPU).
+
+**Why not Qwen3 30B-A3B?** Despite ranking #2 individually (0.724), it is
+9x slower than 32B (76s vs 8.4s per question), uses 2x more energy
+(297 Wh vs 131 Wh), has worse NA recall (0.81), and only 1 unique win.
+Its agreement with 72B (0.91) is the same as 32B's, so it adds no extra
+diversity.
+
+```bash
+# Run the recommended ensemble on test_solutions
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen32b-bench qwen14b-bench \
+    --name ensemble-top3-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile test_solutions
+
+# Same ensemble on train_QA
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen32b-bench qwen14b-bench \
+    --name ensemble-top3-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile train_QA
+```
+
+**Always use `--ignore-blank`** with this ensemble. Without it, refusal
+answers from 14B (27% refusal rate) and 32B (21%) can outvote 72B's correct
+answers via majority rule. The flag filters out `is_blank` votes before
+counting, so a real answer always beats a refusal. Refs are also scoped to
+only the models that voted for the winning answer, preventing spurious
+references from inflating the predicted set.
+
+The individual experiments (`qwen72b-bench`, `qwen32b-bench`, `qwen14b-bench`)
+must already exist under `artifacts/experiments/<env>/<datafile>/`. Run them
+first with `run_full_benchmark.py` or `run_experiment.py` if they don't.
+
+### Recommended ensemble: Top-5 majority vote
+
+For environments with more VRAM headroom or when maximum accuracy matters more
+than latency, extending the ensemble to **5 models** adds two high-performing
+architectures while keeping majority-vote semantics (3-of-5 agreement).
+
+| Model              | WattBot Score | NA Recall | Unique Wins | Latency | VRAM (4-bit) |
+|--------------------|:---:|:---:|:---:|:---:|:---:|
+| Qwen 2.5 72B      | 0.752 | 0.938 | 0 | 15.7s | ~33 GB |
+| Qwen3 30B-A3B     | 0.724 | 0.813 | 1 | 76.3s | ~18 GB |
+| Qwen 2.5 32B      | 0.710 | **1.000** | 2 | **8.4s** | ~22 GB |
+| Qwen 2.5 14B      | 0.660 | 0.875 | **4** | 16.0s | ~15 GB |
+| Mixtral 8x22B      | 0.643 | 0.875 | 0 | 17.3s | ~80 GB |
+
+**Why these five:**
+
+- The **top-3 core** (72B + 32B + 14B) is unchanged; see rationale above.
+- **Qwen3 30B-A3B** is the #2 individual scorer (0.724) and a MoE
+  architecture, so its error profile differs from the dense Qwen 2.5 models.
+  The latency penalty is acceptable here because each model only runs once in
+  a cross-model ensemble.
+- **Mixtral 8x22B** (0.643) adds a completely different model family.
+  Architectural diversity is the primary benefit — it breaks Qwen-family
+  correlated errors. Its agreement with 72B is lower than any other Qwen
+  model, maximising the value of a fifth vote.
+- Combined VRAM is ~168 GB (sequential loading) or can be distributed across
+  multiple GPUs. The 3-of-5 majority threshold means any two models can be
+  wrong on a question and the ensemble still answers correctly.
+
+```bash
+# Run the top-5 ensemble on test_solutions
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench mixtral-8x22b-bench \
+    --name ensemble-top5-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile test_solutions
+
+# Same ensemble on train_QA
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench mixtral-8x22b-bench \
+    --name ensemble-top5-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile train_QA
+```
+
+The same `--ignore-blank` rationale from the top-3 ensemble applies: blank
+votes from lower-scoring models must not outvote correct answers.
+
+### Kitchen-sink ensemble: All 11 models
+
+For a full-diversity baseline, combine every benchmarked local model. With 11
+voters, majority requires 6-of-11 agreement — a high bar that rewards only
+answers with broad consensus.
+
+| Model              | WattBot Score | NA Recall | Latency | VRAM (4-bit) |
+|--------------------|:---:|:---:|:---:|:---:|
+| Qwen 2.5 72B      | 0.752 | 0.938 | 15.7s | ~33 GB |
+| Qwen3 30B-A3B     | 0.724 | 0.813 | 76.3s | ~18 GB |
+| Qwen 2.5 32B      | 0.710 | 1.000 | 8.4s  | ~22 GB |
+| Qwen 2.5 14B      | 0.660 | 0.875 | 16.0s | ~15 GB |
+| Mixtral 8x22B      | 0.643 | 0.875 | 17.3s | ~80 GB |
+| Qwen 2.5 7B       | 0.570 | 0.563 | 11.8s | ~6 GB  |
+| Qwen 2.5 3B       | 0.526 | 0.375 | 21.7s | ~3 GB  |
+| Mistral 7B         | 0.501 | 0.938 | 14.7s | ~6 GB  |
+| Mixtral 8x7B       | 0.416 | 0.938 | 19.5s | ~25 GB |
+| Phi-3 Mini         | 0.398 | 0.750 | 39.1s | ~3 GB  |
+| OLMoE 1B-7B        | 0.143 | 1.000 | 213.5s | ~5 GB |
+
+**Trade-offs vs. the top-3 / top-5 ensembles:**
+
+- **Pros:** Maximum architectural diversity (5 model families); weak models
+  can't hurt if they're in the minority; useful as an upper/lower bound
+  comparison for ablation studies.
+- **Cons:** The 6 weaker models (score < 0.64) add noise more often than
+  signal. If the top-3 already agree, the extra votes are redundant. Total
+  sequential VRAM is ~216 GB. OLMoE's 213s latency dominates wall-clock time.
+
+```bash
+# All-model ensemble on test_solutions
+python scripts/run_ensemble.py \
+    --experiments \
+        qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench \
+        mixtral-8x22b-bench qwen7b-bench qwen3b-bench mistral7b-bench \
+        mixtral-8x7b-bench phi3-mini-bench olmoe-1b7b-bench \
+    --name ensemble-all11-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile test_solutions
+
+# All-model ensemble on train_QA
+python scripts/run_ensemble.py \
+    --experiments \
+        qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench \
+        mixtral-8x22b-bench qwen7b-bench qwen3b-bench mistral7b-bench \
+        mixtral-8x7b-bench phi3-mini-bench olmoe-1b7b-bench \
+    --name ensemble-all11-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile train_QA
+```
 
 ### Audit experiment quality
 
@@ -417,9 +647,10 @@ top_k_final = 10
 # Unanswerable detection
 retrieval_threshold = 0.25
 
-# Other settings
-max_retries = 2
-max_concurrent = 2  # lower (1) for large models, higher (3-4) for small ones
+# Robustness settings
+max_retries = 3               # iterative deepening retries on blank answers
+use_reordered_prompt = True   # C→Q prompt ordering (context before question)
+max_concurrent = 2            # lower (1) for large models, higher (3-4) for small ones
 ```
 
 **Key things to change:**
@@ -693,20 +924,37 @@ size, energy (Wh), and power — ready for plotting.
 
 ## 12) Results output for post-processing
 
-Every experiment produces three files for iteration:
+Every experiment produces two files immediately, and a third after post-hoc
+processing:
 
-| File               | Format | What's in it                                      |
-|--------------------|--------|---------------------------------------------------|
-| `submission.csv`   | CSV    | Kaggle-format predictions (id, answer_value, ...) |
-| `results.json`     | JSON   | Per-question: GT, prediction, scores, latency     |
-| `summary.json`     | JSON   | Aggregate: overall score, hardware metrics, config |
+| File               | Format | What's in it                                                  |
+|--------------------|--------|---------------------------------------------------------------|
+| `results.json`     | JSON   | Per-question: **raw** model output, GT, latency, retrieval    |
+| `summary.json`     | JSON   | Aggregate: overall score, hardware metrics, config snapshot    |
+| `submission.csv`   | CSV    | Normalised Kaggle-format predictions (created by `posthoc.py`)|
 
-To iterate on post-processing:
+`results.json` intentionally stores **raw (un-normalised)** model output so
+you can always re-run normalisation with improved rules without re-running
+expensive LLM inference:
+
+```bash
+# Normalise and re-score (writes submission.csv alongside results.json)
+python scripts/posthoc.py artifacts/experiments/train_QA/qwen7b-v1/
+
+# Dry-run: see the score without writing files
+python scripts/posthoc.py artifacts/experiments/train_QA/qwen7b-v1/ --dry-run
+```
+
+All answer normalisation logic (comma stripping, abbreviation expansion,
+range formatting, hedging prefix removal, etc.) lives in **one place**:
+`scripts/posthoc.py`.
+
+To iterate on post-processing in Python:
 
 ```python
 import json, pandas as pd
 
-# Load per-question results
+# Load per-question results (raw model output)
 with open("artifacts/experiments/train_QA/qwen7b-v1/results.json") as f:
     results = json.load(f)
 
@@ -745,11 +993,12 @@ KohakuRAG_UI/
 ├── scripts/                  # Benchmarking & analysis tools
 │   ├── hardware_metrics.py   # VRAM, disk, energy, CPU RSS, machine ID
 │   ├── run_experiment.py     # Run one experiment (--env for machine label)
+│   ├── posthoc.py            # Post-hoc normalisation & scoring (single source of truth)
+│   ├── score.py              # WattBot scoring metric (used by Kaggle + posthoc)
 │   ├── run_qwen_scaling.py   # Qwen size scaling experiment
 │   ├── run_full_benchmark.py # Run all models
 │   ├── run_wattbot_eval.py   # Quick eval + score
 │   ├── run_ensemble.py       # Combine multiple runs
-│   ├── score.py              # WattBot scoring
 │   ├── generate_results_matrix.py
 │   ├── audit_experiments.py
 │   ├── plot_model_size.py

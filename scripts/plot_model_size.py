@@ -201,6 +201,72 @@ def load_experiments(experiments_dir: Path, name_filter: str | None = None,
     return experiments
 
 
+def load_ensemble_experiments(experiments_dir: Path, datafile: str | None = None) -> list[dict]:
+    """Load ensemble experiment summaries for the ranking plot.
+
+    Ensembles are identified by ``"type": "ensemble"`` in their summary or by
+    having ``"ensemble"`` in the directory name.
+    """
+    ensembles = []
+
+    for summary_path in sorted(experiments_dir.glob("**/summary.json")):
+        if datafile is not None and datafile not in summary_path.parts:
+            continue
+        try:
+            with open(summary_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        name = data.get("name", summary_path.parent.name)
+        is_ensemble = data.get("type") == "ensemble" or "ensemble" in name.lower()
+        if not is_ensemble:
+            continue
+
+        score = data.get("overall_score", 0)
+        if score < 0.15:
+            continue
+
+        n_questions = data.get("num_questions", 0)
+        nq = n_questions if n_questions > 0 else 1
+        val_ci = wilson_ci_half(data.get("value_accuracy", 0), nq)
+        ref_ci = wilson_ci_half(data.get("ref_overlap", 0), nq)
+        na_ci = wilson_ci_half(data.get("na_accuracy", 0), nq)
+        overall_ci = np.sqrt((0.75 * val_ci)**2 + (0.15 * ref_ci)**2 + (0.10 * na_ci)**2)
+
+        # Build a readable display name from the experiment name
+        display = name.replace("-", " ").replace("_", " ").title()
+
+        ensembles.append({
+            "experiment": name,
+            "model_id": "",
+            "display_name": display,
+            "llm_provider": "ensemble",
+            "size_b": 0,
+            "size_estimated": False,
+            "overall_score": score,
+            "value_accuracy": data.get("value_accuracy", 0),
+            "ref_overlap": data.get("ref_overlap", 0),
+            "na_accuracy": data.get("na_accuracy", 0),
+            "num_questions": n_questions,
+            "overall_ci": overall_ci,
+            "val_ci": val_ci,
+            "ref_ci": ref_ci,
+            "na_ci": na_ci,
+            "avg_latency": data.get("avg_latency_seconds", 0),
+            "latency_suspect": False,
+            "total_cost": data.get("estimated_cost_usd", 0),
+            "input_tokens": data.get("input_tokens", 0),
+            "output_tokens": data.get("output_tokens", 0),
+            "gpu_energy_wh": data.get("hardware", {}).get("gpu_energy_wh", 0),
+            "is_ensemble": True,
+            "num_models": data.get("num_models", 0),
+            "strategy": data.get("strategy", ""),
+        })
+
+    return ensembles
+
+
 # ============================================================================
 # Plot Helpers
 # ============================================================================
@@ -421,29 +487,56 @@ def plot_bubble_chart(experiments: list[dict], output_dir: Path):
     print(f"Saved {output_dir / 'size_score_cost_bubble.png'}")
 
 
-def plot_overall_ranking(experiments: list[dict], output_dir: Path):
-    """Plot 5: Overall performance ranking (horizontal bar chart)."""
-    fig, ax = plt.subplots(figsize=(12, max(7, len(experiments) * 0.6)))
+ENSEMBLE_COLOR = "#d97706"  # amber – visually distinct from model family colors
 
-    sorted_exp = sorted(experiments, key=lambda x: x["overall_score"])
-    names = [e["display_name"] for e in sorted_exp]
+
+def plot_overall_ranking(experiments: list[dict], output_dir: Path,
+                         ensembles: list[dict] | None = None):
+    """Plot 5: Overall performance ranking (horizontal bar chart).
+
+    When *ensembles* is provided, ensemble entries are merged in and drawn
+    with hatching + amber colour so they stand out from individual models.
+    """
+    all_exp = list(experiments)
+    if ensembles:
+        all_exp.extend(ensembles)
+
+    sorted_exp = sorted(all_exp, key=lambda x: x["overall_score"])
+    n_bars = len(sorted_exp)
+    fig, ax = plt.subplots(figsize=(12, max(7, n_bars * 0.6)))
+
     scores = [e["overall_score"] for e in sorted_exp]
     ci_widths = [e.get("overall_ci", 0) for e in sorted_exp]
-    colors = [get_color(n) for n in names]
-    # Add indicator for local vs API
+
+    # Per-bar colour: ensemble bars get amber, models get family colour
+    colors = []
     labels = []
-    for e in sorted_exp:
-        suffix = " [local]" if e.get("llm_provider") == "hf_local" else ""
-        labels.append(f"{e['display_name']}{suffix}")
+    hatch_indices = []
+    for i, e in enumerate(sorted_exp):
+        if e.get("is_ensemble"):
+            colors.append(ENSEMBLE_COLOR)
+            labels.append(f"{e['display_name']}  [ensemble]")
+            hatch_indices.append(i)
+        else:
+            colors.append(get_color(e["display_name"]))
+            suffix = " [local]" if e.get("llm_provider") == "hf_local" else ""
+            labels.append(f"{e['display_name']}{suffix}")
 
-    bars = ax.barh(range(len(labels)), scores, color=colors, edgecolor="white", linewidth=1.2, height=0.65,
-                   xerr=ci_widths, capsize=3, error_kw={'linewidth': 1.2, 'color': '#333'})
+    bars = ax.barh(range(n_bars), scores, color=colors, edgecolor="white",
+                   linewidth=1.2, height=0.65,
+                   xerr=ci_widths, capsize=3,
+                   error_kw={'linewidth': 1.2, 'color': '#333'})
 
-    for i, (bar, score, ci) in enumerate(zip(bars, scores, ci_widths)):
+    # Apply hatching to ensemble bars
+    for idx in hatch_indices:
+        bars[idx].set_hatch("//")
+        bars[idx].set_edgecolor("#92400e")
+
+    for bar, score, ci in zip(bars, scores, ci_widths):
         ax.text(bar.get_width() + ci + 0.01, bar.get_y() + bar.get_height() / 2,
                 f"{score:.3f}", va="center", fontsize=10, fontweight="bold")
 
-    ax.set_yticks(range(len(labels)))
+    ax.set_yticks(range(n_bars))
     ax.set_yticklabels(labels, fontsize=11)
     ax.set_xlim(0, 1.05)
     ax.set_xlabel("WattBot Score (0.75*Val + 0.15*Ref + 0.10*NA)", fontsize=11)
@@ -452,6 +545,15 @@ def plot_overall_ranking(experiments: list[dict], output_dir: Path):
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", linestyle="--", alpha=0.3)
+
+    # Legend entry for ensemble hatching
+    if hatch_indices:
+        from matplotlib.patches import Patch
+        ax.legend(
+            handles=[Patch(facecolor=ENSEMBLE_COLOR, edgecolor="#92400e",
+                           hatch="//", label="Ensemble")],
+            loc="lower right", fontsize=10,
+        )
 
     plt.tight_layout()
     plt.savefig(output_dir / "overall_ranking.png", dpi=300, bbox_inches="tight")
@@ -651,12 +753,17 @@ def main():
     print(f"Loaded {len(experiments)} experiments")
     print_summary_table(experiments)
 
+    # Load ensemble experiments for the ranking plot
+    ensembles = load_ensemble_experiments(experiments_dir, datafile=args.datafile)
+    if ensembles:
+        print(f"Loaded {len(ensembles)} ensemble experiment(s) for ranking plot")
+
     print("\nGenerating plots...")
     plot_size_vs_scores(experiments, output_dir)
     plot_size_vs_latency(experiments, output_dir)
     plot_size_vs_cost(experiments, output_dir)
     plot_bubble_chart(experiments, output_dir)
-    plot_overall_ranking(experiments, output_dir)
+    plot_overall_ranking(experiments, output_dir, ensembles=ensembles)
     plot_cost_vs_performance(experiments, output_dir)
     plot_score_breakdown(experiments, output_dir)
     plot_energy(experiments, output_dir)
