@@ -179,10 +179,11 @@ Bedrock configs (from the `bedrock` branch) also work if you have
 **Always pass `--env`** so every sub-experiment is tagged with the machine name.
 
 ```bash
-# Full benchmark — all local HF models on the PowerEdge
-python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge
-
-# Full benchmark with test dataset
+# Full benchmark with train dataset (local HF models on the PowerEdge)
+python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
+    --questions data/train_QA.csv
+    
+# Full benchmark with test dataset (local HF models on the PowerEdge)
 python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
     --questions data/test_solutions.csv
 
