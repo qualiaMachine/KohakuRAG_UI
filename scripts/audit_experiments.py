@@ -21,6 +21,16 @@ from score import row_bits
 
 
 def audit():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Audit experiment runs for data quality issues")
+    parser.add_argument(
+        "--datafile", "-d", default=None,
+        help="Filter to experiments from this datafile subfolder "
+             "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
+    )
+    args = parser.parse_args()
+
     experiments_dir = Path(__file__).parent.parent / "artifacts" / "experiments"
     gt_path = Path(__file__).parent.parent / "data" / "train_QA.csv"
 
@@ -37,6 +47,9 @@ def audit():
     else:
         print(f"WARNING: Ground truth not found at {gt_path}")
 
+    if args.datafile:
+        print(f"Filtering to datafile: {args.datafile}")
+
     print(f"\n{'='*110}")
     print(f"{'Experiment':<25s} {'Model ID':<45s} {'Score':>6s} {'Val':>5s} {'Ref':>5s} {'Lat':>8s} {'InTok':>8s} {'OutTok':>7s} {'Cost':>8s} {'Err':>4s} {'FLAGS'}")
     print(f"{'-'*110}")
@@ -44,9 +57,10 @@ def audit():
     issues = []
     clean_experiments = []
 
-    # Find all experiment dirs (supports both flat and <env>/<name>/ layouts)
+    # Find all experiment dirs
     exp_dirs = sorted(
         p.parent for p in experiments_dir.glob("**/summary.json")
+        if args.datafile is None or args.datafile in p.parts
     )
 
     for exp_dir in exp_dirs:

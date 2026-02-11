@@ -198,8 +198,14 @@ python scripts/score.py data/train_QA.csv artifacts/experiments/train_QA/qwen7b-
 ### Generate a side-by-side comparison matrix
 
 ```bash
-# Auto-discovers all experiments
+# Auto-discovers all experiments (both train_QA and test_solutions)
 python scripts/generate_results_matrix.py
+
+# Only train_QA experiments
+python scripts/generate_results_matrix.py --datafile train_QA
+
+# Only test_solutions experiments
+python scripts/generate_results_matrix.py --datafile test_solutions
 
 # Or specify files manually
 python scripts/generate_results_matrix.py \
@@ -216,7 +222,12 @@ gets right or wrong.
 ```bash
 python scripts/run_ensemble.py \
     --experiments qwen7b-v1 llama3-8b-v1 mistral7b-v1 \
-    --name ensemble-3way
+    --name ensemble-3way --env PowerEdge
+
+# Specify datafile explicitly (auto-detected from source experiments by default)
+python scripts/run_ensemble.py \
+    --experiments qwen7b-v1 llama3-8b-v1 \
+    --name ensemble-test --env PowerEdge --datafile test_solutions
 ```
 
 Aggregation strategies: `majority` (default), `first_non_blank`, `confidence`.
@@ -224,7 +235,11 @@ Aggregation strategies: `majority` (default), `first_non_blank`, `confidence`.
 ### Audit experiment quality
 
 ```bash
+# Audit all experiments
 python scripts/audit_experiments.py
+
+# Audit only train_QA experiments
+python scripts/audit_experiments.py --datafile train_QA
 ```
 
 Checks for: missing token counts, high latency, high error rates, score
@@ -236,14 +251,24 @@ inconsistencies, duplicate model runs.
 
 ### Generate all plots
 
+All plotting scripts accept `--datafile <name>` to restrict to a specific
+question set (e.g. `train_QA` or `test_solutions`). Without `--datafile`,
+all experiments are included regardless of which question set was used.
+
 ```bash
 # 1. Build the results matrix (required by plot_from_matrix.py)
-python scripts/generate_results_matrix.py
+python scripts/generate_results_matrix.py --datafile train_QA
 
-# 2. Generate all plots
-python scripts/plot_model_size.py        # size/latency/cost vs. performance (7 plots)
-python scripts/plot_from_matrix.py       # matrix-based comparisons (6 plots)
-python scripts/plot_score_breakdown.py   # score component breakdown (1 plot)
+# 2. Generate all plots (for train_QA only)
+python scripts/plot_model_size.py      --datafile train_QA
+python scripts/plot_from_matrix.py     --datafile train_QA
+python scripts/plot_score_breakdown.py --datafile train_QA
+
+# Or for test_solutions
+python scripts/generate_results_matrix.py --datafile test_solutions
+python scripts/plot_model_size.py      --datafile test_solutions
+python scripts/plot_from_matrix.py     --datafile test_solutions
+python scripts/plot_score_breakdown.py --datafile test_solutions
 ```
 
 All output goes to `artifacts/plots/`.

@@ -99,12 +99,19 @@ def match_model_size(model_id: str) -> tuple[str, float, bool] | None:
     return None
 
 
-def load_experiments(experiments_dir: Path, name_filter: str | None = None) -> list[dict]:
-    """Load experiment summaries, skipping ensembles and duplicates."""
+def load_experiments(experiments_dir: Path, name_filter: str | None = None,
+                     datafile: str | None = None) -> list[dict]:
+    """Load experiment summaries, skipping ensembles and duplicates.
+
+    When *datafile* is given (e.g. ``"train_QA"``), only experiments
+    whose path contains that subfolder are included.
+    """
     experiments = []
     seen_models = {}  # model_id -> best experiment
 
     for summary_path in sorted(experiments_dir.glob("**/summary.json")):
+        if datafile is not None and datafile not in summary_path.parts:
+            continue
         try:
             with open(summary_path) as f:
                 data = json.load(f)
@@ -564,6 +571,11 @@ def main():
     parser.add_argument("--experiments", "-e", default="artifacts/experiments", help="Experiments directory")
     parser.add_argument("--output", "-o", default="artifacts/plots", help="Output directory for plots")
     parser.add_argument("--filter", "-f", default=None, help="Only load experiments containing this string")
+    parser.add_argument(
+        "--datafile", "-d", default=None,
+        help="Filter to experiments from this datafile subfolder "
+             "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
+    )
     args = parser.parse_args()
 
     experiments_dir = Path(args.experiments)
@@ -575,9 +587,11 @@ def main():
         sys.exit(1)
 
     print("Loading experiment data...")
+    if args.datafile:
+        print(f"  Filtering to datafile: {args.datafile}")
     if args.filter:
         print(f"  Filtering to experiments containing: '{args.filter}'")
-    experiments = load_experiments(experiments_dir, name_filter=args.filter)
+    experiments = load_experiments(experiments_dir, name_filter=args.filter, datafile=args.datafile)
 
     if not experiments:
         print("No valid experiments found!")
