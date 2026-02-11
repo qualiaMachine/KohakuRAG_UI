@@ -111,6 +111,7 @@ def _score_from_results_json(results_path: Path):
         "Ref Overlap": ref_acc,
         "NA Recall": na_recall,
         "Overall": overall,
+        "num_questions": len(val_scores),
     }
     result.update(_compute_ci(val_scores, ref_scores, na_gt_scores,
                               val_acc, ref_acc, na_recall, overall))
@@ -164,6 +165,7 @@ def _score_from_submission(gt_df: pd.DataFrame, sub_path: Path):
         "Ref Overlap": ref_acc,
         "NA Recall": na_recall,
         "Overall": overall,
+        "num_questions": len(val_scores),
     }
     result.update(_compute_ci(val_scores, ref_scores, na_gt_scores,
                               val_acc, ref_acc, na_recall, overall))
@@ -209,6 +211,14 @@ def load_and_score(gt_path: Path, experiments_dir: Path):
             scored = _score_from_submission(gt_df, exp_dir / "submission.csv")
 
         if scored is not None:
+            # When duplicate model names exist (e.g. PowerEdge/ and
+            # train_QA/PowerEdge/), prefer the experiment with more
+            # questions — the larger set produces more reliable scores.
+            if model_name in results:
+                existing_n = results[model_name].get("num_questions", 0)
+                new_n = scored.get("num_questions", 0)
+                if new_n <= existing_n:
+                    continue
             results[model_name] = scored
 
     return results

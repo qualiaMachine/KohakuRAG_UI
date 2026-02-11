@@ -177,11 +177,17 @@ def load_experiments(experiments_dir: Path, name_filter: str | None = None) -> l
 
         if model_id in seen_models:
             existing = seen_models[model_id]
+            # Prefer non-suspect latency over suspect
             if existing["latency_suspect"] and not entry["latency_suspect"]:
                 seen_models[model_id] = entry
             elif entry["latency_suspect"] and not existing["latency_suspect"]:
                 pass
-            elif entry["overall_score"] > existing["overall_score"]:
+            # Prefer the experiment with more questions (larger eval set
+            # produces more reliable scores; avoids train_QA's inflated
+            # NA recall from having very few NA questions)
+            elif entry["num_questions"] > existing["num_questions"]:
+                seen_models[model_id] = entry
+            elif entry["num_questions"] == existing["num_questions"] and entry["overall_score"] > existing["overall_score"]:
                 seen_models[model_id] = entry
         else:
             seen_models[model_id] = entry
