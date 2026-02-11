@@ -27,7 +27,7 @@ You need two files in `data/`:
 uv pip install -r local_requirements.txt  # includes kohaku-engine, httpx, etc.
 ```
 
-### Build the index
+### Build the index (in not completed yet)
 
 ```bash
 cd vendor/KohakuRAG
@@ -76,14 +76,16 @@ python scripts/run_experiment.py \
 quantization via `bitsandbytes`). Override with `--precision bf16`, `fp16`, or
 `auto`. Precision is saved to `summary.json` as the `quantization` field.
 
-**Retry & prompt ordering:** Two pipeline config keys control robustness:
+**Retry & prompt ordering:** Pipeline config keys that control robustness
+(matching KohakuRAG competition settings):
 
 | Config key              | Default | Effect |
 |-------------------------|---------|--------|
-| `max_retries`           | `3`     | If the LLM answer is blank, re-run retrieval with increasing `top_k` (iterative deepening: 2x, 3x, ...) |
-| `use_reordered_prompt`  | `False` | When `True`, context is placed **before** the question (C→Q ordering) to combat the "lost in the middle" effect |
+| `max_retries`           | `2`     | If the LLM answer is blank, re-run retrieval with increasing `top_k` (iterative deepening: 2x, 3x, ...) |
+| `use_reordered_prompt`  | `True`  | Context is placed **before** the question (C→Q ordering) to combat the "lost in the middle" effect (~80% relative improvement) |
+| `planner_max_queries`   | `4`     | Number of diverse retrieval queries generated per question by the LLM query planner |
 
-Both can be set in any config file (e.g. `hf_qwen7b.py`).
+All are set in every `hf_*.py` config file (e.g. `hf_qwen7b.py`).
 
 ### Using the test dataset
 
@@ -172,20 +174,16 @@ full precision (roughly 4× more VRAM).
 Bedrock configs (from the `bedrock` branch) also work if you have
 `llm_bedrock.py` and AWS credentials set up.
 
----
-
 ## 3) Running all models (full benchmark)
 
 **Always pass `--env`** so every sub-experiment is tagged with the machine name.
 
 ```bash
-# Smoke test first (1 question per model, catches config/loading errors fast)
-python scripts/run_full_benchmark.py --smoke-test --provider hf_local --env GB10
-
-# Full benchmark — all local HF models on the PowerEdge
-python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge
-
-# Full benchmark with test dataset
+# Full benchmark with train dataset (local HF models on the PowerEdge)
+python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
+    --questions data/train_QA.csv
+    
+# Full benchmark with test dataset (local HF models on the PowerEdge)
 python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
     --questions data/test_solutions.csv
 
@@ -639,17 +637,17 @@ embedding_task = "retrieval"
 
 # Retrieval settings (keep these the same for fair comparison)
 top_k = 8
-planner_max_queries = 3
+planner_max_queries = 4
 deduplicate_retrieval = True
 rerank_strategy = "combined"
 top_k_final = 10
+use_reordered_prompt = True   # C→Q prompt ordering (context before question)
 
 # Unanswerable detection
 retrieval_threshold = 0.25
 
 # Robustness settings
-max_retries = 3               # iterative deepening retries on blank answers
-use_reordered_prompt = True   # C→Q prompt ordering (context before question)
+max_retries = 2               # iterative deepening retries on blank answers
 max_concurrent = 2            # lower (1) for large models, higher (3-4) for small ones
 ```
 
