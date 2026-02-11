@@ -27,7 +27,7 @@ You need two files in `data/`:
 uv pip install -r local_requirements.txt  # includes kohaku-engine, httpx, etc.
 ```
 
-### Build the index
+### Build the index (in not completed yet)
 
 ```bash
 cd vendor/KohakuRAG
