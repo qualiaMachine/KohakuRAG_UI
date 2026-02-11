@@ -209,12 +209,11 @@ class KVaultNodeStore(HierarchicalNodeStore):
             if inferred_metric != metric:
                 metric = inferred_metric  # Use stored metric
 
-        # Read the true dimension from sqlite-vec's own metadata.
-        # This is the authoritative source — it reflects the actual virtual table
-        # definition, which cannot be changed after creation.
+        # Read the true dimension from sqlite-vec's virtual table definition.
+        vec_table = f"{table_prefix}_vec"
         vec_table_dim: int | None = None
+        vec_table_count: int = 0
         try:
-            vec_table = f"{table_prefix}_vec"
             conn = sqlite3.connect(self._path)
             try:
                 row = conn.execute(
@@ -223,33 +222,52 @@ class KVaultNodeStore(HierarchicalNodeStore):
                 ).fetchone()
                 if row and int(row[0]) > 0:
                     vec_table_dim = int(row[0])
+                # Check how many rows the vec table has
+                cnt = conn.execute(
+                    f"SELECT count(*) FROM [{vec_table}]",
+                ).fetchone()
+                if cnt:
+                    vec_table_count = int(cnt[0])
             finally:
                 conn.close()
         except Exception:
             pass
 
-        # Prefer vec_table_dim (ground truth) over metadata, which may have been
-        # written incorrectly by a previous buggy run.
+        # If the caller specifies a dimension and the existing vec table disagrees,
+        # check whether the table is empty (e.g. created by a previous buggy run
+        # with dimensions=1).  If empty, drop it so it gets recreated correctly.
+        if (
+            dimensions is not None
+            and vec_table_dim is not None
+            and vec_table_dim != dimensions
+            and vec_table_count == 0
+        ):
+            try:
+                conn = sqlite3.connect(self._path)
+                try:
+                    conn.execute(f"DROP TABLE IF EXISTS [{vec_table}]")
+                    conn.execute(f"DROP TABLE IF EXISTS [{vec_table}_values]")
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+            vec_table_dim = None  # table gone, will be recreated below
+
+        # Use vec_table_dim as ground truth when it exists and has data
         if vec_table_dim is not None:
-            if inferred_dimensions is not None and inferred_dimensions != vec_table_dim:
-                # Metadata disagrees with the actual table — trust the table.
-                inferred_dimensions = vec_table_dim
-                self._kv[self.META_KEY] = {
-                    "dimensions": vec_table_dim,
-                    "metric": metric,
-                }
-            elif inferred_dimensions is None:
-                inferred_dimensions = vec_table_dim
-                self._kv[self.META_KEY] = {
-                    "dimensions": vec_table_dim,
-                    "metric": metric,
-                }
+            inferred_dimensions = vec_table_dim
+            # Sync metadata to match
+            self._kv[self.META_KEY] = {
+                "dimensions": vec_table_dim,
+                "metric": metric,
+            }
 
         # Determine final dimensions
-        if dimensions is not None:
-            final_dimensions = dimensions
-        elif inferred_dimensions is not None:
+        if inferred_dimensions is not None:
             final_dimensions = inferred_dimensions
+        elif dimensions is not None:
+            final_dimensions = dimensions
         else:
             raise ValueError(
                 "Embedding dimension required for new store. Pass dimensions=... "
@@ -257,17 +275,6 @@ class KVaultNodeStore(HierarchicalNodeStore):
             )
 
         self._dimensions = int(final_dimensions)
-
-        # Check dimension consistency if both provided and stored
-        if (
-            dimensions is not None
-            and inferred_dimensions is not None
-            and dimensions != inferred_dimensions
-        ):
-            raise ValueError(
-                f"Existing store was built with dimension {inferred_dimensions}, "
-                f"but {dimensions} was requested."
-            )
 
         # Store/update metadata
         self._kv[self.META_KEY] = {"dimensions": self._dimensions, "metric": metric}
