@@ -290,7 +290,7 @@ def normalize_ref_id(raw_ref) -> list | str:
 
 
 # =============================================================================
-# Prompts  (Q→C ordering: question appears before context in the template)
+# Prompts — Q→C ordering (question before context, the default)
 # =============================================================================
 
 SYSTEM_PROMPT = """
@@ -328,6 +328,55 @@ JSON Answer:
 
 
 # =============================================================================
+# Prompts — C→Q ordering (context BEFORE question to combat "lost in the middle")
+# Placing retrieved context first yields ~80% relative improvement in some tests.
+# =============================================================================
+
+SYSTEM_PROMPT_REORDERED = """
+You must answer strictly based on the provided context snippets.
+Do NOT use external knowledge or assumptions.
+If the context does not clearly support an answer, output "is_blank" for both answer_value and ref_id.
+
+CRITICAL: Match your answer_value to what the question asks for:
+- For "Which X..." questions expecting an identifier, return the NAME/identifier, not a numeric value.
+- For numeric questions with a unit, return only the number in that unit.
+- The "answer_unit" field in additional info tells you the expected format.
+- For True/False questions, you MUST output "1" for True and "0" for False.
+""".strip()
+
+USER_TEMPLATE_REORDERED = """
+You will answer a question using ONLY the provided context snippets.
+If the context does not clearly support an answer, use "is_blank".
+
+Context snippets from documents:
+{context}
+
+---
+
+Now answer the following question based ONLY on the context above.
+
+Question: {question}
+
+Additional info (JSON): {additional_info_json}
+
+IMPORTANT: The "answer_unit" field specifies the expected format/unit for answer_value.
+- If answer_unit is a unit (e.g., "kW", "USD"), express answer_value as a number in that unit (no unit name).
+- If answer_unit is "is_blank", answer_value should be the exact identifier/name from context that answers the question.
+- If the answer is a numeric range, format as [lower,upper].
+
+Return STRICT JSON with these keys in order:
+- explanation          (1-3 sentences explaining how context supports the answer and how you applied answer_unit; or "is_blank")
+- answer               (short natural-language response)
+- answer_value         (the value matching the expected format; or "is_blank")
+- ref_id               (list of document ids from context used as evidence; or "is_blank")
+- ref_url              (list of URLs for the cited documents; or "is_blank")
+- supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
+
+JSON Answer:
+""".strip()
+
+
+# =============================================================================
 # Config Loading
 # =============================================================================
 
@@ -349,6 +398,8 @@ def load_config(config_path: str) -> dict:
         "llm_provider", "top_k", "planner_max_queries", "deduplicate_retrieval",
         "rerank_strategy", "top_k_final", "retrieval_threshold",
         "max_retries", "max_concurrent",
+        # Prompt ordering: if True, place context BEFORE question (C→Q)
+        "use_reordered_prompt",
         # Embedding settings
         "embedding_model", "embedding_dim", "embedding_task", "embedding_model_id",
         # HF local settings
@@ -473,6 +524,12 @@ class ExperimentRunner:
         self.nvml_energy: NVMLEnergyCounter | None = None
         self.cpu_monitor: CPURSSMonitor | None = None
 
+        # Prompt ordering (C→Q vs Q→C)
+        self.use_reordered_prompt: bool = config.get("use_reordered_prompt", False)
+
+        # Retry config for iterative deepening on blank answers
+        self.max_retries: int = config.get("max_retries", 3)
+
     async def initialize(self) -> None:
         """Initialize the RAG pipeline with config settings."""
         project_root = Path(__file__).parent.parent
@@ -524,6 +581,9 @@ class ExperimentRunner:
         max_queries = self.config.get("planner_max_queries", 3)
         planner = LLMQueryPlanner(self.chat_model, max_queries=max_queries)
         print(f"[init] Query planner: LLMQueryPlanner (max_queries={max_queries})")
+        prompt_order = "C→Q (reordered)" if self.use_reordered_prompt else "Q→C (default)"
+        print(f"[init] Prompt ordering: {prompt_order}")
+        print(f"[init] Max retries (iterative deepening): {self.max_retries}")
 
         print("[init] Building RAG pipeline...")
         self.pipeline = RAGPipeline(
@@ -546,11 +606,25 @@ class ExperimentRunner:
         index: int,
         total: int,
     ) -> QuestionResult:
-        """Process a single question and return detailed result."""
+        """Process a single question with retry (iterative deepening) on blank answers.
+
+        Strategy (mirrors vendor wattbot_answer.py):
+        - Start with top_k context snippets
+        - If the LLM answer is blank, retry with 2*top_k, then 3*top_k, etc.
+        - Stops after max_retries additional attempts or on a non-blank answer.
+        """
         async with self.semaphore:
             start_time = time.time()
             error_msg = None
             raw_response = ""
+
+            # Select prompts based on config (C→Q vs Q→C)
+            if self.use_reordered_prompt:
+                sys_prompt = SYSTEM_PROMPT_REORDERED
+                usr_template = USER_TEMPLATE_REORDERED
+            else:
+                sys_prompt = SYSTEM_PROMPT
+                usr_template = USER_TEMPLATE
 
             try:
                 additional_info = {
@@ -558,13 +632,54 @@ class ExperimentRunner:
                     "question_id": row["id"],
                 }
 
-                result = await self.pipeline.run_qa(
-                    question=row["question"],
-                    top_k=self.config.get("top_k", 5),
-                    system_prompt=SYSTEM_PROMPT,
-                    user_template=USER_TEMPLATE,
-                    additional_info=additional_info,
-                )
+                base_top_k = self.config.get("top_k", 5)
+                base_top_k_final = self.config.get("top_k_final", None)
+                result = None
+                answer_is_blank = True
+
+                # Retry loop: increase retrieval depth on blank answers
+                for attempt in range(self.max_retries + 1):
+                    current_top_k = base_top_k * (attempt + 1)
+                    current_top_k_final = (
+                        base_top_k_final * (attempt + 1)
+                        if base_top_k_final is not None
+                        else None
+                    )
+
+                    try:
+                        result = await self.pipeline.run_qa(
+                            question=row["question"],
+                            top_k=current_top_k,
+                            system_prompt=sys_prompt,
+                            user_template=usr_template,
+                            additional_info=additional_info,
+                            top_k_final=current_top_k_final,
+                        )
+                    except Exception as retry_err:
+                        # Context overflow — reduce top_k and try once more
+                        err_msg = str(retry_err).lower()
+                        if "maximum context length" in err_msg or "context_length_exceeded" in err_msg:
+                            reduced_k = max(current_top_k - 2, 1)
+                            print(f"  [{row['id']}] Context overflow at top_k={current_top_k}, retrying with {reduced_k}")
+                            result = await self.pipeline.run_qa(
+                                question=row["question"],
+                                top_k=reduced_k,
+                                system_prompt=sys_prompt,
+                                user_template=usr_template,
+                                additional_info=additional_info,
+                            )
+                        else:
+                            raise
+
+                    # Check if the answer is blank
+                    answer_is_blank = (
+                        result.answer.answer_value.strip().lower() == "is_blank"
+                        or not result.answer.ref_id
+                    )
+                    if not answer_is_blank:
+                        break  # Got a valid answer
+                    if attempt < self.max_retries:
+                        print(f"  [{row['id']}] Blank answer at top_k={current_top_k}, deepening retrieval...")
 
                 pred_value = normalize_answer_value(result.answer.answer_value)
                 pred_ref = normalize_ref_id(result.answer.ref_id)

@@ -76,6 +76,15 @@ python scripts/run_experiment.py \
 quantization via `bitsandbytes`). Override with `--precision bf16`, `fp16`, or
 `auto`. Precision is saved to `summary.json` as the `quantization` field.
 
+**Retry & prompt ordering:** Two pipeline config keys control robustness:
+
+| Config key              | Default | Effect |
+|-------------------------|---------|--------|
+| `max_retries`           | `3`     | If the LLM answer is blank, re-run retrieval with increasing `top_k` (iterative deepening: 2x, 3x, ...) |
+| `use_reordered_prompt`  | `False` | When `True`, context is placed **before** the question (C→Q ordering) to combat the "lost in the middle" effect |
+
+Both can be set in any config file (e.g. `hf_qwen7b.py`).
+
 ### Using the test dataset
 
 The competition test set (`test_solutions.csv`) is **not** stored in the repo.
@@ -217,7 +226,32 @@ This produces a CSV where each row is a question and columns show each model's
 prediction + correctness, making it easy to spot which questions each model
 gets right or wrong.
 
-### Ensemble voting (combine multiple models)
+### Ensemble voting
+
+The ensemble runner supports two modes:
+
+**Mode 1 — Same-model ensemble** (KohakuRAG competition strategy): Run *m*
+independent inference passes of the **same model** and aggregate via voting.
+This was the only strategy that remained #1 on both public and private
+leaderboard partitions.
+
+```bash
+# 5 independent runs of qwen7b, answer_priority voting (default)
+python scripts/run_ensemble.py \
+    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
+    --num-runs 5 --name qwen7b-ens5 --env GB10
+
+# 9 runs (closer to competition setup), majority voting
+python scripts/run_ensemble.py \
+    --config vendor/KohakuRAG/configs/hf_qwen7b.py \
+    --num-runs 9 --strategy majority --name qwen7b-ens9 --env PowerEdge
+```
+
+Each run is executed as a separate subprocess for completely independent model
+state.  LLM sampling temperature introduces per-run diversity.
+
+**Mode 2 — Cross-model ensemble**: Aggregate results from previously completed
+experiments (different models).
 
 ```bash
 python scripts/run_ensemble.py \
@@ -230,7 +264,17 @@ python scripts/run_ensemble.py \
     --name ensemble-test --env PowerEdge --datafile test_solutions
 ```
 
-Aggregation strategies: `majority` (default), `first_non_blank`, `confidence`.
+**Aggregation strategies:**
+
+| Strategy          | Description |
+|-------------------|-------------|
+| `answer_priority` | (Default) Vote on answer first, then collect refs only from matching runs — ensures citation consistency |
+| `majority`        | Most common answer wins; union of all refs |
+| `first_non_blank` | First non-blank answer wins |
+
+**Abstention-aware voting** (`--ignore-blank`): If any run produces a non-blank
+answer, blank ("is_blank") runs are filtered out before voting.  Enabled by
+default for same-model ensembles.
 
 ### Audit experiment quality
 
@@ -417,9 +461,10 @@ top_k_final = 10
 # Unanswerable detection
 retrieval_threshold = 0.25
 
-# Other settings
-max_retries = 2
-max_concurrent = 2  # lower (1) for large models, higher (3-4) for small ones
+# Robustness settings
+max_retries = 3               # iterative deepening retries on blank answers
+use_reordered_prompt = True   # C→Q prompt ordering (context before question)
+max_concurrent = 2            # lower (1) for large models, higher (3-4) for small ones
 ```
 
 **Key things to change:**
