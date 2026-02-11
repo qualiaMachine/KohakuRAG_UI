@@ -285,9 +285,14 @@ def main():
                 continue
 
             for model in models:
-                val_col = f"{model}_ValCorrect"
-                if val_col in subset.columns:
-                    successes = subset[val_col].sum()
+                # For NA questions, use NACorrect (ValCorrect is always True
+                # when GT is blank, so it's meaningless for NA detection)
+                if qtype == "is_NA":
+                    score_col = f"{model}_NACorrect"
+                else:
+                    score_col = f"{model}_ValCorrect"
+                if score_col in subset.columns:
+                    successes = subset[score_col].sum()
                     acc = successes / n_type if n_type > 0 else 0
                     type_scores[model][qtype] = acc
 
