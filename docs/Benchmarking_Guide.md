@@ -271,7 +271,9 @@ python scripts/plot_from_matrix.py     --datafile test_solutions
 python scripts/plot_score_breakdown.py --datafile test_solutions
 ```
 
-All output goes to `artifacts/plots/`.
+When `--datafile` is provided, plots are saved to a matching subdirectory
+(e.g. `artifacts/plots/train_QA/`, `artifacts/plots/test_solutions/`).
+Without `--datafile`, plots go to `artifacts/plots/` directly.
 
 Ground truth is auto-detected: `data/test_solutions.csv` if present, otherwise
 `data/train_QA.csv`. Override with `--ground-truth <path>`.
