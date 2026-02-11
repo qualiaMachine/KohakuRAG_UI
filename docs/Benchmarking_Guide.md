@@ -409,6 +409,59 @@ python scripts/run_ensemble.py \
 The same `--ignore-blank` rationale from the top-3 ensemble applies: blank
 votes from lower-scoring models must not outvote correct answers.
 
+### Kitchen-sink ensemble: All 11 models
+
+For a full-diversity baseline, combine every benchmarked local model. With 11
+voters, majority requires 6-of-11 agreement — a high bar that rewards only
+answers with broad consensus.
+
+| Model              | WattBot Score | NA Recall | Latency | VRAM (4-bit) |
+|--------------------|:---:|:---:|:---:|:---:|
+| Qwen 2.5 72B      | 0.752 | 0.938 | 15.7s | ~33 GB |
+| Qwen3 30B-A3B     | 0.724 | 0.813 | 76.3s | ~18 GB |
+| Qwen 2.5 32B      | 0.710 | 1.000 | 8.4s  | ~22 GB |
+| Qwen 2.5 14B      | 0.660 | 0.875 | 16.0s | ~15 GB |
+| Mixtral 8x22B      | 0.643 | 0.875 | 17.3s | ~80 GB |
+| Qwen 2.5 7B       | 0.570 | 0.563 | 11.8s | ~6 GB  |
+| Qwen 2.5 3B       | 0.526 | 0.375 | 21.7s | ~3 GB  |
+| Mistral 7B         | 0.501 | 0.938 | 14.7s | ~6 GB  |
+| Mixtral 8x7B       | 0.416 | 0.938 | 19.5s | ~25 GB |
+| Phi-3 Mini         | 0.398 | 0.750 | 39.1s | ~3 GB  |
+| OLMoE 1B-7B        | 0.143 | 1.000 | 213.5s | ~5 GB |
+
+**Trade-offs vs. the top-3 / top-5 ensembles:**
+
+- **Pros:** Maximum architectural diversity (5 model families); weak models
+  can't hurt if they're in the minority; useful as an upper/lower bound
+  comparison for ablation studies.
+- **Cons:** The 6 weaker models (score < 0.64) add noise more often than
+  signal. If the top-3 already agree, the extra votes are redundant. Total
+  sequential VRAM is ~216 GB. OLMoE's 213s latency dominates wall-clock time.
+
+```bash
+# All-model ensemble on test_solutions
+python scripts/run_ensemble.py \
+    --experiments \
+        qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench \
+        mixtral-8x22b-bench qwen7b-bench qwen3b-bench mistral7b-bench \
+        mixtral-8x7b-bench phi3-mini-bench olmoe-1b7b-bench \
+    --name ensemble-all11-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile test_solutions
+
+# All-model ensemble on train_QA
+python scripts/run_ensemble.py \
+    --experiments \
+        qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench \
+        mixtral-8x22b-bench qwen7b-bench qwen3b-bench mistral7b-bench \
+        mixtral-8x7b-bench phi3-mini-bench olmoe-1b7b-bench \
+    --name ensemble-all11-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile train_QA
+```
+
 ### Audit experiment quality
 
 ```bash
