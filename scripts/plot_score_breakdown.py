@@ -335,6 +335,8 @@ def main():
     project_root = Path(__file__).parent.parent
     experiments_dir = project_root / args.experiments
     output_path = project_root / args.output
+    if args.datafile:
+        output_path = output_path.parent / args.datafile / output_path.name
 
     # Auto-detect ground truth: prefer test_solutions.csv, fall back to train_QA.csv
     if args.ground_truth:

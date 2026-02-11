@@ -629,6 +629,8 @@ def main():
 
     experiments_dir = Path(args.experiments)
     output_dir = Path(args.output)
+    if args.datafile:
+        output_dir = output_dir / args.datafile
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not experiments_dir.exists():
