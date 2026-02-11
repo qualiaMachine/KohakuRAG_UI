@@ -26,26 +26,41 @@ sys.path.insert(0, str(Path(__file__).parent))
 from score import row_bits, is_blank, ref_overlap_score
 
 
-def load_experiment_results(experiments_dir: Path, experiment_names: list[str]) -> dict[str, list[dict]]:
+def load_experiment_results(
+    experiments_dir: Path,
+    experiment_names: list[str],
+    env: str = "",
+    datafile: str = "",
+) -> dict[str, list[dict]]:
     """Load results.json from each experiment.
 
     Supports flat, env-nested, and datafile-nested directory layouts.
+    When env and/or datafile are provided, the search is scoped to
+    experiments_dir/<env>/<datafile>/ so that identically-named experiments
+    under different datafile subfolders don't collide.
     """
     all_results = {}
+
+    # Narrow the search root when env/datafile are known
+    search_root = experiments_dir
+    if env:
+        search_root = search_root / env
+    if datafile:
+        search_root = search_root / datafile
 
     # Build lookup: experiment name -> results.json path
     all_results_paths = {
         p.parent.name: p
-        for p in experiments_dir.glob("**/results.json")
+        for p in search_root.glob("**/results.json")
     }
 
     for name in experiment_names:
-        # Try direct path first (supports <env>/<name> syntax), then name-only lookup
-        results_path = experiments_dir / name / "results.json"
+        # Try scoped path first, then fallback to lookup
+        results_path = search_root / name / "results.json"
         if not results_path.exists():
             results_path = all_results_paths.get(name)
         if results_path is None or not results_path.exists():
-            print(f"Warning: No results found for {name}")
+            print(f"Warning: No results found for {name} under {search_root}")
             continue
 
         with open(results_path) as f:
@@ -54,9 +69,10 @@ def load_experiment_results(experiments_dir: Path, experiment_names: list[str]) 
     return all_results
 
 
-def infer_datafile_stem(experiments_dir: Path, experiment_names: list[str]) -> str:
+def infer_datafile_stem(experiments_dir: Path, experiment_names: list[str], env: str = "") -> str:
     """Infer the datafile subfolder from source experiments' summary.json."""
-    for p in experiments_dir.glob("**/summary.json"):
+    search_root = experiments_dir / env if env else experiments_dir
+    for p in search_root.glob("**/summary.json"):
         if p.parent.name in experiment_names:
             try:
                 with open(p) as f:
@@ -74,13 +90,21 @@ def load_ground_truth(gt_path: Path) -> pd.DataFrame:
     return pd.read_csv(gt_path)
 
 
-def aggregate_majority(answers: list[str]) -> str:
+def aggregate_majority(answers: list[str], ignore_blank: bool = False) -> str:
     """Return most common answer. Ties go to first occurrence."""
     if not answers:
         return "is_blank"
 
     # Filter out empty strings
     valid_answers = [a for a in answers if a and a.strip()]
+
+    # Optionally filter out is_blank / refusal answers so they can't outvote
+    # real answers from stronger models
+    if ignore_blank:
+        non_blank = [a for a in valid_answers if not is_blank(a)]
+        if non_blank:
+            valid_answers = non_blank
+
     if not valid_answers:
         return "is_blank"
 
@@ -120,6 +144,7 @@ def run_ensemble(
     all_results: dict[str, list[dict]],
     strategy: str = "majority",
     model_weights: dict[str, float] | None = None,
+    ignore_blank: bool = False,
 ) -> list[dict]:
     """Combine results from multiple models."""
     if not all_results:
@@ -152,13 +177,18 @@ def run_ensemble(
 
         # Aggregate based on strategy
         if strategy == "majority":
-            final_value = aggregate_majority(answers)
+            final_value = aggregate_majority(answers, ignore_blank=ignore_blank)
         elif strategy == "first_non_blank":
             final_value = aggregate_first_non_blank(answers)
         else:
-            final_value = aggregate_majority(answers)
+            final_value = aggregate_majority(answers, ignore_blank=ignore_blank)
 
-        final_ref = aggregate_refs(refs)
+        # Only include refs from models whose answer matched the winner
+        winning_refs = [
+            ref for ans, ref in zip(answers, refs)
+            if ans == final_value
+        ]
+        final_ref = aggregate_refs(winning_refs)
 
         # Get metadata from first model's result
         first_result = results_by_id[first_model].get(qid, {})
@@ -232,6 +262,7 @@ def save_ensemble_results(
     output_dir: Path,
     model_names: list[str],
     strategy: str,
+    ignore_blank: bool = False,
 ):
     """Save ensemble results."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -247,6 +278,7 @@ def save_ensemble_results(
         "name": output_dir.name,
         "type": "ensemble",
         "strategy": strategy,
+        "ignore_blank": ignore_blank,
         "models": model_names,
         "num_models": len(model_names),
         "num_questions": len(results),
@@ -308,6 +340,13 @@ def main():
         help="Datafile subfolder (e.g. 'train_QA', 'test_solutions'). "
              "Auto-detected from source experiments if not specified."
     )
+    parser.add_argument(
+        "--ignore-blank",
+        action="store_true",
+        default=False,
+        help="Filter out is_blank/refusal answers before majority voting. "
+             "Prevents weaker models from outvoting stronger ones via refusals."
+    )
 
     args = parser.parse_args()
 
@@ -317,7 +356,7 @@ def main():
     if args.datafile:
         datafile_stem = args.datafile
     else:
-        datafile_stem = infer_datafile_stem(experiments_dir, args.experiments)
+        datafile_stem = infer_datafile_stem(experiments_dir, args.experiments, env=args.env)
 
     # Build output path: experiments/<env>/<datafile>/<name>/
     if args.env:
@@ -329,10 +368,13 @@ def main():
     print(f"ENSEMBLE: {args.name}")
     print(f"Models: {', '.join(args.experiments)}")
     print(f"Strategy: {args.strategy}")
+    print(f"Ignore blank: {args.ignore_blank}")
     print(f"{'='*60}\n")
 
-    # Load results from each experiment
-    all_results = load_experiment_results(experiments_dir, args.experiments)
+    # Load results from each experiment (scoped to env/datafile)
+    all_results = load_experiment_results(
+        experiments_dir, args.experiments, env=args.env, datafile=datafile_stem,
+    )
 
     if len(all_results) < 2:
         print("Error: Need at least 2 experiments for ensemble")
@@ -341,7 +383,9 @@ def main():
     print(f"Loaded results from {len(all_results)} models")
 
     # Run ensemble
-    ensemble_results = run_ensemble(all_results, strategy=args.strategy)
+    ensemble_results = run_ensemble(
+        all_results, strategy=args.strategy, ignore_blank=args.ignore_blank,
+    )
 
     # Score ensemble
     scores = score_ensemble_results(ensemble_results)
@@ -353,6 +397,7 @@ def main():
         output_dir,
         list(all_results.keys()),
         args.strategy,
+        ignore_blank=args.ignore_blank,
     )
 
     # Print summary
@@ -361,6 +406,7 @@ def main():
     print(f"{'='*60}")
     print(f"Models       : {', '.join(all_results.keys())}")
     print(f"Strategy     : {args.strategy}")
+    print(f"Ignore blank : {args.ignore_blank}")
     print(f"Questions    : {len(ensemble_results)}")
     print(f"Correct      : {scores['questions_correct']} ({100*scores['value_accuracy']:.1f}%)")
     print(f"\nComponent Scores:")
