@@ -107,6 +107,12 @@ def main():
         default="artifacts/results_matrix.csv",
         help="Output CSV path"
     )
+    parser.add_argument(
+        "--datafile", "-d",
+        default=None,
+        help="Filter to submissions from this datafile subfolder "
+             "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
+    )
 
     args = parser.parse_args()
 
@@ -121,6 +127,10 @@ def main():
             p = Path(pattern)
             if p.exists():
                 submission_files.append(p)
+
+    # Filter to datafile subfolder if specified
+    if args.datafile:
+        submission_files = [p for p in submission_files if args.datafile in p.parts]
 
     unique_files = sorted(list(set(submission_files)))
     if not unique_files:

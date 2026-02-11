@@ -170,22 +170,26 @@ def _score_from_submission(gt_df: pd.DataFrame, sub_path: Path):
     return result
 
 
-def load_and_score(gt_path: Path, experiments_dir: Path):
+def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = None):
     """Load and calculate component scores for each model.
 
     Prefers per-question ``results.json`` from the experiment run so that
     scores are computed over the *same* question set as the original
     experiment.  Falls back to re-scoring ``submission.csv`` against
     ``gt_path`` when ``results.json`` is unavailable.
+
+    When *datafile* is given (e.g. ``"train_QA"``), only experiments
+    whose path contains that subfolder are included.
     """
     # Only load GT if we actually need it (fallback path)
     gt_df = None
 
     results = {}
 
-    # Find all experiment dirs (supports both flat and <env>/<name>/ layouts)
+    # Find all experiment dirs
     all_exp_dirs = sorted(
         p.parent for p in experiments_dir.glob("**/submission.csv")
+        if datafile is None or datafile in p.parts
     )
 
     for exp_dir in all_exp_dirs:
@@ -315,6 +319,12 @@ def main():
         help="Path to experiments directory",
     )
     parser.add_argument(
+        "--datafile", "-d",
+        default=None,
+        help="Filter to experiments from this datafile subfolder "
+             "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
+    )
+    parser.add_argument(
         "--output", "-o",
         default="artifacts/plots/score_breakdown.png",
         help="Output path for chart",
@@ -336,8 +346,10 @@ def main():
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if args.datafile:
+        print(f"Filtering to datafile: {args.datafile}")
     print("Loading and scoring experiments...")
-    results = load_and_score(gt_path, experiments_dir)
+    results = load_and_score(gt_path, experiments_dir, datafile=args.datafile)
 
     print(f"\nResults ({len(results)} models):")
     print("-" * 70)
