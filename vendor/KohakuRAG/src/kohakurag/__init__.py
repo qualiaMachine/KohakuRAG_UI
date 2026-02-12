@@ -13,7 +13,7 @@ from .embeddings import (
     average_embeddings,
 )
 from .indexer import DocumentIndexer
-from .llm import HuggingFaceLocalChatModel, OpenAIChatModel
+from .llm import BedrockChatModel, HuggingFaceLocalChatModel, OpenAIChatModel
 from .parsers import (
     dict_to_payload,
     markdown_to_payload,
@@ -21,6 +21,7 @@ from .parsers import (
     text_to_payload,
 )
 from .pipeline import (
+    LLMQueryPlanner,
     MockChatModel,
     PromptTemplate,
     QueryPlanner,
@@ -41,6 +42,7 @@ from .types import (
 
 __all__ = [
     "average_embeddings",
+    "BedrockChatModel",
     "ContextSnippet",
     "DocumentIndexer",
     "DocumentPayload",
@@ -50,6 +52,7 @@ __all__ = [
     "InMemoryNodeStore",
     "KVaultNodeStore",
     "JinaEmbeddingModel",
+    "LLMQueryPlanner",
     "LocalHFEmbeddingModel",
     "MockChatModel",
     "NodeKind",
