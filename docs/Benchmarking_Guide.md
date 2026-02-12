@@ -397,6 +397,14 @@ python scripts/run_ensemble.py \
     --env PowerEdge \
     --datafile test_solutions
 
+python scripts/run_ensemble.py \
+    --experiments qwen72b-bench qwen32b-bench qwen14b-bench qwen7b-bench \
+    --name ensemble-top5-majority \
+    --strategy majority --ignore-blank \
+    --env PowerEdge \
+    --datafile test_solutions
+
+
 # Same ensemble on train_QA
 python scripts/run_ensemble.py \
     --experiments qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench mixtral-8x22b-bench \
