@@ -116,7 +116,8 @@ VRAM_4BIT_GB = {
     "hf_qwen32b": 20, "hf_qwen72b": 40, "hf_llama3_8b": 6, "hf_gemma2_9b": 7,
     "hf_gemma2_27b": 17, "hf_mixtral_8x7b": 26, "hf_mixtral_8x22b": 80,
     "hf_mistral7b": 6, "hf_phi3_mini": 3, "hf_qwen3_30b_a3b": 18,
-    "hf_qwen3_next_80b_a3b": 40, "hf_olmoe_1b7b": 4,
+    "hf_qwen3_next_80b_a3b": 40, "hf_qwen3_next_80b_a3b_thinking": 40,
+    "hf_olmoe_1b7b": 4,
 }
 EMBEDDER_OVERHEAD_GB = 3  # Jina V4 embedder + store + misc
 PRECISION_MULTIPLIER = {"4bit": 1.0, "bf16": 4.0, "fp16": 4.0, "auto": 4.0}
@@ -457,12 +458,20 @@ def build_ensemble_answer(
 
     agg_fn = aggregate_majority if strategy == "majority" else aggregate_first_non_blank
 
+    best_answer = agg_fn(answers)
+    best_value = agg_fn(values)
+    best_explanation = agg_fn(explanations)
+
+    # Scope refs to runs that agree with the winning answer
+    winning_refs = [r for a, r in zip(answers, ref_lists) if a == best_answer]
+    winning_ref_urls = [r for a, r in zip(answers, ref_url_lists) if a == best_answer]
+
     return {
-        "answer": agg_fn(answers),
-        "answer_value": agg_fn(values),
-        "explanation": agg_fn(explanations),
-        "ref_id": aggregate_refs(ref_lists),
-        "ref_url": aggregate_refs(ref_url_lists),
+        "answer": best_answer,
+        "answer_value": best_value,
+        "explanation": best_explanation,
+        "ref_id": aggregate_refs(winning_refs),
+        "ref_url": aggregate_refs(winning_ref_urls),
         "individual": {
             name: {
                 "answer": entry["result"].answer.answer,
