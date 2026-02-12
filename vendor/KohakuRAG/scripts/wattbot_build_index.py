@@ -345,11 +345,6 @@ async def main() -> None:
 
     print(f"Indexed {len(documents)} documents with {total_nodes} nodes into {db_path}")
 
-    # Close the store to flush caches and checkpoint WAL into the main .db file.
-    # Without this, stale .db-wal and .db-shm files are left on disk.
-    if store is not None:
-        store.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

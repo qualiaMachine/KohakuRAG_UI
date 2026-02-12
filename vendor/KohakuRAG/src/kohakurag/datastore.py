@@ -274,13 +274,6 @@ class KVaultNodeStore(HierarchicalNodeStore):
         # Single-worker executor for thread-safe async SQLite operations
         self._executor = ThreadPoolExecutor(max_workers=1)
 
-    def close(self) -> None:
-        """Close all database connections, flush caches, and checkpoint WAL."""
-        if hasattr(self, "_kv"):
-            self._kv.close()
-        if hasattr(self, "_executor"):
-            self._executor.shutdown(wait=False)
-
     def __del__(self) -> None:
         """Cleanup executor on deletion."""
         if hasattr(self, "_executor"):

@@ -136,10 +136,6 @@ async def main() -> None:
     print(f"  Database: {db_path}")
     print(f"  Table: {bm25_table}")
 
-    # Close stores to flush caches and checkpoint WAL into the main .db file
-    store.close()
-    tv.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
