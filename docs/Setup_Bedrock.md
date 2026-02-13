@@ -318,10 +318,9 @@ aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db \
 due to API calls — only needed if the corpus changes):
 
 ```bash
-cd vendor/KohakuRAG
-PYTHONPATH=../../scripts kogine run scripts/wattbot_build_index.py \
-    --config configs/bedrock_titan_v2/index.py
-cd ../..
+# From repo root
+python vendor/KohakuRAG/scripts/wattbot_build_index.py \
+    --config vendor/KohakuRAG/configs/bedrock_titan_v2/index.py
 ```
 
 Verify:
