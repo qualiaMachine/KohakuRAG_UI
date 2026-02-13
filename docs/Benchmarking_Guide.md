@@ -15,15 +15,14 @@ or `train_QA`). Run each phase in order.
 
 ```bash
 ENV=PowerEdge
-DS=test_solutions
-QS=data/test_solutions.csv   # or data/train_QA.csv
+DS=test_solutions              # or train_QA
 ```
 
 ### Phase 1 — Run all individual models
 
 ```bash
 python scripts/run_full_benchmark.py --provider hf_local --env $ENV \
-    --questions $QS
+    --questions data/$DS.csv
 ```
 
 ### Phase 2 — Generate matrices & plots (individual models)

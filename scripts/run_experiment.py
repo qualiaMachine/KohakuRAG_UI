@@ -505,7 +505,7 @@ class ExperimentRunner:
         max_queries = self.config.get("planner_max_queries", 3)
         planner = LLMQueryPlanner(self.chat_model, max_queries=max_queries)
         print(f"[init] Query planner: LLMQueryPlanner (max_queries={max_queries})")
-        prompt_order = "C→Q (reordered)" if self.use_reordered_prompt else "Q→C (default)"
+        prompt_order = "C->Q (reordered)" if self.use_reordered_prompt else "Q->C (default)"
         print(f"[init] Prompt ordering: {prompt_order}")
         print(f"[init] Max retries (iterative deepening): {self.max_retries}")
 
