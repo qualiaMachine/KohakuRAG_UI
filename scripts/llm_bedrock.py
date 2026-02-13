@@ -8,9 +8,10 @@ Key features:
 - Handles all the AWS auth complexity (SSO profiles, regions)
 - Smart retry logic so we don't get crushed by rate limits
 - Implements the standard `ChatModel` protocol so it drops right into existing pipelines
+- BedrockEmbeddingModel for torch-free query embedding via Titan Text Embeddings V2
 
 Usage:
-    from llm_bedrock import BedrockChatModel
+    from llm_bedrock import BedrockChatModel, BedrockEmbeddingModel
 
     model = BedrockChatModel(
         profile_name="bedrock_nils",
@@ -18,6 +19,12 @@ Usage:
     )
 
     response = await model.complete("What's the energy cost of training GPT-3?")
+
+    embedder = BedrockEmbeddingModel(
+        profile_name="bedrock_nils",
+        dimensions=1024,
+    )
+    vectors = await embedder.embed(["some query text"])
 """
 
 import asyncio
@@ -421,3 +428,117 @@ class BedrockChatModel:
         parts.append(f"region_name={self._region_name!r}")
         parts.append(f"profile_name={self._profile_name!r}")
         return f"BedrockChatModel({', '.join(parts)})"
+
+
+class BedrockEmbeddingModel:
+    """Torch-free embedding model using Amazon Titan Text Embeddings V2 via Bedrock.
+
+    Implements the same interface as kohakurag's EmbeddingModel protocol so it
+    can be used as a drop-in replacement for JinaV4EmbeddingModel in bedrock
+    configs.  No local GPU or torch installation required.
+
+    The index must have been built with the *same* model and dimension to get
+    meaningful retrieval results.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_id: str = "amazon.titan-embed-text-v2:0",
+        profile_name: str | None = None,
+        region_name: str | None = None,
+        dimensions: int = 1024,
+        normalize: bool = True,
+        max_concurrent: int = 10,
+        max_retries: int = 3,
+        base_retry_delay: float = 1.0,
+    ) -> None:
+        try:
+            import boto3
+            self._boto3 = boto3
+        except ImportError as e:
+            raise ImportError(
+                "Missing the 'boto3' library. Run: pip install boto3"
+            ) from e
+
+        import numpy as np
+        self._np = np
+
+        dotenv_vars = _load_dotenv()
+
+        self._profile_name = (
+            profile_name
+            or os.environ.get("AWS_PROFILE")
+            or dotenv_vars.get("AWS_PROFILE")
+        )
+        self._region_name = (
+            region_name
+            or os.environ.get("AWS_REGION")
+            or dotenv_vars.get("AWS_REGION")
+            or "us-east-2"
+        )
+
+        self._model_id = model_id
+        self._dimensions = dimensions
+        self._normalize = normalize
+        self._max_retries = max_retries
+        self._base_retry_delay = base_retry_delay
+
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+
+        session = self._boto3.Session(
+            profile_name=self._profile_name,
+            region_name=self._region_name,
+        )
+        self._client = session.client("bedrock-runtime")
+
+    @property
+    def dimension(self) -> int:
+        return self._dimensions
+
+    def _embed_one_sync(self, text: str) -> list[float]:
+        """Embed a single text string (synchronous, for use in thread pool)."""
+        body = json.dumps({
+            "inputText": text,
+            "dimensions": self._dimensions,
+            "normalize": self._normalize,
+        })
+
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = self._client.invoke_model(
+                    modelId=self._model_id,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json",
+                )
+                result = json.loads(response["body"].read())
+                return result["embedding"]
+            except Exception as e:
+                error_str = str(e).lower()
+                is_retryable = any(
+                    kw in error_str
+                    for kw in ["throttling", "rate", "429", "500", "502", "503", "504"]
+                )
+                if not is_retryable or attempt >= self._max_retries:
+                    raise
+                import time
+                wait = self._base_retry_delay * (2 ** attempt) * (random.random() * 0.5 + 0.75)
+                time.sleep(wait)
+
+        raise RuntimeError("Unexpected end of retry loop")
+
+    async def embed(self, texts: list[str] | tuple[str, ...]) -> "np.ndarray":
+        """Embed a batch of texts, returning (len(texts), dimension) float32 array."""
+        async def _embed_one(text: str) -> list[float]:
+            async with self._semaphore:
+                return await asyncio.to_thread(self._embed_one_sync, text)
+
+        results = await asyncio.gather(*[_embed_one(t) for t in texts])
+        return self._np.array(results, dtype=self._np.float32)
+
+    def __repr__(self) -> str:
+        return (
+            f"BedrockEmbeddingModel(model_id={self._model_id!r}, "
+            f"dimensions={self._dimensions}, region={self._region_name!r})"
+        )

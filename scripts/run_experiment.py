@@ -399,10 +399,26 @@ def create_chat_model_from_config(config: dict, system_prompt: str):
 
 
 def create_embedder_from_config(config: dict):
-    """Create an embedding model based on config settings."""
+    """Create an embedding model based on config settings.
+
+    Supported embedding_model values:
+        - "jinav4"  : Local Jina V4 (requires torch + transformers)
+        - "jina"    : Local Jina V3 (requires torch + transformers)
+        - "hf_local": Local sentence-transformers model
+        - "bedrock" : AWS Titan Text Embeddings V2 via Bedrock (no torch needed)
+    """
     model_type = config.get("embedding_model", "jina")
 
-    if model_type == "hf_local":
+    if model_type == "bedrock":
+        from llm_bedrock import BedrockEmbeddingModel
+
+        return BedrockEmbeddingModel(
+            model_id=config.get("bedrock_embedding_model", "amazon.titan-embed-text-v2:0"),
+            profile_name=config.get("bedrock_profile"),
+            region_name=config.get("bedrock_region"),
+            dimensions=config.get("embedding_dim", 1024),
+        )
+    elif model_type == "hf_local":
         model_id = config.get("embedding_model_id", "BAAI/bge-base-en-v1.5")
         return LocalHFEmbeddingModel(model_name=model_id)
     elif model_type == "jinav4":
