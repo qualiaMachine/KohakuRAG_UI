@@ -4,33 +4,30 @@
 # Usage:
 #   uv pip install -r bedrock_requirements.txt
 #
-# NOTE: The transformers pin is critical. The Jina V4 embedding model code
-# imports SlidingWindowCache from transformers.cache_utils, which was removed
-# in transformers 5.x.  Without the <5 cap you will see:
-#   ImportError: cannot import name 'SlidingWindowCache' from
-#   'transformers.cache_utils'
+# This installs CPU-only torch (no CUDA), which is ~200 MB instead of ~2.5 GB.
+# The Jina V4 embedding model still runs locally but works fine on CPU.
+#
+# NOTE: The transformers<5 pin is critical — the Jina V4 model code imports
+# SlidingWindowCache from transformers.cache_utils, which was removed in 5.x.
 
 # AWS SDK
 boto3
 
-# Embeddings & tokenisers (shared with local path)
+# Embeddings — torch is needed for the local Jina V4 embedding model.
+# Default PyPI torch is CPU-only; that's intentional here.
 torch
-transformers>=4.42,<5          # Jina V4 model code incompatible with 5.x
+transformers>=4.42,<5
 einops
-peft
 Pillow>=12.0.0
-torchvision
 httpx>=0.27.0
 
-# Data / scoring
+# Data / scoring (used by run_experiment.py)
 numpy>=2.3
 pandas
-scikit-learn
-matplotlib
 
-# RAG engine
+# RAG engine (installed editable separately, but pin version here too)
 kohakuvault>=0.7.1
 
-# App deps (only if not already included elsewhere)
+# App
 streamlit
 python-dotenv

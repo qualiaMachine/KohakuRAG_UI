@@ -90,10 +90,20 @@ uv pip install -e vendor/KohakuRAG
 uv pip install -r bedrock_requirements.txt
 ```
 
-> **Why not just `pip install boto3`?** The Jina V4 embedding model used by
-> the RAG pipeline imports `SlidingWindowCache` from `transformers.cache_utils`,
-> which was removed in transformers 5.x. `bedrock_requirements.txt` pins
-> `transformers>=4.42,<5` to prevent the resulting `ImportError`.
+> **Laptop-friendly by design.** The LLM calls go to Bedrock, but the
+> **Jina V4 embedding model still runs locally** (it converts your question
+> into a vector for retrieval). `bedrock_requirements.txt` installs
+> **CPU-only torch** (~200 MB) instead of the full CUDA build (~2.5 GB),
+> and skips heavy packages like `torchvision`, `peft`, and `scikit-learn`
+> that the bedrock path never uses.
+>
+> It also pins `transformers>=4.42,<5` — the Jina V4 model code imports
+> `SlidingWindowCache` from `transformers.cache_utils`, which was removed
+> in transformers 5.x.
+>
+> **Do NOT use `local_requirements.txt` on a laptop** — that file pulls in
+> CUDA wheels, quantization libraries, and other GPU-oriented packages that
+> will bloat the install and may exhaust your RAM.
 
 ### 6) Smoke test
 
@@ -615,7 +625,7 @@ mistral.mistral-small-2402-v1:0
 ## Architecture: What's Shared vs. Provider-Specific
 
 Both bedrock and local pipelines use the **exact same**:
-- Jina V4 embeddings (1024-dim)
+- **Jina V4 embeddings (1024-dim) — runs locally on CPU**, even with Bedrock
 - SQLite + KohakuVault vector store
 - 4-level hierarchical document index
 - LLM query planning (3-4 diverse queries)
