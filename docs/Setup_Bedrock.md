@@ -278,7 +278,6 @@ Set these variables once per session. All commands below use them.
 ```bash
 ENV=Bedrock
 DS=test_solutions                # or train_QA
-QS=data/test_solutions.csv       # or data/train_QA.csv
 ```
 
 ### 13) Get or build the document index
@@ -319,13 +318,13 @@ If you get an answer with citations, Bedrock + RAG is working end-to-end.
 python scripts/run_experiment.py \
   --config vendor/KohakuRAG/configs/bedrock_haiku.py \
   --name haiku-bench \
-  --env $ENV --questions $QS
+  --env $ENV --questions data/$DS.csv
 
 # Claude 3.5 Sonnet (higher quality)
 python scripts/run_experiment.py \
   --config vendor/KohakuRAG/configs/bedrock_sonnet.py \
   --name sonnet-bench \
-  --env $ENV --questions $QS
+  --env $ENV --questions data/$DS.csv
 ```
 
 Results land in `artifacts/experiments/$ENV/$DS/<name>/`. The dataset
@@ -344,7 +343,7 @@ artifacts/experiments/Bedrock/
 
 ```bash
 python scripts/run_full_benchmark.py --provider bedrock --env $ENV \
-    --questions $QS
+    --questions data/$DS.csv
 ```
 
 ### Choosing which models run
@@ -384,15 +383,15 @@ without a matching config are silently skipped.
 ```bash
 # Only bedrock models
 python scripts/run_full_benchmark.py --provider bedrock --env $ENV \
-    --questions $QS
+    --questions data/$DS.csv
 
 # Only local models
 python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
-    --questions $QS
+    --questions data/$DS.csv
 
 # A single model (substring match on config name or experiment name)
 python scripts/run_full_benchmark.py --model haiku --env $ENV \
-    --questions $QS
+    --questions data/$DS.csv
 ```
 
 ### 17) Compare Bedrock vs local results
@@ -402,11 +401,11 @@ After running both providers:
 ```bash
 # Run bedrock models
 python scripts/run_full_benchmark.py --provider bedrock --env Bedrock \
-    --questions $QS
+    --questions data/$DS.csv
 
 # Run local models (on a GPU machine)
 python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
-    --questions $QS
+    --questions data/$DS.csv
 
 # Generate comparison plots
 python scripts/plot_from_matrix.py
