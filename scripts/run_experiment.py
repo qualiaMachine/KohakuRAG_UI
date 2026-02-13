@@ -539,6 +539,7 @@ class ExperimentRunner:
         - Stops after max_retries additional attempts or on a non-blank answer.
         """
         async with self.semaphore:
+            print(f"[{index}/{total}] {row['id']}: processing...", flush=True)
             start_time = time.time()
             error_msg = None
             raw_response = ""
