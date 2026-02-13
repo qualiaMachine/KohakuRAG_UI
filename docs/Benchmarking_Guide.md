@@ -457,33 +457,37 @@ question set (e.g. `train_QA` or `test_solutions`). Without `--datafile`,
 all experiments are included regardless of which question set was used.
 
 All scripts also accept `--system/-S <name>` to restrict to a specific
-hardware system (e.g. `PowerEdge`, `GB10`, `Bedrock`). When `--system` is
-provided, plots are saved to a system subfolder under the datafile directory.
-Without `--system`, all systems are combined (original behaviour).
+hardware system (e.g. `PowerEdge`, `GB10`, `Bedrock`). Plots are always
+saved to a per-system subfolder under the datafile directory.
+
+**Auto-discovery:** `plot_model_size.py` and `plot_score_breakdown.py`
+automatically discover all system directories and generate one set of plots
+per system when `--system` is not specified. This is the default and
+recommended workflow — you don't need to call them multiple times.
+
+`plot_from_matrix.py` requires a pre-built matrix CSV, so per-system
+matrices must be generated first with `generate_results_matrix.py --system`.
 
 ```bash
-# 1. Build the results matrix (required by plot_from_matrix.py)
-python scripts/generate_results_matrix.py --datafile test_solutions
-
-# 2. Generate combined plots (all systems)
+# 1. Generate per-system plots (auto-discovers PowerEdge, GB10, etc.)
 python scripts/plot_model_size.py      --datafile test_solutions
-python scripts/plot_from_matrix.py     --datafile test_solutions
 python scripts/plot_score_breakdown.py --datafile test_solutions
 
-# 3. Generate per-system plots
+# 2. Or target a single system explicitly
 python scripts/plot_model_size.py      --datafile test_solutions --system PowerEdge
-python scripts/plot_model_size.py      --datafile test_solutions --system GB10
-python scripts/plot_score_breakdown.py --datafile test_solutions --system PowerEdge
-python scripts/plot_score_breakdown.py --datafile test_solutions --system GB10
 
-# 4. Per-system results matrix (for matrix-based plots)
+# 3. Per-system results matrix (for matrix-based plots)
 #    --system auto-names the output: results_matrix_PowerEdge.csv, etc.
 python scripts/generate_results_matrix.py --datafile test_solutions --system PowerEdge
+python scripts/generate_results_matrix.py --datafile test_solutions --system GB10
 python scripts/plot_from_matrix.py \
     --matrix artifacts/results_matrix_PowerEdge.csv \
     --datafile test_solutions --system PowerEdge
+python scripts/plot_from_matrix.py \
+    --matrix artifacts/results_matrix_GB10.csv \
+    --datafile test_solutions --system GB10
 
-# 5. Cross-system latency comparison
+# 4. Cross-system latency comparison
 python scripts/plot_cross_system_latency.py --datafile test_solutions
 ```
 

@@ -314,6 +314,40 @@ def plot_breakdown(results: dict, output_path: Path):
     print(f"Saved: {output_path}")
 
 
+def _discover_systems(experiments_dir: Path) -> list[str]:
+    """Return sorted list of system directory names under experiments_dir."""
+    return sorted(
+        d.name for d in experiments_dir.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    )
+
+
+def _run_for_system(gt_path: Path, experiments_dir: Path, output_path: Path,
+                    datafile: str | None, system: str):
+    """Load, score, and plot for a single system."""
+    label = f"[{system}] "
+    print(f"\n{'=' * 60}")
+    print(f"{label}Loading and scoring experiments...")
+    results = load_and_score(gt_path, experiments_dir, datafile=datafile,
+                             system=system)
+
+    if not results:
+        print(f"{label}No results found — skipping")
+        return
+
+    print(f"\n{label}Results ({len(results)} models):")
+    print("-" * 70)
+    print(f"{'Model':<25} {'Value':>8} {'Ref':>8} {'NA':>8} {'Overall':>8}")
+    print("-" * 70)
+    for model in sorted(results.keys(), key=lambda m: results[m]["Overall"], reverse=True):
+        r = results[model]
+        print(f"{model:<25} {r['Value Accuracy']:>8.3f} {r['Ref Overlap']:>8.3f} {r['NA Recall']:>8.3f} {r['Overall']:>8.3f}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"\n{label}Generating breakdown chart...")
+    plot_breakdown(results, output_path)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate score breakdown chart")
     parser.add_argument(
@@ -340,21 +374,17 @@ def main():
     parser.add_argument(
         "--system", "-S",
         default=None,
-        help="Filter to experiments from this system subfolder "
-             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). Default: include all.",
+        help="Filter to a single system subfolder "
+             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). "
+             "Default: auto-discover all systems and generate one chart per system.",
     )
 
     args = parser.parse_args()
 
     project_root = Path(__file__).parent.parent
     experiments_dir = project_root / args.experiments
-    output_path = project_root / args.output
-    if args.datafile:
-        output_path = output_path.parent / args.datafile / output_path.name
-    if args.system:
-        output_path = output_path.parent / args.system / output_path.name
 
-    # Auto-detect ground truth: prefer test_solutions.csv, fall back to train_QA.csv
+    # Auto-detect ground truth
     if args.ground_truth:
         gt_path = project_root / args.ground_truth
     else:
@@ -362,26 +392,25 @@ def main():
         if not gt_path.exists():
             gt_path = project_root / "data" / "train_QA.csv"
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
+    # Build base output path (before system subfolder)
+    base_output = project_root / args.output
     if args.datafile:
-        print(f"Filtering to datafile: {args.datafile}")
+        base_output = base_output.parent / args.datafile / base_output.name
+
     if args.system:
-        print(f"Filtering to system: {args.system}")
-    print("Loading and scoring experiments...")
-    results = load_and_score(gt_path, experiments_dir, datafile=args.datafile,
-                             system=args.system)
-
-    print(f"\nResults ({len(results)} models):")
-    print("-" * 70)
-    print(f"{'Model':<25} {'Value':>8} {'Ref':>8} {'NA':>8} {'Overall':>8}")
-    print("-" * 70)
-    for model in sorted(results.keys(), key=lambda m: results[m]["Overall"], reverse=True):
-        r = results[model]
-        print(f"{model:<25} {r['Value Accuracy']:>8.3f} {r['Ref Overlap']:>8.3f} {r['NA Recall']:>8.3f} {r['Overall']:>8.3f}")
-
-    print("\nGenerating breakdown chart...")
-    plot_breakdown(results, output_path)
+        # Single system
+        out = base_output.parent / args.system / base_output.name
+        _run_for_system(gt_path, experiments_dir, out, args.datafile, args.system)
+    else:
+        # Auto-discover systems
+        systems = _discover_systems(experiments_dir)
+        if not systems:
+            print("No system directories found under experiments dir")
+            sys.exit(1)
+        print(f"Discovered {len(systems)} system(s): {systems}")
+        for system in systems:
+            out = base_output.parent / system / base_output.name
+            _run_for_system(gt_path, experiments_dir, out, args.datafile, system)
 
 
 if __name__ == "__main__":
