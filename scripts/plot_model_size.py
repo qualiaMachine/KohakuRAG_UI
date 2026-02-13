@@ -102,17 +102,23 @@ def match_model_size(model_id: str) -> tuple[str, float, bool] | None:
 
 
 def load_experiments(experiments_dir: Path, name_filter: str | None = None,
-                     datafile: str | None = None) -> list[dict]:
+                     datafile: str | None = None,
+                     system: str | None = None) -> list[dict]:
     """Load experiment summaries, skipping ensembles and duplicates.
 
     When *datafile* is given (e.g. ``"train_QA"``), only experiments
     whose path contains that subfolder are included.
+
+    When *system* is given (e.g. ``"PowerEdge"``, ``"GB10"``), only
+    experiments under that system directory are included.
     """
     experiments = []
     seen_models = {}  # model_id -> best experiment
 
     for summary_path in sorted(experiments_dir.glob("**/summary.json")):
         if datafile is not None and datafile not in summary_path.parts:
+            continue
+        if system is not None and system not in summary_path.parts:
             continue
         try:
             with open(summary_path) as f:
@@ -201,7 +207,8 @@ def load_experiments(experiments_dir: Path, name_filter: str | None = None,
     return experiments
 
 
-def load_ensemble_experiments(experiments_dir: Path, datafile: str | None = None) -> list[dict]:
+def load_ensemble_experiments(experiments_dir: Path, datafile: str | None = None,
+                              system: str | None = None) -> list[dict]:
     """Load ensemble experiment summaries for the ranking plot.
 
     Ensembles are identified by ``"type": "ensemble"`` in their summary or by
@@ -211,6 +218,8 @@ def load_ensemble_experiments(experiments_dir: Path, datafile: str | None = None
 
     for summary_path in sorted(experiments_dir.glob("**/summary.json")):
         if datafile is not None and datafile not in summary_path.parts:
+            continue
+        if system is not None and system not in summary_path.parts:
             continue
         try:
             with open(summary_path) as f:
@@ -727,12 +736,19 @@ def main():
         help="Filter to experiments from this datafile subfolder "
              "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
     )
+    parser.add_argument(
+        "--system", "-S", default=None,
+        help="Filter to experiments from this system subfolder "
+             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). Default: include all.",
+    )
     args = parser.parse_args()
 
     experiments_dir = Path(args.experiments)
     output_dir = Path(args.output)
     if args.datafile:
         output_dir = output_dir / args.datafile
+    if args.system:
+        output_dir = output_dir / args.system
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not experiments_dir.exists():
@@ -742,9 +758,12 @@ def main():
     print("Loading experiment data...")
     if args.datafile:
         print(f"  Filtering to datafile: {args.datafile}")
+    if args.system:
+        print(f"  Filtering to system: {args.system}")
     if args.filter:
         print(f"  Filtering to experiments containing: '{args.filter}'")
-    experiments = load_experiments(experiments_dir, name_filter=args.filter, datafile=args.datafile)
+    experiments = load_experiments(experiments_dir, name_filter=args.filter,
+                                  datafile=args.datafile, system=args.system)
 
     if not experiments:
         print("No valid experiments found!")
@@ -754,7 +773,8 @@ def main():
     print_summary_table(experiments)
 
     # Load ensemble experiments for the ranking plot
-    ensembles = load_ensemble_experiments(experiments_dir, datafile=args.datafile)
+    ensembles = load_ensemble_experiments(experiments_dir, datafile=args.datafile,
+                                          system=args.system)
     if ensembles:
         print(f"Loaded {len(ensembles)} ensemble experiment(s) for ranking plot")
 

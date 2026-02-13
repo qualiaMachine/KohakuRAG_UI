@@ -172,7 +172,8 @@ def _score_from_submission(gt_df: pd.DataFrame, sub_path: Path):
     return result
 
 
-def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = None):
+def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = None,
+                   system: str | None = None):
     """Load and calculate component scores for each model.
 
     Prefers per-question ``results.json`` from the experiment run so that
@@ -182,6 +183,9 @@ def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = 
 
     When *datafile* is given (e.g. ``"train_QA"``), only experiments
     whose path contains that subfolder are included.
+
+    When *system* is given (e.g. ``"PowerEdge"``, ``"GB10"``), only
+    experiments under that system directory are included.
     """
     # Only load GT if we actually need it (fallback path)
     gt_df = None
@@ -191,7 +195,8 @@ def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = 
     # Find all experiment dirs
     all_exp_dirs = sorted(
         p.parent for p in experiments_dir.glob("**/submission.csv")
-        if datafile is None or datafile in p.parts
+        if (datafile is None or datafile in p.parts)
+        and (system is None or system in p.parts)
     )
 
     for exp_dir in all_exp_dirs:
@@ -332,6 +337,12 @@ def main():
         default="artifacts/plots/score_breakdown.png",
         help="Output path for chart",
     )
+    parser.add_argument(
+        "--system", "-S",
+        default=None,
+        help="Filter to experiments from this system subfolder "
+             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). Default: include all.",
+    )
 
     args = parser.parse_args()
 
@@ -340,6 +351,8 @@ def main():
     output_path = project_root / args.output
     if args.datafile:
         output_path = output_path.parent / args.datafile / output_path.name
+    if args.system:
+        output_path = output_path.parent / args.system / output_path.name
 
     # Auto-detect ground truth: prefer test_solutions.csv, fall back to train_QA.csv
     if args.ground_truth:
@@ -353,8 +366,11 @@ def main():
 
     if args.datafile:
         print(f"Filtering to datafile: {args.datafile}")
+    if args.system:
+        print(f"Filtering to system: {args.system}")
     print("Loading and scoring experiments...")
-    results = load_and_score(gt_path, experiments_dir, datafile=args.datafile)
+    results = load_and_score(gt_path, experiments_dir, datafile=args.datafile,
+                             system=args.system)
 
     print(f"\nResults ({len(results)} models):")
     print("-" * 70)
