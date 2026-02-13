@@ -31,7 +31,7 @@ cd ~/GitHub
 # macOS / Linux example:
 cd ~/GitHub
 
-git clone https://github.com/qualiaMachine/KohakuRAG_UI.git
+git clone -b main https://github.com/qualiaMachine/KohakuRAG_UI.git
 cd KohakuRAG_UI
 ```
 
