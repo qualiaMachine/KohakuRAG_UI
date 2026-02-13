@@ -456,24 +456,46 @@ All plotting scripts accept `--datafile <name>` to restrict to a specific
 question set (e.g. `train_QA` or `test_solutions`). Without `--datafile`,
 all experiments are included regardless of which question set was used.
 
+All scripts also accept `--system/-S <name>` to restrict to a specific
+hardware system (e.g. `PowerEdge`, `GB10`, `Bedrock`). When `--system` is
+provided, plots are saved to a system subfolder under the datafile directory.
+Without `--system`, all systems are combined (original behaviour).
+
 ```bash
 # 1. Build the results matrix (required by plot_from_matrix.py)
-python scripts/generate_results_matrix.py --datafile train_QA
-
-# 2. Generate all plots (for train_QA only)
-python scripts/plot_model_size.py      --datafile train_QA
-python scripts/plot_from_matrix.py     --datafile train_QA
-python scripts/plot_score_breakdown.py --datafile train_QA
-
-# Or for test_solutions
 python scripts/generate_results_matrix.py --datafile test_solutions
+
+# 2. Generate combined plots (all systems)
 python scripts/plot_model_size.py      --datafile test_solutions
 python scripts/plot_from_matrix.py     --datafile test_solutions
 python scripts/plot_score_breakdown.py --datafile test_solutions
+
+# 3. Generate per-system plots
+python scripts/plot_model_size.py      --datafile test_solutions --system PowerEdge
+python scripts/plot_model_size.py      --datafile test_solutions --system GB10
+python scripts/plot_score_breakdown.py --datafile test_solutions --system PowerEdge
+python scripts/plot_score_breakdown.py --datafile test_solutions --system GB10
+
+# 4. Per-system results matrix (for matrix-based plots)
+python scripts/generate_results_matrix.py --datafile test_solutions --system PowerEdge \
+    --output artifacts/results_matrix_PowerEdge.csv
+python scripts/plot_from_matrix.py \
+    --matrix artifacts/results_matrix_PowerEdge.csv \
+    --datafile test_solutions --system PowerEdge
+
+# 5. Cross-system latency comparison
+python scripts/plot_cross_system_latency.py --datafile test_solutions
 ```
 
-When `--datafile` is provided, plots are saved to a matching subdirectory
-(e.g. `artifacts/plots/train_QA/`, `artifacts/plots/test_solutions/`).
+Output directory structure with `--system`:
+
+```
+artifacts/plots/test_solutions/            # combined (no --system)
+artifacts/plots/test_solutions/PowerEdge/  # --system PowerEdge
+artifacts/plots/test_solutions/GB10/       # --system GB10
+artifacts/plots/test_solutions/Bedrock/    # --system Bedrock (future)
+```
+
 Without `--datafile`, plots go to `artifacts/plots/` directly.
 
 Ground truth is auto-detected: `data/test_solutions.csv` if present, otherwise
@@ -505,6 +527,23 @@ Local HF models show as **squares**, API models as **circles**.
 
 Grouped bars showing Value Accuracy, Ref Overlap, and NA Recall per model
 with 95% Wilson CI error bars.
+
+### plot_cross_system_latency.py — Cross-system latency comparison (up to 4 plots)
+
+Compares per-question latency for models benchmarked on multiple hardware
+systems. Automatically discovers all systems under `artifacts/experiments/`.
+
+1. **Mean latency comparison** — grouped bars for shared models, split by system
+2. **Latency distributions** — box-plots showing per-question spread
+3. **Retrieval vs. generation breakdown** — stacked bars (retrieval + generation time)
+4. **All models overview** — horizontal bar chart of every model across all systems
+
+Plots 1-3 are only generated when at least one model appears on 2+ systems.
+Plot 4 is always generated.
+
+```bash
+python scripts/plot_cross_system_latency.py --datafile test_solutions
+```
 
 ---
 
@@ -974,7 +1013,8 @@ KohakuRAG_UI/
 │   ├── audit_experiments.py
 │   ├── plot_model_size.py
 │   ├── plot_from_matrix.py
-│   └── plot_score_breakdown.py
+│   ├── plot_score_breakdown.py
+│   └── plot_cross_system_latency.py
 ├── artifacts/                # Experiment outputs (gitignored, machine-specific)
 │   ├── experiments/          # Per-experiment results, organized by --env and datafile
 │   │   ├── PowerEdge/       # Results from PowerEdge runs
@@ -989,6 +1029,11 @@ KohakuRAG_UI/
 │   │   └── GB10/            # Results from GB10 runs
 │   │       └── train_QA/
 │   ├── plots/                # Generated charts
+│   │   └── test_solutions/   # Per-datafile, with optional system subfolders
+│   │       ├── *.png         # Combined plots (all systems)
+│   │       ├── PowerEdge/    # Per-system plots (--system PowerEdge)
+│   │       ├── GB10/         # Per-system plots (--system GB10)
+│   │       └── Bedrock/      # Per-system plots (--system Bedrock, future)
 │   └── results_matrix.csv
 ├── notebooks/
 │   └── test_local_hf_pipeline.ipynb
