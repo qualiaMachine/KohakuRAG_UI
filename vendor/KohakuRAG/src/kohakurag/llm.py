@@ -519,17 +519,18 @@ class HuggingFaceLocalChatModel(ChatModel):
             elif dtype == "fp16":
                 load_kwargs["dtype"] = torch.float16
 
-        # Load model with automatic device placement
+        # Check GPU availability before loading
+        gpu_available = torch.cuda.is_available()
+        if gpu_available:
+            print(f"[init] GPU detected: {torch.cuda.get_device_name(0)} — model weights will load onto GPU", flush=True)
+        else:
+            print(f"[init] *** WARNING: No GPU detected — model weights will load onto CPU ***", flush=True)
         print(f"[init] Loading model weights ({dtype})...", flush=True)
         self._model = AutoModelForCausalLM.from_pretrained(
             self._model_id,
             **load_kwargs,
         )
-        # Report where the model actually landed
-        device = next(self._model.parameters()).device
-        print(f"[init] Model weights loaded -> {device}"
-              f"{' (GPU)' if device.type == 'cuda' else ' *** WARNING: on CPU, GPU not used ***'}",
-              flush=True)
+        print(f"[init] Model weights loaded", flush=True)
 
     async def complete(self, prompt: str, *, system_prompt: str | None = None) -> str:
         """Generate a chat completion using local HF model.
