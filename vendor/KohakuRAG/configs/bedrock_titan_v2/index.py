@@ -8,27 +8,24 @@ Prerequisites:
     - Corpus JSON files in data/corpus/ (or metadata.csv for auto-fetch)
 
 Usage (from repo root):
-    cd vendor/KohakuRAG
-    PYTHONPATH=../../scripts kogine run scripts/wattbot_build_index.py \
-        --config configs/bedrock_titan_v2/index.py
+    python vendor/KohakuRAG/scripts/wattbot_build_index.py \
+        --config vendor/KohakuRAG/configs/bedrock_titan_v2/index.py
 
 The resulting DB should be uploaded to S3 so laptop users can download it:
-    aws s3 cp ../../data/embeddings/wattbot_titan_v2.db \
+    aws s3 cp data/embeddings/wattbot_titan_v2.db \
         s3://wattbot-nils-kohakurag/indexes/wattbot_titan_v2.db \
         --profile <name>
 """
 
-from kohakuengine import Config
-
-# Document and database settings
-metadata = "../../data/metadata.csv"
-docs_dir = "../../data/corpus"
-db = "../../data/embeddings/wattbot_titan_v2.db"
+# Document and database settings (paths relative to repo root)
+metadata = "data/metadata.csv"
+docs_dir = "data/corpus"
+db = "data/embeddings/wattbot_titan_v2.db"
 table_prefix = "wattbot_tv2"
 use_citations = False
 
 # PDF fetching settings
-pdf_dir = "../../data/pdfs"
+pdf_dir = "data/pdfs"
 
 # Bedrock Titan V2 embedding settings
 embedding_model = "bedrock"
@@ -38,7 +35,3 @@ bedrock_region = "us-east-2"
 
 # Paragraph embedding mode
 paragraph_embedding_mode = "averaged"
-
-
-def config_gen():
-    return Config.from_globals()

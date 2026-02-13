@@ -28,6 +28,9 @@ httpx>=0.27.0
 # RAG engine (installed editable separately, but pin version here too)
 kohakuvault>=0.7.1
 
+# KohakuEngine (config runner for indexing scripts)
+kohaku-engine==0.0.2
+
 # openai is a hard import in kohakurag.llm (required at package init)
 openai>=2.8.0
 
