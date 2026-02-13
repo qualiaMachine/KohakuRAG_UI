@@ -90,20 +90,26 @@ uv pip install -e vendor/KohakuRAG
 uv pip install -r bedrock_requirements.txt
 ```
 
-> **Why not just `pip install boto3`?** The Jina V4 embedding model used by
-> the RAG pipeline imports `SlidingWindowCache` from `transformers.cache_utils`,
-> which was removed in transformers 5.x. `bedrock_requirements.txt` pins
-> `transformers>=4.42,<5` to prevent the resulting `ImportError`.
+> **Fully torch-free.** `bedrock_requirements.txt` does **not** install
+> torch, torchvision, or any GPU libraries. Both the LLM (chat) and
+> embedding calls go to Bedrock over the network via boto3.
+>
+> This requires a **Titan V2 index** (not the default Jina V4 index).
+> See [Phase 3 — Get the Titan V2 index](#13-get-or-build-the-document-index)
+> below.
+>
+> **Do NOT use `local_requirements.txt` on a laptop** — that file pulls in
+> CUDA wheels, quantization libraries, and other GPU-oriented packages that
+> will bloat the install and may exhaust your RAM.
 
 ### 6) Smoke test
 
 ```bash
 python -c "import kohakuvault, kohakurag; print('Imports OK')"
 python -c "import boto3; print(f'boto3 {boto3.__version__} OK')"
-python -c "from transformers.cache_utils import SlidingWindowCache; print('transformers OK')"
 ```
 
-All three should print without errors.
+Both should print without errors.
 
 ---
 
@@ -285,26 +291,48 @@ DS=test_solutions                # or train_QA
 
 ### 13) Get or build the document index
 
-**Option A — Download pre-built index from S3** (fastest):
+The index and query embeddings **must use the same model**. Two options:
+
+| Index | Embedding model | Requires torch? | Config setting |
+|-------|----------------|-----------------|----------------|
+| `wattbot_titan_v2.db` | Bedrock Titan V2 | No | `embedding_model = "bedrock"` |
+| `wattbot_jinav4.db` | Local Jina V4 | Yes | `embedding_model = "jinav4"` |
+
+**For laptops (torch-free), use the Titan V2 index.**
+
+**Option A — Download pre-built Titan V2 index from S3** (fastest, recommended for laptops):
+
+```bash
+aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_titan_v2.db \
+    data/embeddings/wattbot_titan_v2.db --profile bedrock_yourname
+```
+
+**Option B — Download pre-built Jina V4 index from S3** (for GPU servers):
 
 ```bash
 aws s3 cp s3://wattbot-nils-kohakurag/indexes/wattbot_jinav4.db \
     data/embeddings/wattbot_jinav4.db --profile bedrock_yourname
 ```
 
-**Option B — Build from scratch** (only needed if the corpus changes):
+**Option C — Build Titan V2 index from scratch** (no GPU needed, but slow
+due to API calls — only needed if the corpus changes):
 
 ```bash
 cd vendor/KohakuRAG
-kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+PYTHONPATH=../../scripts kogine run scripts/wattbot_build_index.py \
+    --config configs/bedrock_titan_v2/index.py
 cd ../..
 ```
 
-Verify the database was created:
+Verify:
 
 ```bash
-ls -lh data/embeddings/wattbot_jinav4.db
+ls -lh data/embeddings/wattbot_titan_v2.db
 ```
+
+> **Important:** If you use the Titan V2 index, set `embedding_model = "bedrock"`
+> in your experiment config (already documented in each `bedrock_*.py` config).
+> If you use the Jina V4 index, keep `embedding_model = "jinav4"` (requires torch).
 
 ### 14) Quick RAG smoke test
 
@@ -550,9 +578,13 @@ Usage:
     python scripts/run_experiment.py --config vendor/KohakuRAG/configs/bedrock_<name>.py
 """
 
-# Database settings (shared — must match the index)
-db = "../../data/embeddings/wattbot_jinav4.db"
-table_prefix = "wattbot_jv4"
+# Database settings — must match the embedding model below.
+# Titan V2 index (torch-free, for laptops):
+db = "../../data/embeddings/wattbot_titan_v2.db"
+table_prefix = "wattbot_tv2"
+# Jina V4 index (requires torch, for GPU servers):
+# db = "../../data/embeddings/wattbot_jinav4.db"
+# table_prefix = "wattbot_jv4"
 
 # Input/output
 questions = "../../data/train_QA.csv"
@@ -565,8 +597,11 @@ bedrock_model = "<model-id>"            # e.g. "us.anthropic.claude-3-haiku-2024
 bedrock_region = "us-east-2"
 # bedrock_profile — set via --profile CLI arg or AWS_PROFILE env var
 
-# Embedding settings (must match the index — do not change)
-embedding_model = "jinav4"
+# Embedding settings — must match the index that was used to build the DB.
+# Option A: Bedrock Titan V2 (torch-free — use with wattbot_titan_v2.db)
+embedding_model = "bedrock"
+# Option B: Local Jina V4 (requires torch — use with wattbot_jinav4.db)
+# embedding_model = "jinav4"
 embedding_dim = 1024
 embedding_task = "retrieval"
 
@@ -614,8 +649,7 @@ mistral.mistral-small-2402-v1:0
 
 ## Architecture: What's Shared vs. Provider-Specific
 
-Both bedrock and local pipelines use the **exact same**:
-- Jina V4 embeddings (1024-dim)
+All pipelines share the **exact same**:
 - SQLite + KohakuVault vector store
 - 4-level hierarchical document index
 - LLM query planning (3-4 diverse queries)
@@ -623,9 +657,16 @@ Both bedrock and local pipelines use the **exact same**:
 - C→Q prompt ordering
 - WattBot scoring (inline during experiment run)
 
-The **only** difference is the LLM call:
-- `BedrockChatModel` → AWS Bedrock Converse API (boto3)
-- `HuggingFaceLocalChatModel` → Local GPU inference (transformers)
+What varies by setup:
 
-This means results are directly comparable for evaluating model quality,
-latency, and cost.
+| Component | GPU server | Laptop (torch-free) |
+|-----------|-----------|---------------------|
+| **LLM** | Local HF model or Bedrock | Bedrock |
+| **Embeddings** | Local Jina V4 (`jinav4`) | Bedrock Titan V2 (`bedrock`) |
+| **Index** | `wattbot_jinav4.db` | `wattbot_titan_v2.db` |
+| **Requires torch** | Yes | No |
+
+Results using the **same embedding model + index** are directly comparable.
+Cross-embedding-model comparisons (Jina V4 vs Titan V2) are valid for LLM
+quality but may show slight retrieval differences due to the different
+embedding spaces.

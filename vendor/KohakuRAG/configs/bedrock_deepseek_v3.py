@@ -22,7 +22,11 @@ bedrock_model = "us.deepseek.r1-v1:0"
 bedrock_region = "us-east-2"
 # bedrock_profile — set via --profile CLI arg or AWS_PROFILE env var
 
-# Embedding settings (Jina v4 - must match index)
+# Embedding settings — must match the index that was used to build the DB.
+# Option A: Local Jina V4 (requires torch + transformers — use on GPU servers)
+#   embedding_model = "jinav4"
+# Option B: Bedrock Titan V2 (torch-free — use on laptops with a Titan V2 index)
+#   embedding_model = "bedrock"
 embedding_model = "jinav4"
 embedding_dim = 1024
 embedding_task = "retrieval"

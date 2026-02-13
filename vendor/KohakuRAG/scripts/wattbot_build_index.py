@@ -25,6 +25,14 @@ from kohakurag import (
 from kohakurag.datastore import KVaultNodeStore
 from kohakurag.embeddings import JinaEmbeddingModel, JinaV4EmbeddingModel
 
+try:
+    # Import path is relative to scripts/ — add parent to sys.path if needed
+    from llm_bedrock import BedrockEmbeddingModel
+
+    BEDROCK_EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    BEDROCK_EMBEDDINGS_AVAILABLE = False
+
 # ============================================================================
 # GLOBAL CONFIGURATION
 # These defaults can be overridden by KohakuEngine config injection or CLI args
@@ -40,9 +48,11 @@ use_citations = False
 pdf_dir = "../../data/pdfs"  # Where to cache downloaded PDFs
 
 # Embedding settings
-embedding_model = "jina"  # Options: "jina" (v3), "jinav4"
-embedding_dim = None  # For JinaV4: 128, 256, 512, 1024, 2048
+embedding_model = "jina"  # Options: "jina" (v3), "jinav4", "bedrock"
+embedding_dim = None  # For JinaV4: 128, 256, 512, 1024, 2048; For bedrock: 256, 384, 1024
 embedding_task = "retrieval"  # For JinaV4: "retrieval", "text-matching", "code"
+bedrock_profile = None  # AWS SSO profile (for bedrock embeddings)
+bedrock_region = None  # AWS region (for bedrock embeddings)
 
 # Paragraph embedding mode
 # Options:
@@ -250,7 +260,20 @@ async def fetch_and_parse_pdfs(
 
 def create_embedder():
     """Create embedder based on module-level config."""
-    if embedding_model == "jinav4":
+    if embedding_model == "bedrock":
+        if not BEDROCK_EMBEDDINGS_AVAILABLE:
+            raise SystemExit(
+                "bedrock embedding_model requires llm_bedrock.py on the Python path.\n"
+                "Run from KohakuRAG_UI/scripts/ or add it to PYTHONPATH."
+            )
+        dim = embedding_dim or 1024
+        print(f"Using Bedrock Titan V2 embeddings (dim={dim})")
+        return BedrockEmbeddingModel(
+            profile_name=bedrock_profile,
+            region_name=bedrock_region,
+            dimensions=dim,
+        )
+    elif embedding_model == "jinav4":
         print(f"Using JinaV4 embeddings (dim={embedding_dim}, task={embedding_task})")
         return JinaV4EmbeddingModel(
             truncate_dim=embedding_dim or 1024,
