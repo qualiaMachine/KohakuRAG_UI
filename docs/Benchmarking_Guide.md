@@ -30,7 +30,7 @@ python scripts/run_full_benchmark.py --provider hf_local --env $ENV \
 
 ```bash
 # Per-system results matrices (one per system that has results)
-python scripts/generate_results_matrix.py --datafile $DS --system $ENV
+python scripts/generate_results_matrix.py --datafile $DS 
 
 # Per-system plots (auto-discovers all systems)
 python scripts/plot_model_size.py      --datafile $DS
