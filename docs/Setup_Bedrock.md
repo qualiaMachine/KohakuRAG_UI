@@ -548,8 +548,7 @@ Both bedrock and local pipelines use the **exact same**:
 - LLM query planning (3-4 diverse queries)
 - Consensus reranking (0.4 freq + 0.6 score)
 - C→Q prompt ordering
-- Post-hoc answer normalization
-- WattBot scoring
+- WattBot scoring (inline during experiment run)
 
 The **only** difference is the LLM call:
 - `BedrockChatModel` → AWS Bedrock Converse API (boto3)
