@@ -475,15 +475,20 @@ class ExperimentRunner:
         # Reset GPU peak stats before loading (for accurate VRAM measurement)
         reset_gpu_peak_stats()
 
+        dtype = self.config.get("hf_dtype", "4bit") if provider == "hf_local" else "api"
+        print(f"[init] Precision: {dtype}", flush=True)
+
         llm_load_start = time.time()
         self.chat_model = create_chat_model_from_config(self.config, SYSTEM_PROMPT)
         self.llm_load_time = time.time() - llm_load_start
-        print(f"[init] LLM loaded in {self.llm_load_time:.1f}s")
+        print(f"[init] LLM loaded in {self.llm_load_time:.1f}s", flush=True)
 
+        embed_model_type = self.config.get("embedding_model", "jina")
+        print(f"[init] Loading embedder ({embed_model_type})...", flush=True)
         embed_load_start = time.time()
         embedder = create_embedder_from_config(self.config)
         self.embedder_load_time = time.time() - embed_load_start
-        print(f"[init] Embedder loaded in {self.embedder_load_time:.1f}s")
+        print(f"[init] Embedder loaded in {self.embedder_load_time:.1f}s", flush=True)
 
         self.model_load_time = self.llm_load_time + self.embedder_load_time
 
