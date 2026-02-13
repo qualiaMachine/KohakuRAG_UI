@@ -960,6 +960,14 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
     if config.get("llm_provider") == "hf_local":
         config["hf_dtype"] = precision
 
+    # GB10 environment overrides: speed up benchmark on constrained hardware
+    if run_environment.upper() == "GB10":
+        config["max_retries"] = 0                # no iterative deepening retries
+        config["planner_max_queries"] = 2         # fewer query planner expansions
+        if config.get("max_concurrent", 5) < 2:
+            config["max_concurrent"] = 2          # ensure at least 2-way concurrency
+        print("[env] GB10 overrides: max_retries=0, planner_max_queries=2, max_concurrent≥2")
+
     # Generate experiment name if not provided
     if experiment_name is None:
         model_id = get_model_display_id(config)
