@@ -373,7 +373,7 @@ def create_chat_model_from_config(config: dict, system_prompt: str):
         model_id = config.get("bedrock_model", "us.anthropic.claude-3-haiku-20240307-v1:0")
         return BedrockChatModel(
             model_id=model_id,
-            profile_name=config.get("bedrock_profile", "bedrock_nils"),
+            profile_name=config.get("bedrock_profile"),
             region_name=config.get("bedrock_region", "us-east-2"),
             system_prompt=system_prompt,
             max_retries=config.get("max_retries", 3),
@@ -949,7 +949,7 @@ class ExperimentRunner:
 # Main
 # =============================================================================
 
-async def main(config_path: str, experiment_name: str | None = None, run_environment: str = "", questions_override: str | None = None, precision: str = "4bit") -> None:
+async def main(config_path: str, experiment_name: str | None = None, run_environment: str = "", questions_override: str | None = None, precision: str = "4bit", profile: str | None = None) -> None:
     """Run an experiment with the given config."""
     # Print CUDA status upfront so GPU issues are caught immediately
     import torch
@@ -969,6 +969,10 @@ async def main(config_path: str, experiment_name: str | None = None, run_environ
         run_environment = "Bedrock"
 
     config["_run_environment"] = run_environment
+
+    # CLI --profile overrides config bedrock_profile (only relevant for bedrock)
+    if profile:
+        config["bedrock_profile"] = profile
 
     # CLI --precision overrides any hf_dtype in config (only relevant for hf_local)
     if config.get("llm_provider") == "hf_local":
@@ -1098,9 +1102,14 @@ def cli():
         choices=["4bit", "bf16", "fp16", "auto"],
         help="Model precision/quantization (default: 4bit). Only applies to hf_local models."
     )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="AWS profile name for Bedrock (e.g. 'bedrock_endemann'). Falls back to AWS_PROFILE env var."
+    )
 
     args = parser.parse_args()
-    asyncio.run(main(args.config, args.name, args.env, args.questions, args.precision))
+    asyncio.run(main(args.config, args.name, args.env, args.questions, args.precision, args.profile))
 
 
 if __name__ == "__main__":

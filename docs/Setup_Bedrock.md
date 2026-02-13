@@ -317,13 +317,13 @@ If you get an answer with citations, Bedrock + RAG is working end-to-end.
 # Claude 3 Haiku (fast, cheap — good first test)
 python scripts/run_experiment.py \
   --config vendor/KohakuRAG/configs/bedrock_haiku.py \
-  --name haiku-bench \
+  --name haiku-bench --profile bedrock_endemann \
   --env $ENV --questions data/$DS.csv
 
 # Claude 3.5 Sonnet (higher quality)
 python scripts/run_experiment.py \
   --config vendor/KohakuRAG/configs/bedrock_sonnet.py \
-  --name sonnet-bench \
+  --name sonnet-bench --profile bedrock_endemann \
   --env $ENV --questions data/$DS.csv
 ```
 
@@ -343,7 +343,7 @@ artifacts/experiments/Bedrock/
 
 ```bash
 python scripts/run_full_benchmark.py --provider bedrock --env $ENV \
-    --questions data/$DS.csv
+    --questions data/$DS.csv --profile bedrock_endemann
 ```
 
 ### Choosing which models run
@@ -383,7 +383,7 @@ without a matching config are silently skipped.
 ```bash
 # Only bedrock models
 python scripts/run_full_benchmark.py --provider bedrock --env $ENV \
-    --questions data/$DS.csv
+    --questions data/$DS.csv --profile bedrock_endemann
 
 # Only local models
 python scripts/run_full_benchmark.py --provider hf_local --env PowerEdge \
@@ -560,7 +560,7 @@ metadata = "../../data/metadata.csv"
 llm_provider = "bedrock"
 bedrock_model = "<model-id>"            # e.g. "us.anthropic.claude-3-haiku-20240307-v1:0"
 bedrock_region = "us-east-2"
-# bedrock_profile = "your-sso-profile"  # Uncomment if using SSO
+# bedrock_profile — set via --profile CLI arg or AWS_PROFILE env var
 
 # Embedding settings (must match the index — do not change)
 embedding_model = "jinav4"
