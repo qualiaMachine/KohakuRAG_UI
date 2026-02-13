@@ -525,7 +525,11 @@ class HuggingFaceLocalChatModel(ChatModel):
             self._model_id,
             **load_kwargs,
         )
-        print(f"[init] Model weights loaded", flush=True)
+        # Report where the model actually landed
+        device = next(self._model.parameters()).device
+        print(f"[init] Model weights loaded -> {device}"
+              f"{' (GPU)' if device.type == 'cuda' else ' *** WARNING: on CPU, GPU not used ***'}",
+              flush=True)
 
     async def complete(self, prompt: str, *, system_prompt: str | None = None) -> str:
         """Generate a chat completion using local HF model.
