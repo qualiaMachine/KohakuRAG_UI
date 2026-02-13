@@ -520,7 +520,8 @@ class HuggingFaceLocalChatModel(ChatModel):
                 load_kwargs["dtype"] = torch.float16
 
         # Load model with automatic device placement
-        print(f"[init] Loading model weights ({dtype})...", flush=True)
+        effective_dtype = dtype
+        print(f"[init] Loading model weights...", flush=True)
         try:
             self._model = AutoModelForCausalLM.from_pretrained(
                 self._model_id,
@@ -530,6 +531,7 @@ class HuggingFaceLocalChatModel(ChatModel):
             # Pre-quantized models (e.g. FP8) conflict with BitsAndBytesConfig;
             # fall back to loading with native quantization.
             if "quantization_config" in load_kwargs and "quantized" in str(exc):
+                effective_dtype = "native"
                 print(
                     f"[init] Model is pre-quantized; loading with native "
                     f"quantization instead of {dtype}...",
@@ -542,6 +544,7 @@ class HuggingFaceLocalChatModel(ChatModel):
                 )
             else:
                 raise
+        self.effective_dtype = effective_dtype
         # Report where the model actually landed
         device = next(self._model.parameters()).device
         if device.type == "cuda":
@@ -551,15 +554,15 @@ class HuggingFaceLocalChatModel(ChatModel):
             if hf_device_map:
                 devices_used = sorted(set(str(d) for d in hf_device_map.values()))
                 if len(devices_used) > 1:
-                    print(f"[init] Model weights loaded -> sharded across {', '.join(f'cuda:{d}' if d.isdigit() else d for d in devices_used)} (multi-GPU)",
+                    print(f"[init] Model weights loaded ({effective_dtype}) -> sharded across {', '.join(f'cuda:{d}' if d.isdigit() else d for d in devices_used)} (multi-GPU)",
                           flush=True)
                 else:
-                    print(f"[init] Model weights loaded -> cuda:{devices_used[0]} (GPU)",
+                    print(f"[init] Model weights loaded ({effective_dtype}) -> cuda:{devices_used[0]} (GPU)",
                           flush=True)
             else:
-                print(f"[init] Model weights loaded -> {device} (GPU)", flush=True)
+                print(f"[init] Model weights loaded ({effective_dtype}) -> {device} (GPU)", flush=True)
         else:
-            print(f"[init] Model weights loaded -> {device} *** WARNING: on CPU, GPU not used ***",
+            print(f"[init] Model weights loaded ({effective_dtype}) -> {device} *** WARNING: on CPU, GPU not used ***",
                   flush=True)
 
     async def complete(self, prompt: str, *, system_prompt: str | None = None) -> str:
