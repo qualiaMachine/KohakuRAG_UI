@@ -224,8 +224,14 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "",
             full_output = "\n".join(all_lines)
             if "401" in full_output or "Access denied" in full_output:
                 return False, "Gated model — accept license on HuggingFace + set HF_TOKEN"
-            error_lines = [l for l in all_lines if "Error" in l or "error" in l]
-            error_summary = error_lines[-1][:150] if error_lines else "Unknown error"
+            # Look for error/traceback lines; fall back to last non-empty lines
+            error_lines = [l for l in all_lines if "Error" in l or "error" in l or "Traceback" in l]
+            if error_lines:
+                error_summary = error_lines[-1][:200]
+            else:
+                # Show last 3 non-empty lines so we always have context
+                tail = [l.strip() for l in all_lines if l.strip()][-3:]
+                error_summary = " | ".join(tail)[:200] if tail else "Unknown error (no output)"
             # Clear progress bar before error output
             if current_q > 0:
                 print()
