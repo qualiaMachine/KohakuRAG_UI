@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
 import traceback
 from collections import Counter
@@ -122,6 +123,13 @@ VRAM_4BIT_GB = {
 }
 EMBEDDER_OVERHEAD_GB = 3  # Jina V4 embedder + store + misc
 PRECISION_MULTIPLIER = {"4bit": 1.0, "bf16": 4.0, "fp16": 4.0, "auto": 4.0}
+
+# Global lock for pipeline operations.  @st.cache_resource shares pipeline
+# objects across every Streamlit session, so concurrent users mutating
+# planner settings or running inference on the same pipeline cause race
+# conditions.  This lock serializes (set-planner → query → reset-planner)
+# sequences, which also prevents GPU OOM from overlapping inferences.
+_PIPELINE_LOCK = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Metadata URL lookup  (ref_id → URL from metadata.csv)
@@ -359,6 +367,12 @@ def _run_qa_sync(
 ):
     """Run pipeline.run_qa synchronously, retrying on failures.
 
+    Uses ``asyncio.run()`` for correct event-loop lifecycle (each call gets a
+    fresh loop that is properly closed afterwards).  The previous approach of
+    ``asyncio.new_event_loop()`` + ``loop.run_until_complete()`` left
+    ``asyncio.Semaphore`` objects bound to stale loops, breaking the
+    concurrency limiter inside ``HuggingFaceLocalChatModel``.
+
     Args:
         max_retries: Number of additional attempts after the first failure.
                      0 means no retries (single attempt).
@@ -367,9 +381,8 @@ def _run_qa_sync(
     usr_template = USER_TEMPLATE_BEST_GUESS if best_guess else USER_TEMPLATE
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
-        loop = asyncio.new_event_loop()
         try:
-            return loop.run_until_complete(
+            return asyncio.run(
                 pipeline.run_qa(
                     question,
                     system_prompt=sys_prompt,
@@ -382,35 +395,43 @@ def _run_qa_sync(
             _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
             if attempt < max_retries:
                 time.sleep(1)  # brief pause before retry
-        finally:
-            loop.close()
     raise last_exc  # type: ignore[misc]
 
 
 def run_single_query(
     pipeline: RAGPipeline, question: str, top_k: int,
     best_guess: bool = False, max_retries: int = 0,
+    use_planner: bool = False, planner_queries: int = 3,
 ):
-    """Run a single model query."""
-    return _run_qa_sync(
-        pipeline, question, top_k,
-        best_guess=best_guess, max_retries=max_retries,
-    )
+    """Run a single model query (thread-safe).
+
+    Acquires the global pipeline lock so that planner mutation and inference
+    are atomic with respect to other sessions sharing the same cached pipeline.
+    """
+    with _PIPELINE_LOCK:
+        _apply_planner(pipeline, use_planner, planner_queries)
+        return _run_qa_sync(
+            pipeline, question, top_k,
+            best_guess=best_guess, max_retries=max_retries,
+        )
 
 
 def run_ensemble_parallel_query(
     pipelines: dict[str, RAGPipeline], question: str, top_k: int,
     best_guess: bool = False, max_retries: int = 0,
+    use_planner: bool = False, planner_queries: int = 3,
 ) -> dict[str, object]:
-    """Query all pre-loaded models concurrently."""
+    """Query all pre-loaded models (thread-safe, serialized under lock)."""
     results = {}
-    for name, pipeline in pipelines.items():
-        t0 = time.time()
-        result = _run_qa_sync(
-            pipeline, question, top_k,
-            best_guess=best_guess, max_retries=max_retries,
-        )
-        results[name] = {"result": result, "time": time.time() - t0}
+    with _PIPELINE_LOCK:
+        for name, pipeline in pipelines.items():
+            _apply_planner(pipeline, use_planner, planner_queries)
+            t0 = time.time()
+            result = _run_qa_sync(
+                pipeline, question, top_k,
+                best_guess=best_guess, max_retries=max_retries,
+            )
+            results[name] = {"result": result, "time": time.time() - t0}
     return results
 
 
@@ -438,13 +459,14 @@ def run_ensemble_sequential_query(
         pipeline = RAGPipeline(
             store=store, embedder=embedder, chat_model=chat_model, planner=None,
         )
-        _apply_planner(pipeline, use_planner, planner_queries)
 
-        t0 = time.time()
-        result = _run_qa_sync(
-            pipeline, question, top_k,
-            best_guess=best_guess, max_retries=max_retries,
-        )
+        with _PIPELINE_LOCK:
+            _apply_planner(pipeline, use_planner, planner_queries)
+            t0 = time.time()
+            result = _run_qa_sync(
+                pipeline, question, top_k,
+                best_guess=best_guess, max_retries=max_retries,
+            )
         elapsed = time.time() - t0
         results[name] = {"result": result, "time": elapsed}
 
@@ -632,10 +654,13 @@ def main():
         return
 
     # ---- Load pipelines ----
+    # NOTE: We no longer call _apply_planner() here.  The planner is set
+    # atomically inside the query functions under _PIPELINE_LOCK so that
+    # concurrent sessions don't clobber each other's planner settings on
+    # the shared @st.cache_resource pipeline objects.
     try:
         if mode == "Single model":
             pipeline = init_single_pipeline(selected_configs[0], precision)
-            _apply_planner(pipeline, use_planner, planner_queries)
         elif mode == "Ensemble":
             plan = plan_ensemble(selected_configs, precision, gpu_info)
             if plan["mode"] == "error":
@@ -645,9 +670,7 @@ def main():
                 ensemble_pipelines = init_ensemble_parallel(
                     tuple(selected_configs), precision,
                 )
-                for _p in ensemble_pipelines.values():
-                    _apply_planner(_p, use_planner, planner_queries)
-            # sequential doesn't pre-load models (planner set inside query fn)
+            # sequential doesn't pre-load models
     except Exception as e:
         st.error(f"Failed to load pipeline: {e}")
         tb = traceback.format_exc()
@@ -691,6 +714,8 @@ def main():
                         result = run_single_query(
                             pipeline, question, top_k,
                             best_guess=best_guess, max_retries=max_retries,
+                            use_planner=use_planner,
+                            planner_queries=planner_queries,
                         )
                     except Exception as e:
                         st.error(f"Pipeline error: {e}")
@@ -712,6 +737,8 @@ def main():
                                 ensemble_pipelines, question, top_k,
                                 best_guess=best_guess,
                                 max_retries=max_retries,
+                                use_planner=use_planner,
+                                planner_queries=planner_queries,
                             )
                     else:
                         status = st.status(

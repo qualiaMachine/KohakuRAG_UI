@@ -518,7 +518,12 @@ class RAGPipeline:
         return unique_matches
 
     async def retrieve(
-        self, question: str, *, top_k: int | None = None, bm25_top_k: int | None = None
+        self,
+        question: str,
+        *,
+        top_k: int | None = None,
+        bm25_top_k: int | None = None,
+        top_k_final: int | None = ...,  # type: ignore[assignment]
     ) -> RetrievalResult:
         """Execute multi-query retrieval with hierarchical context expansion.
 
@@ -556,10 +561,16 @@ class RAGPipeline:
             question: User question
             top_k: Number of results per query (uses default if None)
             bm25_top_k: Number of additional BM25 results (uses default if None)
+            top_k_final: Override for final truncation count. ``...`` (the
+                default sentinel) means use ``self._top_k_final``.  Pass
+                ``None`` to disable truncation for this call.
 
         Returns:
             RetrievalResult with matches and expanded snippets
         """
+        # Resolve effective top_k_final without mutating instance state
+        # (important for thread-safety when multiple users share a pipeline).
+        effective_top_k_final = self._top_k_final if top_k_final is ... else top_k_final
         # Generate multiple retrieval queries (or just one if simple planner)
         queries = list(await self._planner.plan(question))
         if not queries:
@@ -593,8 +604,8 @@ class RAGPipeline:
             all_matches = self._rerank_matches(all_matches, len(queries))
 
         # Apply top_k_final truncation if configured
-        if self._top_k_final is not None and self._top_k_final > 0:
-            all_matches = all_matches[: self._top_k_final]
+        if effective_top_k_final is not None and effective_top_k_final > 0:
+            all_matches = all_matches[: effective_top_k_final]
 
         # Add BM25 results for additional context (not fused, just appended)
         if bm25_k > 0 and hasattr(self._store, "search_bm25"):
@@ -831,29 +842,28 @@ class RAGPipeline:
         Returns:
             Complete structured answer result
         """
-        # Temporarily override top_k_final if provided
-        original_top_k_final = self._top_k_final
+        # Pass top_k_final through to retrieve() as a parameter rather than
+        # temporarily mutating self._top_k_final — the old approach was a race
+        # condition when multiple Streamlit sessions share the same pipeline.
+        retrieve_kwargs: dict = {
+            "top_k": top_k,
+            "bm25_top_k": bm25_top_k,
+        }
         if top_k_final is not None:
-            self._top_k_final = top_k_final
+            retrieve_kwargs["top_k_final"] = top_k_final
 
         # --- Retrieval phase (embedding + vector search) ---
         t0 = _time.time()
-        try:
-            # Use image-aware retrieval if requested
-            if with_images:
-                retrieval = await self.retrieve_with_images(
-                    question,
-                    top_k=top_k,
-                    top_k_images=top_k_images,
-                    bm25_top_k=bm25_top_k,
-                )
-            else:
-                retrieval = await self.retrieve(
-                    question, top_k=top_k, bm25_top_k=bm25_top_k
-                )
-        finally:
-            # Restore original top_k_final
-            self._top_k_final = original_top_k_final
+        # Use image-aware retrieval if requested
+        if with_images:
+            retrieval = await self.retrieve_with_images(
+                question,
+                top_k=top_k,
+                top_k_images=top_k_images,
+                bm25_top_k=bm25_top_k,
+            )
+        else:
+            retrieval = await self.retrieve(question, **retrieve_kwargs)
         t_retrieval = _time.time() - t0
 
         # Render user prompt with context (and images if present as captions)

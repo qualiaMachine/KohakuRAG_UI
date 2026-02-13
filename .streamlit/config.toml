@@ -1,0 +1,19 @@
+# Streamlit server configuration for multi-user deployment behind a
+# reverse proxy (jupyter-server-proxy on Run:ai / JupyterHub).
+
+[server]
+headless = true
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = false
+
+# Disable WebSocket compression — many reverse proxies (nginx, traefik,
+# jupyter-server-proxy) don't negotiate ws compression correctly, causing
+# the Streamlit UI to hang on "Please wait..." / spin forever.
+enableWebsocketCompression = false
+
+# Allow large model files or uploads without 413 errors.
+maxUploadSize = 200
+
+[browser]
+gatherUsageStats = false
