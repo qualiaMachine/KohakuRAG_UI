@@ -165,21 +165,21 @@ If the version shows `+cpu` or CUDA is `False`, torch was installed without GPU 
 **Root cause**: `pip install torch` (without a CUDA index URL) pulls the CPU-only
 wheel from PyPI by default.
 
-**Fix**: `local_requirements.txt` now includes `--extra-index-url` for the PyTorch
-CUDA index. Reinstalling from that file should resolve it:
+**Fix**: On the GB10, use `local_requirements_gb10.txt` which includes
+`--extra-index-url` for the CUDA 13.0 PyTorch wheels:
 
 ```bash
-uv pip install -r local_requirements.txt
+uv pip install -r local_requirements_gb10.txt
 ```
 
 Or install torch directly with the CUDA index:
 
 ```bash
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 ```
 
 Then verify:
 ```bash
 python -c "import torch; print(torch.__version__); print('CUDA:', torch.cuda.is_available())"
-# Should show: 2.x.x+cu126 and CUDA: True
+# Should show: 2.x.x+cu130 and CUDA: True
 ```
