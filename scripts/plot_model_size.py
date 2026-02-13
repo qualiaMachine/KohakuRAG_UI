@@ -723,6 +723,61 @@ def print_summary_table(experiments: list[dict]):
 
 
 # ============================================================================
+# Helpers
+# ============================================================================
+
+def discover_systems(experiments_dir: Path) -> list[str]:
+    """Return sorted list of system directory names under experiments_dir."""
+    return sorted(
+        d.name for d in experiments_dir.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    )
+
+
+def generate_plots(experiments_dir: Path, output_dir: Path,
+                   name_filter: str | None, datafile: str | None,
+                   system: str | None):
+    """Load experiments for one system and generate all 8 plots."""
+    label = f"[{system}] " if system else ""
+    print(f"\n{'=' * 60}")
+    print(f"{label}Loading experiment data...")
+    if datafile:
+        print(f"  Filtering to datafile: {datafile}")
+    if system:
+        print(f"  Filtering to system: {system}")
+    if name_filter:
+        print(f"  Filtering to experiments containing: '{name_filter}'")
+
+    experiments = load_experiments(experiments_dir, name_filter=name_filter,
+                                  datafile=datafile, system=system)
+    if not experiments:
+        print(f"{label}No valid experiments found — skipping")
+        return
+
+    print(f"{label}Loaded {len(experiments)} experiments")
+    print_summary_table(experiments)
+
+    ensembles = load_ensemble_experiments(experiments_dir, datafile=datafile,
+                                          system=system)
+    if ensembles:
+        print(f"{label}Loaded {len(ensembles)} ensemble experiment(s) for ranking plot")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"{label}Generating plots...")
+    plot_size_vs_scores(experiments, output_dir)
+    plot_size_vs_latency(experiments, output_dir)
+    plot_size_vs_cost(experiments, output_dir)
+    plot_bubble_chart(experiments, output_dir)
+    plot_overall_ranking(experiments, output_dir, ensembles=ensembles)
+    plot_cost_vs_performance(experiments, output_dir)
+    plot_score_breakdown(experiments, output_dir)
+    plot_energy(experiments, output_dir)
+
+    print(f"{label}All 8 plots saved to {output_dir}/")
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -738,57 +793,35 @@ def main():
     )
     parser.add_argument(
         "--system", "-S", default=None,
-        help="Filter to experiments from this system subfolder "
-             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). Default: include all.",
+        help="Filter to a single system subfolder "
+             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). "
+             "Default: auto-discover all systems and generate plots for each.",
     )
     args = parser.parse_args()
 
     experiments_dir = Path(args.experiments)
-    output_dir = Path(args.output)
-    if args.datafile:
-        output_dir = output_dir / args.datafile
-    if args.system:
-        output_dir = output_dir / args.system
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     if not experiments_dir.exists():
         print(f"Error: experiments directory not found: {experiments_dir}")
         sys.exit(1)
 
-    print("Loading experiment data...")
+    base_output = Path(args.output)
     if args.datafile:
-        print(f"  Filtering to datafile: {args.datafile}")
+        base_output = base_output / args.datafile
+
     if args.system:
-        print(f"  Filtering to system: {args.system}")
-    if args.filter:
-        print(f"  Filtering to experiments containing: '{args.filter}'")
-    experiments = load_experiments(experiments_dir, name_filter=args.filter,
-                                  datafile=args.datafile, system=args.system)
-
-    if not experiments:
-        print("No valid experiments found!")
-        sys.exit(1)
-
-    print(f"Loaded {len(experiments)} experiments")
-    print_summary_table(experiments)
-
-    # Load ensemble experiments for the ranking plot
-    ensembles = load_ensemble_experiments(experiments_dir, datafile=args.datafile,
-                                          system=args.system)
-    if ensembles:
-        print(f"Loaded {len(ensembles)} ensemble experiment(s) for ranking plot")
-
-    print("\nGenerating plots...")
-    plot_size_vs_scores(experiments, output_dir)
-    plot_size_vs_latency(experiments, output_dir)
-    plot_size_vs_cost(experiments, output_dir)
-    plot_bubble_chart(experiments, output_dir)
-    plot_overall_ranking(experiments, output_dir, ensembles=ensembles)
-    plot_cost_vs_performance(experiments, output_dir)
-    plot_score_breakdown(experiments, output_dir)
-    plot_energy(experiments, output_dir)
-
-    print(f"\nAll 8 plots saved to {output_dir}/")
+        # Single system specified — generate one set of plots
+        out = base_output / args.system
+        generate_plots(experiments_dir, out, args.filter, args.datafile, args.system)
+    else:
+        # Auto-discover systems and generate per-system plots
+        systems = discover_systems(experiments_dir)
+        if not systems:
+            print("No system directories found under experiments dir")
+            sys.exit(1)
+        print(f"Discovered {len(systems)} system(s): {systems}")
+        for system in systems:
+            out = base_output / system
+            generate_plots(experiments_dir, out, args.filter, args.datafile, system)
 
 
 if __name__ == "__main__":
