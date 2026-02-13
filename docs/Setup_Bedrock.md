@@ -326,13 +326,7 @@ python scripts/run_experiment.py \
 python scripts/run_full_benchmark.py --provider bedrock --env Bedrock
 ```
 
-### 17) Post-hoc normalization and scoring
-
-```bash
-python scripts/posthoc.py artifacts/experiments/Bedrock/train_QA/claude-haiku-bench/results.json
-```
-
-### 18) Compare Bedrock vs local results
+### 17) Compare Bedrock vs local results
 
 After running both providers:
 
@@ -354,8 +348,8 @@ artifacts/experiments/
   Bedrock/
     train_QA/
       claude-haiku-bench/
-        results.json
         summary.json
+        submission.csv
       claude-sonnet-bench/
         ...
   PowerEdge/
