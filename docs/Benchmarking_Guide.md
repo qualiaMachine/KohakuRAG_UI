@@ -49,27 +49,24 @@ python scripts/plot_cross_system_latency.py --datafile $DS
 
 ```bash
 # Top-3
+# Top-3
 python scripts/run_ensemble.py \
-    --experiments qwen72b-bench qwen32b-bench qwen14b-bench \
+    --experiments qwen3-next-80b-a3b-bench qwen72b-bench qwen32b-bench \
     --name ensemble-top3-majority \
     --strategy majority --ignore-blank \
     --env $ENV --datafile $DS
 
 # Top-5
 python scripts/run_ensemble.py \
-    --experiments qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench \
-                 qwen14b-bench qwen7b-bench \
+    --experiments qwen3-next-80b-a3b-bench qwen72b-bench qwen32b-bench qwen3-30b-a3b-bench qwen14b-bench \
     --name ensemble-top5-majority \
     --strategy majority --ignore-blank \
     --env $ENV --datafile $DS
 
 # Kitchen sink (all 11)
 python scripts/run_ensemble.py \
-    --experiments \
-        qwen72b-bench qwen3-30b-a3b-bench qwen32b-bench qwen14b-bench \
-        mixtral-8x22b-bench qwen7b-bench qwen3b-bench mistral7b-bench \
-        mixtral-8x7b-bench phi3-mini-bench olmoe-1b7b-bench \
-    --name ensemble-all11-majority \
+    --experiments qwen3-next-80b-a3b-bench qwen72b-bench qwen32b-bench qwen3-30b-a3b-bench qwen14b-bench qwen7b-bench qwen1.5-110b-bench \
+    --name ensemble-all-majority \
     --strategy majority --ignore-blank \
     --env $ENV --datafile $DS
 ```
