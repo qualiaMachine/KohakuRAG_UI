@@ -520,14 +520,34 @@ class HuggingFaceLocalChatModel(ChatModel):
                 load_kwargs["dtype"] = torch.float16
 
         # Load model with automatic device placement
-        print(f"[init] Loading model weights ({dtype})...", flush=True)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self._model_id,
-            **load_kwargs,
-        )
+        effective_dtype = dtype
+        print(f"[init] Loading model weights...", flush=True)
+        try:
+            self._model = AutoModelForCausalLM.from_pretrained(
+                self._model_id,
+                **load_kwargs,
+            )
+        except ValueError as exc:
+            # Pre-quantized models (e.g. FP8) conflict with BitsAndBytesConfig;
+            # fall back to loading with native quantization.
+            if "quantization_config" in load_kwargs and "quantized" in str(exc):
+                effective_dtype = "native"
+                print(
+                    f"[init] Model is pre-quantized; loading with native "
+                    f"quantization instead of {dtype}...",
+                    flush=True,
+                )
+                load_kwargs.pop("quantization_config")
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    self._model_id,
+                    **load_kwargs,
+                )
+            else:
+                raise
+        self.effective_dtype = effective_dtype
         # Report where the model actually landed
         device = next(self._model.parameters()).device
-        print(f"[init] Model weights loaded -> {device}"
+        print(f"[init] Model weights loaded ({effective_dtype}) -> {device}"
               f"{' (GPU)' if device.type == 'cuda' else ' *** WARNING: on CPU, GPU not used ***'}",
               flush=True)
 
