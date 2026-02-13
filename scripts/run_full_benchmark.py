@@ -113,7 +113,8 @@ def check_existing(experiment_name: str, env: str = "", datafile_stem: str = "tr
 
 def run_experiment(config_name: str, experiment_name: str, env: str = "",
                     questions: str | None = None,
-                    precision: str = "4bit") -> tuple[bool, str]:
+                    precision: str = "4bit",
+                    profile: str | None = None) -> tuple[bool, str]:
     """Run a single experiment. Returns (success, output_summary)."""
     config_path = f"vendor/KohakuRAG/configs/{config_name}.py"
 
@@ -130,6 +131,8 @@ def run_experiment(config_name: str, experiment_name: str, env: str = "",
         cmd.extend(["--env", env])
     if questions:
         cmd.extend(["--questions", questions])
+    if profile:
+        cmd.extend(["--profile", profile])
 
     _noise_re = re.compile(
         r"Loading checkpoint shards|Fetching \d+ files|Encoding texts"
@@ -282,8 +285,13 @@ def main():
     )
     parser.add_argument(
         "--split", type=str, default=None,
-        help="Append a suffix to experiment names (e.g. --split test → qwen7b-bench-test). "
+        help="Append a suffix to experiment names (e.g. --split test -> qwen7b-bench-test). "
              "Use this to run on a different question set without overwriting existing results.",
+    )
+    parser.add_argument(
+        "--profile", type=str, default=None,
+        help="AWS profile name for Bedrock models (e.g. 'bedrock_endemann'). "
+             "Falls back to AWS_PROFILE env var.",
     )
     args = parser.parse_args()
 
@@ -361,7 +369,8 @@ def main():
 
         success, summary = run_experiment(config_name, exp_name, env=args.env,
                                            questions=args.questions,
-                                           precision=args.precision)
+                                           precision=args.precision,
+                                           profile=args.profile)
         elapsed = time.time() - start
 
         status = "PASS" if success else "FAIL"

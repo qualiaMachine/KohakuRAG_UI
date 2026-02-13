@@ -21,7 +21,7 @@ metadata = "../../data/metadata.csv"
 llm_provider = "bedrock"
 bedrock_model = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
 bedrock_region = "us-east-2"
-bedrock_profile = "bedrock_nils"
+# bedrock_profile — set via --profile CLI arg or AWS_PROFILE env var
 
 # Embedding settings (Jina v4 - must match index)
 embedding_model = "jinav4"

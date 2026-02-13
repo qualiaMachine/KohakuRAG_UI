@@ -20,7 +20,7 @@ metadata = "../../data/metadata.csv"
 llm_provider = "bedrock"
 bedrock_model = "us.meta.llama4-maverick-17b-instruct-v1:0"
 bedrock_region = "us-east-2"
-bedrock_profile = "bedrock_nils"
+# bedrock_profile — set via --profile CLI arg or AWS_PROFILE env var
 
 # Embedding settings (Jina v4 - must match index)
 embedding_model = "jinav4"
