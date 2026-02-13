@@ -115,6 +115,12 @@ def main():
         help="Filter to submissions from this datafile subfolder "
              "(e.g. 'train_QA', 'test_solutions'). Default: include all.",
     )
+    parser.add_argument(
+        "--system", "-S",
+        default=None,
+        help="Filter to submissions from this system subfolder "
+             "(e.g. 'PowerEdge', 'GB10', 'Bedrock'). Default: include all.",
+    )
 
     args = parser.parse_args()
 
@@ -133,6 +139,10 @@ def main():
     # Filter to datafile subfolder if specified
     if args.datafile:
         submission_files = [p for p in submission_files if args.datafile in p.parts]
+
+    # Filter to system subfolder if specified
+    if args.system:
+        submission_files = [p for p in submission_files if args.system in p.parts]
 
     unique_files = sorted(list(set(submission_files)))
     if not unique_files:
