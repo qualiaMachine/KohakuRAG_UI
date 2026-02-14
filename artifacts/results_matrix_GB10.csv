@@ -99,7 +99,7 @@ q107,"What percentage of the total amortized hardware and energy cost, on averag
 q108,What is the Power Usage Effectiveness (PUE) for Facebook's data centers?,1.1,['wu2021a'],Quote,PUE,1.1,"[""wu2021a"", ""wu2021b""]",True,0.5,True
 q109,"What is the acronym of the Finnish project that proposed integrating ethics, sustainability, design, and foresight for inter-disciplinary governance of AI systems?",ETAIROS,['luccioni2025b'],Quote,is_blank,ETAIROS,"[""luccioni2025b""]",True,1.0,True
 q110,What were the estimated amortized training costs for Google's Gemini Ultra?,30000000,['cottier2024'],Quote,USD,30000000,"[""cottier2024""]",True,1.0,True
-q111,True or False: The AI Act requires providers of GPAI models with systemic risk to conduct risk assessments that include environmental risks.,1,['ebert2024'],Quote,is_blank,True,"[""ebert2024""]",False,1.0,True
+q111,True or False: The AI Act requires providers of GPAI models with systemic risk to conduct risk assessments that include environmental risks.,1,['ebert2024'],Quote,is_blank,True,"[""ebert2024""]",True,1.0,True
 q112,What is the EPA's recently tightened primary standard for the annual average limit of PM2.5?,9,['han2024'],Quote,µg/m³,9,"[""han2024""]",True,1.0,True
 q113,A life cycle assessment found that one Amazon Kindle e-reader produces the same amount of CO2 as how many physical print books?,115,['luccioni2025a'],Quote,books,115,"[""luccioni2025a""]",True,1.0,True
 q114,"According to a recent study on the public health impacts of AI, by what factor could the per-household health burden from air pollutants in the most affected, economically-disadvantaged communities exceed that in less-impacted communities?",200,['han2024'],Quote,multiplier,200,"[""han2024""]",True,1.0,True
@@ -288,7 +288,7 @@ q307,"In the experiment analyzing emissions from training a BERT model across di
 q308,In what year did the practice of directly releasing environmental information for notable models peak before declining?,2022,['luccioni2025c'],Quote,year,2022,"[""luccioni2025c""]",True,1.0,True
 q309,"What is the equivalent water usage, in days, for one person in the US, of training an OLMo 60M model on 1.7 to 5.6 trillion tokens?",5,['morrison2025'],Table,days,1.6,"[""morrison2025""]",False,1.0,True
 q310,How many liters of freshwater did Google's DeepMind AlphaFold servers consume in 2023?,is_blank,is_blank,is_blank,liters of freshwater,is_blank,"[""li2025b"", ""luccioni2025a"", ""morrison2025"", ""jegham2025""]",True,0.0,True
-q311,True or False: Adding compute resources to accelerate the MoE layers when fine-tuning LLMs can increase costs.,0,['xia2024'],Quote,is_blank,False,"[""xia2024""]",False,1.0,True
+q311,True or False: Adding compute resources to accelerate the MoE layers when fine-tuning LLMs can increase costs.,0,['xia2024'],Quote,is_blank,False,"[""xia2024""]",True,1.0,True
 q312,"According to a carbon footprint analysis, what was the total energy consumption for training the FLM-101B model?",40000,['li2025a'],Table 3,kWh,40,"[""li2025a""]",False,1.0,True
 q313,"According to a recent study's projections for 2030, the total public health burden of U.S. data centers could be valued at up to more than what amount?",20000000000,['han2024'],Quote,USD,20000000000,"[""han2024""]",True,1.0,True
 q314,What is the estimated total cost of fine-tuning a Mixtral model on the GSM8K dataset with sparse MoE with an NVIDIA A40-48GB GPU?,32.7,['xia2024'],Table,USD,is_blank,"[""xia2024""]",False,1.0,True
