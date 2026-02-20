@@ -227,7 +227,7 @@ def load_and_score(gt_path: Path, experiments_dir: Path, datafile: str | None = 
 
 
 def plot_breakdown(results: dict, output_path: Path):
-    """Create grouped bar chart showing score components."""
+    """Create scatter plot showing score components."""
     # Sort by overall score
     sorted_models = sorted(results.keys(), key=lambda m: results[m]["Overall"], reverse=True)
 
@@ -262,32 +262,35 @@ def plot_breakdown(results: dict, output_path: Path):
         "Overall": "#e74c3c",    # Red
     }
 
-    err_kw = {'linewidth': 1, 'color': '#333'}
-    bars1 = ax.bar(x - 1.5*width, val_scores, width, label=f"Value Acc (75%)", color=colors["Value"],
-                   yerr=val_yerr, capsize=2, error_kw=err_kw)
-    bars2 = ax.bar(x - 0.5*width, ref_scores, width, label=f"Ref Overlap (15%)", color=colors["Ref"],
-                   yerr=ref_yerr, capsize=2, error_kw=err_kw)
-    bars3 = ax.bar(x + 0.5*width, na_scores, width, label=f"NA Recall (10%)", color=colors["NA"],
-                   yerr=na_yerr, capsize=2, error_kw=err_kw)
-    bars4 = ax.bar(x + 1.5*width, overall_scores, width, label=f"Overall", color=colors["Overall"], alpha=0.8,
-                   yerr=overall_yerr, capsize=2, error_kw=err_kw)
+    err_kw = {'linewidth': 1, 'color': '#333', 'capsize': 3}
+    offsets = [-1.5, -0.5, 0.5, 1.5]
+    all_scores = [val_scores, ref_scores, na_scores, overall_scores]
+    all_yerr = [val_yerr, ref_yerr, na_yerr, overall_yerr]
+    all_labels = ["Value Acc (75%)", "Ref Overlap (15%)", "NA Recall (10%)", "Overall"]
+    all_colors = [colors["Value"], colors["Ref"], colors["NA"], colors["Overall"]]
+    all_alphas = [1.0, 1.0, 1.0, 0.8]
+    marker_styles = ['o', 's', '^', 'D']
 
-    # Add value labels on bars
-    def add_labels(bars):
-        for bar in bars:
-            height = bar.get_height()
-            ax.annotate(
-                f"{height:.2f}",
-                xy=(bar.get_x() + bar.get_width() / 2, height),
-                xytext=(0, 3),
-                textcoords="offset points",
-                ha="center",
-                va="bottom",
-                fontsize=7,
-                rotation=90,
-            )
+    for scores, yerr, label, color, alpha, marker, offset in zip(
+            all_scores, all_yerr, all_labels, all_colors, all_alphas, marker_styles, offsets):
+        positions = x + offset * width
+        ax.errorbar(positions, scores, yerr=yerr, fmt='none',
+                    ecolor='#333', elinewidth=1, capsize=3)
+        ax.scatter(positions, scores, label=label, color=color, alpha=alpha,
+                   s=80, zorder=5, edgecolors="white", linewidth=0.8, marker=marker)
 
-    add_labels(bars4)  # Only label overall to avoid clutter
+    # Add value labels on overall scores
+    for xi, score in zip(x + 1.5 * width, overall_scores):
+        ax.annotate(
+            f"{score:.2f}",
+            xy=(xi, score),
+            xytext=(0, 8),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=7,
+            rotation=90,
+        )
 
     ax.set_ylabel("Score", fontsize=12)
     ax.set_title("WattBot Score Breakdown by Component\n(Weight: 75% Value + 15% Ref + 10% NA | 95% Wilson CI)", fontsize=14)

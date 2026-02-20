@@ -640,7 +640,7 @@ def _ensemble_gray(model_count: int) -> str:
 
 def plot_overall_ranking(experiments: list[dict], output_dir: Path,
                          ensembles: list[dict] | None = None):
-    """Plot 5: Overall performance ranking (horizontal bar chart).
+    """Plot 5: Overall performance ranking (scatter plot).
 
     When *ensembles* is provided, ensemble entries are merged in and drawn
     with hatching + amber colour so they stand out from individual models.
@@ -671,18 +671,19 @@ def plot_overall_ranking(experiments: list[dict], output_dir: Path,
             suffix = " [local]" if e.get("llm_provider") == "hf_local" else ""
             labels.append(f"{e['display_name']}{suffix}")
 
-    bars = ax.barh(range(n_bars), scores, color=colors, edgecolor="white",
-                   linewidth=1.2, height=0.65,
-                   xerr=ci_widths, capsize=3,
-                   error_kw={'linewidth': 1.2, 'color': '#333'})
+    y_positions = list(range(n_bars))
+    ax.errorbar(scores, y_positions, xerr=ci_widths, fmt='none',
+                ecolor='#333', elinewidth=1.2, capsize=3)
 
-    # Apply hatching to ensemble bars
-    for idx in hatch_indices:
-        bars[idx].set_hatch("//")
-        bars[idx].set_edgecolor("#444")
+    # Draw ensemble markers differently from regular markers
+    for i, (score, y, color) in enumerate(zip(scores, y_positions, colors)):
+        marker = 'D' if i in hatch_indices else 'o'
+        ax.scatter(score, y, c=color, s=120, zorder=5,
+                   edgecolors="#444" if i in hatch_indices else "white",
+                   linewidth=1.5, marker=marker)
 
-    for bar, score, ci in zip(bars, scores, ci_widths):
-        ax.text(bar.get_width() + ci + 0.01, bar.get_y() + bar.get_height() / 2,
+    for i, (score, ci) in enumerate(zip(scores, ci_widths)):
+        ax.text(score + ci + 0.01, i,
                 f"{score:.3f}", va="center", fontsize=10, fontweight="bold")
 
     ax.set_yticks(range(n_bars))
@@ -695,12 +696,12 @@ def plot_overall_ranking(experiments: list[dict], output_dir: Path,
     ax.spines["right"].set_visible(False)
     ax.grid(axis="x", linestyle="--", alpha=0.3)
 
-    # Legend entry for ensemble hatching
+    # Legend entry for ensemble markers
     if hatch_indices:
-        from matplotlib.patches import Patch
+        from matplotlib.lines import Line2D
         ax.legend(
-            handles=[Patch(facecolor="#888888", edgecolor="#444",
-                           hatch="//", label="Ensemble")],
+            handles=[Line2D([0], [0], marker='D', color='w', markerfacecolor='#888888',
+                            markeredgecolor='#444', markersize=10, label='Ensemble')],
             loc="lower right", fontsize=10,
         )
 
@@ -751,7 +752,7 @@ def plot_cost_vs_performance(experiments: list[dict], output_dir: Path):
 
 
 def plot_score_breakdown(experiments: list[dict], output_dir: Path):
-    """Plot 7: Grouped bar chart showing component score breakdown."""
+    """Plot 7: Scatter plot showing component score breakdown."""
     fig, ax = plt.subplots(figsize=(14, 7))
 
     sorted_exp = sorted(experiments, key=lambda x: x["overall_score"], reverse=True)
@@ -766,13 +767,20 @@ def plot_score_breakdown(experiments: list[dict], output_dir: Path):
     ref_ci = [e.get("ref_ci", 0) for e in sorted_exp]
     na_ci = [e.get("na_ci", 0) for e in sorted_exp]
 
-    err_kw = {'linewidth': 1, 'color': '#333'}
-    ax.bar(x - width, val_scores, width, label="Value Accuracy (75%)", color="#6366f1", alpha=0.85,
-           yerr=val_ci, capsize=2, error_kw=err_kw)
-    ax.bar(x, ref_scores, width, label="Reference Overlap (15%)", color="#f59e0b", alpha=0.85,
-           yerr=ref_ci, capsize=2, error_kw=err_kw)
-    ax.bar(x + width, na_scores, width, label="NA Recall (10%)", color="#10b981", alpha=0.85,
-           yerr=na_ci, capsize=2, error_kw=err_kw)
+    score_sets = [val_scores, ref_scores, na_scores]
+    ci_sets = [val_ci, ref_ci, na_ci]
+    score_labels = ["Value Accuracy (75%)", "Reference Overlap (15%)", "NA Recall (10%)"]
+    score_colors = ["#6366f1", "#f59e0b", "#10b981"]
+    score_markers = ['o', 's', '^']
+    score_offsets = [-width, 0, width]
+
+    for scores, ci, label, color, marker, off in zip(
+            score_sets, ci_sets, score_labels, score_colors, score_markers, score_offsets):
+        positions = x + off
+        ax.errorbar(positions, scores, yerr=ci, fmt='none',
+                    ecolor='#333', elinewidth=1, capsize=2)
+        ax.scatter(positions, scores, label=label, color=color, alpha=0.85,
+                   s=80, zorder=5, edgecolors="white", linewidth=0.8, marker=marker)
 
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=35, ha="right", fontsize=10)
@@ -790,7 +798,7 @@ def plot_score_breakdown(experiments: list[dict], output_dir: Path):
 
 
 def plot_energy(experiments: list[dict], output_dir: Path):
-    """Plot 8: Total GPU energy consumed per experiment (horizontal bar chart)."""
+    """Plot 8: Total GPU energy consumed per experiment (scatter plot)."""
     # Exclude API-only providers — their energy readings are just local idle noise
     with_energy = [e for e in experiments
                    if e.get("gpu_energy_wh", 0) > 0
@@ -809,11 +817,14 @@ def plot_energy(experiments: list[dict], output_dir: Path):
     energies = [e["gpu_energy_wh"] for e in sorted_exp]
     colors = [get_color(e["display_name"]) for e in sorted_exp]
 
-    bars = ax.barh(range(len(labels)), energies, color=colors, edgecolor="white",
-                   linewidth=1.2, height=0.65)
+    y_positions = list(range(len(labels)))
+    for i, (energy, y, color) in enumerate(zip(energies, y_positions, colors)):
+        ax.scatter(energy, y, c=color, s=120, zorder=5,
+                   edgecolors="white", linewidth=1.5, marker='o')
 
-    for bar, energy in zip(bars, energies):
-        ax.text(bar.get_width() + max(energies) * 0.01, bar.get_y() + bar.get_height() / 2,
+    max_energy = max(energies)
+    for i, energy in enumerate(energies):
+        ax.text(energy + max_energy * 0.01, i,
                 f"{energy:.1f} Wh", va="center", fontsize=10, fontweight="bold")
 
     ax.set_yticks(range(len(labels)))

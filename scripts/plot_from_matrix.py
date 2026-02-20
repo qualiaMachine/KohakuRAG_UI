@@ -433,8 +433,11 @@ def main():
                     yerr_lower.append(0)
                     yerr_upper.append(0)
 
-            ax.bar(x + i*width, scores, width, label=model, color=type_bar_colors[i],
-                   yerr=[yerr_lower, yerr_upper], capsize=2, error_kw={'linewidth': 1})
+            positions = x + i * width
+            ax.errorbar(positions, scores, yerr=[yerr_lower, yerr_upper], fmt='none',
+                        ecolor='#333', elinewidth=1, capsize=2)
+            ax.scatter(positions, scores, label=model, color=type_bar_colors[i],
+                       s=80, zorder=5, edgecolors="white", linewidth=0.8)
 
         # Add N counts to labels with warning for small samples
         labels_with_counts = []
@@ -527,15 +530,17 @@ def main():
         unique_wins[m_target] = len(wins)
         
     fig, ax = plt.subplots(figsize=(12, 7))
-    bars = ax.bar(unique_wins.keys(), unique_wins.values(), color='orange', width=0.6)
-    
+    win_keys = list(unique_wins.keys())
+    win_values = list(unique_wins.values())
+    ax.scatter(win_keys, win_values, color='orange', s=120, zorder=5,
+               edgecolors="white", linewidth=1.2)
+
     setup_plot(ax, "Unique Wins (Questions only THIS model got right)", "Count of Questions")
-    
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(f'{height}',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 5),
+
+    for key, value in zip(win_keys, win_values):
+        ax.annotate(f'{value}',
+                    xy=(key, value),
+                    xytext=(0, 8),
                     textcoords="offset points",
                     ha='center', va='bottom', fontsize=9, fontweight='bold')
                     
@@ -560,18 +565,20 @@ def main():
             refusal_rates[model] = rate
             
     fig, ax = plt.subplots(figsize=(12, 7))
-    bars = ax.bar(refusal_rates.keys(), refusal_rates.values(), color='gray', width=0.6)
-    
+    refusal_keys = list(refusal_rates.keys())
+    refusal_values = list(refusal_rates.values())
+    ax.scatter(refusal_keys, refusal_values, color='gray', s=120, zorder=5,
+               edgecolors="white", linewidth=1.2)
+
     # Scale y-axis
-    y_max = max(refusal_rates.values() or [10]) * 1.2
+    y_max = max(refusal_values or [10]) * 1.2
     ax.set_ylim(0, y_max)
     setup_plot(ax, "Refusal Rate (% of questions answered as 'Unable')", "Percentage (%)")
-    
-    for bar in bars:
-        height = bar.get_height()
-        ax.annotate(f'{height:.1f}%',
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 5),
+
+    for key, value in zip(refusal_keys, refusal_values):
+        ax.annotate(f'{value:.1f}%',
+                    xy=(key, value),
+                    xytext=(0, 8),
                     textcoords="offset points",
                     ha='center', va='bottom', fontsize=9, fontweight='bold')
                     

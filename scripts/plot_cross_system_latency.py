@@ -7,7 +7,7 @@ that have been benchmarked on multiple hardware systems (e.g. GB10,
 PowerEdge, Bedrock).
 
 Generates:
-  1. Horizontal stacked-bar chart of ALL models (retrieval + generation),
+  1. Scatter plot of ALL models (retrieval + generation),
      sorted by latency fastest-first, color-coded by system.
   2. Box-plot of per-question latency distributions for shared models.
 
@@ -240,7 +240,7 @@ def style_axis(ax, title, xlabel, ylabel):
 # ============================================================================
 
 def plot_latency_overview(data: dict, all_systems: list[str], output_dir: Path):
-    """Horizontal stacked-bar chart: ALL models, ALL systems.
+    """Scatter plot: ALL models, ALL systems.
 
     Three sections (top → bottom), each sorted by latency fastest-first:
       1. Bedrock   2. PowerEdge   3. GB10
@@ -299,10 +299,13 @@ def plot_latency_overview(data: dict, all_systems: list[str], output_dir: Path):
 
     y_pos = np.arange(n)
 
-    ax.barh(y_pos, retrievals, color=colors, alpha=0.5,
-            edgecolor="white", linewidth=0.8, height=0.65, hatch="//")
-    ax.barh(y_pos, generations, left=retrievals, color=colors,
-            alpha=0.9, edgecolor="white", linewidth=0.8, height=0.65)
+    for i, (ret, gen, color) in enumerate(zip(retrievals, generations, colors)):
+        ax.scatter(ret, y_pos[i], c=color, s=80, zorder=5, alpha=0.6,
+                   edgecolors="white", linewidth=0.8, marker='^')
+        ax.scatter(ret + gen, y_pos[i], c=color, s=100, zorder=5, alpha=0.9,
+                   edgecolors="white", linewidth=0.8, marker='o')
+        ax.plot([ret, ret + gen], [y_pos[i], y_pos[i]], color=color,
+                linewidth=2, alpha=0.5, zorder=3)
 
     # Annotate total latency
     max_lat = max(e["avg_latency"] for e in entries)
@@ -336,9 +339,11 @@ def plot_latency_overview(data: dict, all_systems: list[str], output_dir: Path):
     # Legend: system colors + retrieval/generation
     seen = dict.fromkeys(e["system"] for e in entries)
     legend_elements = [Patch(facecolor=get_system_color(s), label=s) for s in seen]
-    legend_elements.append(Patch(facecolor="#999", alpha=0.5, hatch="//",
-                                 label="Retrieval"))
-    legend_elements.append(Patch(facecolor="#999", alpha=0.9, label="Generation"))
+    from matplotlib.lines import Line2D
+    legend_elements.append(Line2D([0], [0], marker='^', color='w', markerfacecolor='#999',
+                                  alpha=0.6, markersize=8, label='Retrieval'))
+    legend_elements.append(Line2D([0], [0], marker='o', color='w', markerfacecolor='#999',
+                                  alpha=0.9, markersize=8, label='Total (Ret+Gen)'))
     ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
 
     ax.set_xlim(right=max_lat * 1.15)
