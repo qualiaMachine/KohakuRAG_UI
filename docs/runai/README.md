@@ -92,7 +92,7 @@ Streamlit.
 
 Follow these docs in order:
 
-0. **[Setup Shared Models PVC](setup-shared-models.md)** *(admin/owner, one-time)* — Create your own PVC, download model weights (Qwen, Jina V4). Only the PVC creator has write access — this is a RunAI constraint, not a misconfiguration.
+0. **[Setup Shared Models PVC](setup-shared-models.md)** *(admin/owner, one-time)* — Create a PVC in your project, download model weights (Qwen, Jina V4), then share cluster-wide as a Data Volume. Only workloads in the creator's project can write to the PVC — everyone else gets read-only access via the Data Volume.
 1. **[Setup & Prerequisites](setup-workspace.md)** — Create the data volume for the vector index, clone the repo, build the index (one-time)
 2. **[Deploy vLLM Server](deploy-vllm.md)** — LLM inference with Qwen 7B
 3. **[Deploy Embedding Server](deploy-embedding.md)** — Jina V4 query encoding

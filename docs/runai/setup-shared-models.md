@@ -65,15 +65,35 @@ In the RunAI UI:
 
 | Field | Value |
 |-------|-------|
-| **Scope** | **Cluster** (e.g. `runai/doit-ai-cluster`) — so all projects can see this data source. If you don't have cluster-level permissions, use your department or project scope and share via a Data Volume in Step 5. |
+| **Scope** | Your project (e.g. `runai/doit-ai-cluster/default/<your-project>`). The PVC is created in this project's namespace — **only workloads in this project can write to it.** Other projects get read-only access when you share via a Data Volume in Step 5. |
 | **Data source name** | `wattbot-models` |
-| **PVC name** | `wattbot-models` *(creates a new PVC)* |
-| **Storage class** | Use your cluster's default (ask admin if unsure) |
-| **Access mode** | **Read-write by many nodes** (ReadWriteMany / RWX) — allows multiple workloads to mount simultaneously. If your storage class only supports ReadWriteOnce (RWO), that works too — just ensure only one workload mounts during provisioning. |
-| **Storage size** | See planning table below |
+| **PVC name** | `wattbot-models` *(select "New PVC" — this creates a fresh PVC)* |
+| **Storage class** | Check what's available on your cluster (see note below) |
+| **Access mode** | See note below |
+| **Claim size** | See planning table below |
+| **Volume mode** | `Filesystem` |
 | **Container path** | `/models` |
 
 4. Create the Data Source
+
+### Storage class and access mode
+
+Your cluster may offer different storage classes. The choice affects
+how the PVC behaves:
+
+| Storage class | Access mode | Pros | Cons |
+|---------------|-------------|------|------|
+| **NFS / CephFS / shared** | **Read-write by many nodes** (RWX) | Multiple workloads on different nodes can mount simultaneously | Requires networked storage |
+| **`local-path`** | **Read-write by one node** (RWO) | Simple, fast, no network overhead | Data lives on one node only; cross-node access requires Data Volume sharing |
+
+The existing admin PVC (`shared-model-repository`) uses `local-path`
+with RWO. **This works** — RunAI's Data Volume mechanism handles
+cross-node read access by creating replicas. But it means only one
+workload can *write* at a time, and the data is physically on one node.
+
+If you're unsure, **use the same storage class as the admin** (`local-path`)
+to keep things consistent. If your cluster has an NFS or shared storage
+class, prefer that with RWX for a smoother experience.
 
 > **"Pending" is normal.** If your storage class uses
 > `WaitForFirstConsumer` volume binding (most do), the PVC will show
