@@ -303,12 +303,24 @@ Everything else (env vars, `HF_HOME`, etc.) is unchanged.
 ## Updating models later
 
 1. Go to **Workloads** in the RunAI UI
-2. Find `model-provisioner` and **Start** it (or create a new Workspace
-   mounting the `wattbot-models` **data source**)
+2. Find your provisioning workspace and **Start** it (or create a new
+   Workspace mounting the **data source**)
 3. Connect to the terminal
-4. Download, remove, or update models as needed
-5. Stop the Workspace
+4. Upload `scripts/provision_shared_models.py` to `/home/jovyan/work/`
+   and use it to manage models:
+
+```bash
+python /home/jovyan/work/provision_shared_models.py list       # see what's cached
+python /home/jovyan/work/provision_shared_models.py download <org>/<model>
+python /home/jovyan/work/provision_shared_models.py verify <org>/<model>
+```
+
+5. Stop the Workspace when done
 
 Consumers see updated data immediately — no need to recreate the Data
 Volume or restart inference jobs (unless the model they're using was
 changed, in which case restart that specific job).
+
+> **Using the admin's shared PVC instead?** See
+> [Managing Models — Adding or updating models on the admin's shared PVC](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc)
+> for instructions using the `update-shared-models1` workspace.
