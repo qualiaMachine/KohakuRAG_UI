@@ -32,19 +32,54 @@ GPUs natively, and on Ampere GPUs via FP8 Marlin (vLLM v0.9.0+).
 
 ---
 
-## Adding a new model to your PVC
+## Adding or updating models on the admin's shared PVC
 
-If you own the PVC (you created it via [Setup Shared Models](setup-shared-models.md)),
-re-start your provisioning Workspace and download:
+The admin's PVC (`shared-model-repository`) lives in the **`shared-models`**
+project. If you have access to that project, you can write to it directly
+using the pre-built **`update-shared-models1`** workspace:
+
+1. In the RunAI UI, go to **Workloads**
+2. Switch to the **`shared-models`** project
+3. Find **`update-shared-models1`** and **Start** it
+4. Once running, **Connect** > open a terminal
+5. Upload `scripts/provision_shared_models.py` to `/home/jovyan/work/`
+   (via JupyterLab's file browser)
+6. Run commands:
 
 ```bash
-huggingface-cli download <org>/<model-name>
-# e.g. huggingface-cli download Qwen/Qwen2.5-14B-Instruct
+# List models and confirm PVC is writable
+python /home/jovyan/work/provision_shared_models.py list
+
+# Download a new model
+python /home/jovyan/work/provision_shared_models.py download <org>/<model-name>
+# e.g. python /home/jovyan/work/provision_shared_models.py download Qwen/Qwen2.5-14B-Instruct
+
+# Download specific files (e.g. Jina V4 adapters)
+python /home/jovyan/work/provision_shared_models.py download jinaai/jina-embeddings-v4 --include "adapters/*"
+
+# Verify a model has all required files
+python /home/jovyan/work/provision_shared_models.py verify jinaai/jina-embeddings-v4
 ```
 
-If you're using someone else's PVC (e.g. `shared-model-repository`), you
-**cannot** add models — only the original creator has write access. Either
-ask them to add it, or create your own PVC.
+7. **Stop** the workspace when done to free resources
+
+> **Important:** The `update-shared-models1` workspace uses `local-path`
+> (RWO) storage, so **only one workspace can mount the PVC read-write at
+> a time**. Make sure no other workspace in `shared-models` is running
+> with the same PVC before starting.
+
+If you **don't** have access to the `shared-models` project, either ask
+an admin to add models on your behalf, or create your own PVC — see
+[Setup Shared Models PVC](setup-shared-models.md).
+
+## Adding a new model to your own PVC
+
+If you created your own PVC (via [Setup Shared Models](setup-shared-models.md)),
+re-start your provisioning Workspace and use the same script:
+
+```bash
+python /home/jovyan/work/provision_shared_models.py download <org>/<model-name>
+```
 
 ## Swapping the LLM (e.g., Qwen 7B → Llama 3 8B)
 
@@ -72,15 +107,15 @@ Based on `ls /models/.cache/huggingface/`:
 
 | Model | Est. Size | Notes |
 |-------|-----------|-------|
-| `Qwen/Qwen1.5-110B-Chat` | ~220 GB | Legacy model |
+| `Qwen/Qwen1.5-110B-Chat` | ~207 GB | Legacy model |
 | `Qwen/Qwen2.5-14B-Instruct` | ~28 GB | |
-| `Qwen/Qwen2.5-72B-Instruct` | ~145 GB | |
+| `Qwen/Qwen2.5-72B-Instruct` | ~135 GB | |
 | `Qwen/Qwen2.5-7B-Instruct` | ~14 GB | Used by vLLM server |
-| `Qwen/Qwen3-30B-A3B-Instruct-2507` | ~30 GB | MoE |
-| `Qwen/Qwen3-Next-80B-A3B-Instruct` | ~17 GB | MoE (active ~3B) |
-| `Qwen/Qwen3-Next-80B-A3B-Thinking-FP8` | ~17 GB | MoE FP8 |
-| `Qwen/Qwen3.5-35B-A3B` | ~17 GB | MoE (active ~3B) |
-| `jinaai/jina-embeddings-v4` | ~3 GB | Used by embedding server. Missing `adapters/` — auto-downloaded to `/tmp` on cold start |
+| `Qwen/Qwen3-30B-A3B-Instruct-2507` | ~57 GB | MoE |
+| `Qwen/Qwen3-Next-80B-A3B-Instruct` | ~152 GB | MoE (active ~3B) |
+| `Qwen/Qwen3-Next-80B-A3B-Thinking-FP8` | ~76 GB | MoE FP8 |
+| `Qwen/Qwen3.5-35B-A3B` | ~67 GB | MoE (active ~3B) |
+| `jinaai/jina-embeddings-v4` | ~7 GB | Used by embedding server. Includes `adapters/` |
 
 ---
 
@@ -102,9 +137,11 @@ The lifecycle is:
 3. They wrap it in a **Data Volume** and share it across projects
 4. All consumers (including your workspaces) get **read-only** access
 
-To write to the existing `shared-models` PVC, you'd need to be the
-admin who created it (or ask them to run commands on your behalf).
-Alternatively, create your own PVC — see below.
+To write to the existing `shared-models` PVC, you need access to the
+**`shared-models` project** and must use a workspace that mounts the
+**data source** (not the data volume). See
+[Adding or updating models on the admin's shared PVC](#adding-or-updating-models-on-the-admins-shared-pvc)
+above. Alternatively, create your own PVC — see below.
 
 ### How the embedding server handles read-only PVCs
 
@@ -117,10 +154,9 @@ automatically — no manual workaround needed:
 3. Creates writable `refs/`, `.no_exist/` directories for HF metadata
 4. Redirects xet logging and pip cache to `/tmp`
 5. Auto-downloads missing Jina V4 adapters to `/tmp` on cold start
+   (no longer needed — adapters are now on the PVC)
 
-**Result:** Zero "Read-only file system" errors in logs. The only cost
-is ~few hundred MB adapter re-download on each cold start (until
-adapters are added to the PVC permanently).
+**Result:** Zero "Read-only file system" errors in logs.
 
 ### Cache directory structure
 

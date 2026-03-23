@@ -48,12 +48,35 @@ start if they're missing from the PVC. To fix permanently, either ask
 the admin to add adapters to their PVC, or create your own PVC with
 the full model (see [Managing Models](managing-models.md)).
 
-## Can't write to PVC from any workspace
+## Can't write to `/models/` — even from the "right" project
 
-You're mounting the **Data Volume** (always read-only for consumers),
-not the original **PVC data source** (writable by creator). Only the
-workspace/project that created the PVC has write access. Create your
-own PVC if you need write access (see [Managing Models](managing-models.md)).
+There are three common causes, all of which look the same ("Read-only
+file system"):
+
+**1. Mounted the Data Volume instead of the Data Source.**
+Data Volumes are **always** read-only, even in the creator's project.
+Check the workspace config in the RunAI UI — look at what's attached
+under "Data Sources" vs "Data Volumes". They can have similar names
+(e.g. `shared-models` vs `shared-model-repository`) but behave
+differently. You need the **Data Source** (the raw PVC) for write access.
+
+**2. Workspace is in the wrong project.**
+The PVC is namespace-scoped. If the data source was created in project
+`shared-models` but your workspace is in `jupyter-yourname01`, you
+can't write to it — even if the data source is visible in the UI.
+Check the project column in the Workloads list. Your provisioning
+workspace must be in the **same project** where the PVC was created.
+
+**3. Another workload already has the PVC mounted (RWO).**
+If the storage class is `local-path` with access mode `Read-write by
+one node` (RWO), only one pod can mount it read-write at a time. If
+someone else's workspace is still Running with that PVC mounted, yours
+gets downgraded to read-only. **Stop the other workload first**, then
+start yours.
+
+**Best fix:** Create your own PVC in your own project — then there's no
+ambiguity about write access. See
+[Setup Shared Models PVC](setup-shared-models.md).
 
 ## Storage class doesn't support ReadWriteMany
 

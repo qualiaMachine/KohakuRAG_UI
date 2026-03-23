@@ -7,9 +7,9 @@
 > access if they mount it from a different project.
 
 This step creates a PVC you own, downloads model weights into it, and
-optionally wraps it as a Data Volume for sharing. All subsequent
-deployment steps ([Setup Workspace](setup-workspace.md),
-[Deploy vLLM](deploy-vllm.md), etc.) mount this PVC at `/models/`.
+wraps it as a cluster-wide Data Volume so everyone can read from it.
+All subsequent deployment steps ([Setup Workspace](setup-workspace.md),
+[Deploy vLLM](deploy-vllm.md), etc.) mount this at `/models/`.
 
 ---
 
@@ -51,7 +51,27 @@ writable. To add models later:
 
 The key distinction:
 - **Data Source** (PVC) → writable by creator, mount this to add/update models
-- **Data Volume** (wrapper) → read-only replicas for consumers
+- **Data Volume** (wrapper) → **always read-only**, even in the creator's project
+
+> **Common gotcha:** If you connect to a workspace and `/models/` is
+> read-only, check **which** asset it mounted. In the RunAI UI, look at
+> the workspace's data sources/volumes configuration:
+>
+> | Mounted asset | Name (example) | Result |
+> |---------------|----------------|--------|
+> | **Data Source** | `wattbot-models` | **Read-write** (if you're in the creator's project) |
+> | **Data Volume** | `wattbot-models` | **Read-only** (always, even in the same project) |
+>
+> They can have the same name but behave very differently. If you need
+> to write, make sure the workspace mounts the **data source**, not the
+> data volume. When creating the workspace, attach it under "Data
+> Sources", not "Data Volumes."
+>
+> Also: if the storage class is `local-path` with RWO (read-write by
+> one node), only one workload can mount read-write at a time. If
+> another workload already has the PVC mounted, yours may be forced
+> to read-only. Stop any other workloads using the PVC before
+> provisioning.
 
 ---
 
@@ -65,15 +85,42 @@ In the RunAI UI:
 
 | Field | Value |
 |-------|-------|
-| **Scope** | Your project (e.g. `runai/doit-ai-cluster/default/<your-project>`) |
+| **Scope** | Your project (e.g. `runai/doit-ai-cluster/default/<your-project>`). The PVC is created in this project's namespace — **only workloads in this project can write to it.** Other projects get read-only access when you share via a Data Volume in Step 5. |
 | **Data source name** | `wattbot-models` |
-| **PVC name** | `wattbot-models` *(creates a new PVC)* |
-| **Storage class** | Use your cluster's default (ask admin if unsure) |
-| **Access mode** | **Read-write by many nodes** (ReadWriteMany / RWX) — allows multiple workloads to mount simultaneously. If your storage class only supports ReadWriteOnce (RWO), that works too — just ensure only one workload mounts during provisioning. |
-| **Storage size** | See planning table below |
+| **PVC name** | `wattbot-models` *(select "New PVC" — this creates a fresh PVC)* |
+| **Storage class** | Check what's available on your cluster (see note below) |
+| **Access mode** | See note below |
+| **Claim size** | See planning table below |
+| **Volume mode** | `Filesystem` |
 | **Container path** | `/models` |
 
 4. Create the Data Source
+
+### Storage class and access mode
+
+Your cluster may offer different storage classes. The choice affects
+how the PVC behaves:
+
+| Storage class | Access mode | Pros | Cons |
+|---------------|-------------|------|------|
+| **NFS / CephFS / shared** | **Read-write by many nodes** (RWX) | Multiple workloads on different nodes can mount simultaneously | Requires networked storage |
+| **`local-path`** | **Read-write by one node** (RWO) | Simple, fast, no network overhead | Data lives on one node only; cross-node access requires Data Volume sharing |
+
+The existing admin PVC (`shared-model-repository`) uses `local-path`
+with RWO. **This works** — RunAI's Data Volume mechanism handles
+cross-node read access by creating replicas. But it means only one
+workload can *write* at a time, and the data is physically on one node.
+
+If you're unsure, **use the same storage class as the admin** (`local-path`)
+to keep things consistent. If your cluster has an NFS or shared storage
+class, prefer that with RWX for a smoother experience.
+
+> **"Pending" is normal.** If your storage class uses
+> `WaitForFirstConsumer` volume binding (most do), the PVC will show
+> as **Pending** in the UI until a workload actually mounts it. This
+> is expected Kubernetes behavior — the disk isn't provisioned until
+> the first pod claims it. It will become **Bound** when you start
+> the provisioning Workspace in Step 2.
 
 ### Storage size planning
 
@@ -194,11 +241,10 @@ start — but it's better to have them on the PVC permanently.
 
 ---
 
-## Step 5: Share as a Data Volume (optional)
+## Step 5: Share as a Data Volume (cluster-wide)
 
-If you want other projects or team members to access your models,
-wrap the PVC in a Data Volume. **If you only need models within your
-own project, skip this step** — just mount the data source directly.
+Wrap the PVC in a Data Volume so **everyone on the cluster** can mount
+it read-only. This is how other projects/teams will access the models.
 
 1. Go to **Data & Storage** > **Data Volumes** > **New Data Volume**
 2. Configure:
@@ -208,9 +254,13 @@ own project, skip this step** — just mount the data source directly.
 | **Data origin** | Select your `wattbot-models` PVC |
 | **Data volume name** | `wattbot-models` |
 | **Description** | "Shared model weights for WattBot RAG (Qwen, Jina V4)" |
-| **Sharing scope** | Select which projects/departments can access it |
+| **Sharing scope** | **Cluster** — so all projects can mount it |
 
 3. Create the Data Volume
+
+> **If cluster scope isn't available:** Your RunAI role may not allow
+> cluster-wide Data Volumes. In that case, share at the **department**
+> level, or ask a Data Volumes Administrator to set the scope for you.
 
 ### What happens to write access?
 
@@ -218,10 +268,11 @@ own project, skip this step** — just mount the data source directly.
   (`wattbot-models` PVC) with read-write access from any Workspace in
   your project. The Data Volume does not affect the original PVC.
 - **Other projects:** They mount the **Data Volume** (read-only
-  replicas). They cannot write to your PVC.
+  replicas). They can read all your models but cannot modify them.
 
 To update models later, just re-start the `model-provisioner` Workspace
-— it mounts the data source, not the data volume.
+— it mounts the data source, not the data volume. Everyone else sees
+the updates immediately.
 
 ---
 
@@ -252,12 +303,24 @@ Everything else (env vars, `HF_HOME`, etc.) is unchanged.
 ## Updating models later
 
 1. Go to **Workloads** in the RunAI UI
-2. Find `model-provisioner` and **Start** it (or create a new Workspace
-   mounting the `wattbot-models` **data source**)
+2. Find your provisioning workspace and **Start** it (or create a new
+   Workspace mounting the **data source**)
 3. Connect to the terminal
-4. Download, remove, or update models as needed
-5. Stop the Workspace
+4. Upload `scripts/provision_shared_models.py` to `/home/jovyan/work/`
+   and use it to manage models:
+
+```bash
+python /home/jovyan/work/provision_shared_models.py list       # see what's cached
+python /home/jovyan/work/provision_shared_models.py download <org>/<model>
+python /home/jovyan/work/provision_shared_models.py verify <org>/<model>
+```
+
+5. Stop the Workspace when done
 
 Consumers see updated data immediately — no need to recreate the Data
 Volume or restart inference jobs (unless the model they're using was
 changed, in which case restart that specific job).
+
+> **Using the admin's shared PVC instead?** See
+> [Managing Models — Adding or updating models on the admin's shared PVC](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc)
+> for instructions using the `update-shared-models1` workspace.
