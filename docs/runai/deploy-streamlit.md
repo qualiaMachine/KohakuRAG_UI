@@ -44,7 +44,7 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | Field | Value |
 |-------|-------|
 | **Command** | `bash` |
-| **Arguments** | `-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b claude/rag-poweredge-setup-wM2Fz --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && ln -sf /wattbot-data/embeddings data/embeddings && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx numpy python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=\$STREAMLIT_BASE_PATH"` |
+| **Arguments** | `-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b master --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && ln -sf /wattbot-data/embeddings data/embeddings && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx numpy python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=\$STREAMLIT_BASE_PATH"` |
 | **Working directory** | *(leave empty)* |
 
 > **What the command does:**
@@ -55,8 +55,8 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 > 5. Installs Python deps + vendored KohakuVault/KohakuRAG
 > 6. Starts Streamlit with proxy-compatible settings
 >
-> **Using a different branch?** Replace `claude/rag-poweredge-setup-wM2Fz`
-> in the `git clone` command.
+> **Using a different branch?** Replace `master` in the `git clone` command
+> with the desired branch name.
 
 **Environment variables:**
 

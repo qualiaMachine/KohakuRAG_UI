@@ -7,7 +7,7 @@ and how to deploy it on the PowerEdge via Run:ai.
 
 ## 1) Quick start
 
-The app supports two backends, selected via `--mode`:
+The app supports three backends, selected via `--mode`:
 
 ```bash
 # Bedrock mode (default — no GPU required, uses AWS API)
@@ -15,6 +15,10 @@ streamlit run app.py -- --mode bedrock
 
 # Local mode (requires CUDA GPU + local_requirements.txt)
 streamlit run app.py -- --mode local
+
+# Remote mode (connects to vLLM + embedding servers over HTTP)
+RAG_MODE=remote VLLM_BASE_URL=http://... EMBEDDING_SERVICE_URL=http://... \
+  streamlit run app.py -- --mode remote
 ```
 
 If `--mode` is omitted the app defaults to **bedrock**.
@@ -160,6 +164,21 @@ User question
   → BedrockChatModel.complete()           # AWS Bedrock API inference
   → StructuredAnswer                      # parsed JSON answer
 ```
+
+### Data flow per question (Remote mode)
+
+```
+User question
+  → RemoteEmbeddingModel.embed()          # HTTP call to embedding server
+  → KVaultNodeStore.search()              # vector search in jinav4.db
+  → RAGPipeline.run_qa()                  # build prompt with retrieved context
+  → VLLMChatModel.complete()              # HTTP call to vLLM server
+  → StructuredAnswer                      # parsed JSON answer
+```
+
+Remote mode is used for RunAI cluster deployments where the LLM (vLLM) and
+embedding model run as separate Inference workloads. See
+[RunAI Deployment Guide](runai/README.md) for setup instructions.
 
 ### What gets cached (stays in memory across questions)
 

@@ -30,10 +30,20 @@ pip install -e vendor/KohakuVault -e vendor/KohakuRAG
 streamlit run app.py -- --mode local
 ```
 
-When both backends are installed and a GPU is detected, the sidebar shows a
-toggle to switch between local and Bedrock models at runtime.
+### Remote mode (RunAI / distributed)
 
-See [Setup Bedrock](docs/Setup_Bedrock.md) for full AWS configuration instructions.
+```bash
+pip install -r remote_requirements.txt
+pip install -e vendor/KohakuVault -e vendor/KohakuRAG
+RAG_MODE=remote VLLM_BASE_URL=http://... EMBEDDING_SERVICE_URL=http://... \
+  streamlit run app.py -- --mode remote
+```
+
+When both local and Bedrock backends are installed and a GPU is detected, the
+sidebar shows a toggle to switch between local and Bedrock models at runtime.
+
+See [Setup Bedrock](docs/Setup_Bedrock.md) for full AWS configuration instructions
+or [RunAI Deployment](docs/runai/README.md) for cluster deployment.
 
 ## Architecture
 
@@ -48,8 +58,10 @@ flowchart TB
     P --> L[LLM Backend]
     L --> B[AWS Bedrock]
     L --> Local[Local HF Models]
+    L --> VLLM[vLLM Server<br/>Remote]
     E --> JE[Jina V4<br/>Local GPU]
     E --> TE[Titan V2<br/>Bedrock API]
+    E --> RE[Embedding Server<br/>Remote]
 ```
 
 ### Deployment Options
@@ -58,38 +70,52 @@ flowchart TB
 |----------|-------------|------------|----------------|
 | AWS Bedrock | Managed foundation models via API | Titan V2 (API) | `streamlit run app.py -- --mode bedrock` |
 | Local GPU | HuggingFace models (Qwen, Llama, etc.) | Jina V4 (local) | `streamlit run app.py -- --mode local` |
+| Remote (RunAI) | vLLM server (Qwen 7B+) | FastAPI embedding server | `streamlit run app.py -- --mode remote` |
 
 If `--mode` is omitted, the app defaults to **bedrock**.
 
 ## Documentation
 
+- [Streamlit App Guide](docs/Streamlit_App_Guide.md) - UI features, sidebar controls, ensemble modes
+- [Pipeline Architecture](docs/Pipeline_Architecture.md) - RAG pipeline technical details
 - [Bedrock Setup Guide](docs/Setup_Bedrock.md) - Full AWS Bedrock setup and usage instructions
-- [Bedrock Integration Proposal](docs/bedrock-integration-proposal.md) - AWS Bedrock design and implementation plan
+- [RunAI Deployment Guide](docs/runai/README.md) - Multi-service cluster deployment (vLLM + embedding + Streamlit)
+- [PowerEdge Setup](docs/Setup_PowerEdge.md) - On-prem GPU server setup
+- [Benchmarking Guide](docs/Benchmarking_Guide.md) - How to run model benchmarks
 - [Meeting Notes](docs/meeting-notes.md) - Team discussions and decisions
 
 ## Repository Structure
 
 ```
 .
-├── app.py                                # Streamlit app (supports --mode bedrock|local)
+├── app.py                                # Streamlit app (supports --mode bedrock|local|remote)
+├── GETTING_STARTED.ipynb                 # Interactive setup guide (for RunAI workspaces)
 ├── bedrock_requirements.txt              # Torch-free Bedrock dependencies
 ├── local_requirements.txt                # GPU/local model dependencies
+├── remote_requirements.txt               # Minimal deps for remote mode (vLLM client)
 ├── scripts/
 │   ├── llm_bedrock.py                    # BedrockChatModel & BedrockEmbeddingModel
+│   ├── embedding_server.py               # FastAPI embedding server (Jina V4)
 │   ├── run_experiment.py                 # Batch experiment runner
+│   ├── run_full_benchmark.py             # Multi-model benchmark orchestrator
 │   └── demo_bedrock_rag.py              # Bedrock RAG demo
+├── deploy/
+│   ├── runai_jobs.yaml                   # RunAI job definitions (K8s manifests)
+│   ├── Dockerfile.streamlit              # Streamlit container (CPU only)
+│   └── Dockerfile.embedding              # Embedding server container (GPU)
 ├── vendor/KohakuRAG/configs/             # Pipeline & experiment configs
 │   ├── hf_*.py                           # Local HuggingFace model configs
 │   └── bedrock_*.py                      # AWS Bedrock model configs
 ├── data/embeddings/                      # Vector databases
 ├── docs/                                 # Documentation
+│   └── runai/                            # Modular RunAI deployment guides
 ├── .env.example                          # Environment template
 └── README.md
 ```
 
 ## Development Branches
 
-- **main**: Stable releases and documentation
+- **master**: Stable releases and documentation
 - **bedrock**: AWS Bedrock integration (Nils)
 - **local**: Local/on-prem LLM support (Blaise)
 

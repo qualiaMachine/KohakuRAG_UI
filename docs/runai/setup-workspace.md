@@ -196,8 +196,8 @@ cd /home/jovyan/work
 git clone https://github.com/qualiaMachine/KohakuRAG_UI.git
 cd KohakuRAG_UI
 
-# Switch to the PowerEdge setup branch (has RunAI-specific fixes)
-git checkout claude/rag-poweredge-setup-wM2Fz
+# Switch to a specific branch if needed (default is master)
+# git checkout <branch-name>
 
 # Install uv (fast Python package installer, ~10-100x faster than pip)
 pip install uv
