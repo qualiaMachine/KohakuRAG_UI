@@ -192,7 +192,7 @@ pip install huggingface_hub
 huggingface-cli download jinaai/jina-embeddings-v4
 # Verify adapters were included:
 ls /models/.cache/huggingface/hub/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
-# Should list: retrieval.query/, retrieval.passage/, text-matching.query/, etc.
+# Should list: adapter_config.json, adapter_model.safetensors
 
 # ── Download Qwen 2.5 7B for vLLM (~14 GB) ──
 huggingface-cli download Qwen/Qwen2.5-7B-Instruct

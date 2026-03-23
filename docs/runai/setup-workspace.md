@@ -1,8 +1,34 @@
-# Setup & Prerequisites
+# Setup Workspace (`wattbot-setup`)
 
-Before deploying the Inference jobs, you need a shared data volume and a
-one-time Workspace to clone the repo, install dependencies, and build
-the vector index.
+> **Step 1 of 5** in the [deployment guide](README.md). Comes after
+> [Setup Shared Models PVC](setup-shared-models.md) (step 0).
+
+## What this workspace does
+
+`wattbot-setup` is a **one-time workspace** that prepares everything the
+three production services (vLLM, embedding server, Streamlit app) need
+before they can run:
+
+1. **Clones the repo** and installs Python dependencies
+2. **Builds the vector index** (~130 MB SQLite DB) from source PDFs
+3. **Verifies the full RAG pipeline** end-to-end (embedding → retrieval → LLM → answer)
+
+Once setup is complete, you **stop the workspace** — it's not needed at
+runtime. You only restart it to rebuild the index (e.g. after adding new
+documents) or to debug issues.
+
+## What this workspace does NOT do
+
+- **Does not download models.** All model weights (Qwen, Jina V4, etc.)
+  must already exist on the shared models PVC at `/models/`. The workspace
+  sets `HF_HUB_OFFLINE=1` to enforce this — if a model is missing, you
+  get a clear error instead of a surprise multi-GB download.
+- **Does not serve anything in production.** The three production services
+  are deployed separately as Inference workloads (steps 2-4).
+
+To add or update models on the shared PVC, use the `update-shared-models1`
+workspace instead — see
+[Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc).
 
 ---
 
@@ -64,14 +90,11 @@ When attaching the Data Volume to a workload in the RunAI UI, set:
 
 ## Step 0: Prepare the Workspace (one-time setup)
 
-> **Prerequisite:** You need a shared models PVC with Qwen and Jina V4
-> weights already downloaded. If you haven't done this yet, follow
-> **[Setup Shared Models PVC](setup-shared-models.md)** first.
-
-Before deploying the Inference jobs, you need the repo cloned,
-dependencies installed, and the vector index built. Model weights
-(Qwen 7B, Jina V4, and others) should already be on your shared
-models PVC at `/models/.cache/huggingface/` from the previous step.
+> **Prerequisite:** Model weights (Qwen 7B, Jina V4, etc.) must already
+> be on the shared models PVC at `/models/.cache/huggingface/`. If they
+> aren't, see [Setup Shared Models PVC](setup-shared-models.md) or
+> [Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc)
+> first.
 
 ### Cluster storage layout
 
@@ -126,7 +149,7 @@ ls /models/.cache/huggingface/ | grep models--
 
 # Verify Jina V4 has adapters (required for embedding)
 ls /models/.cache/huggingface/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
-# Should list: retrieval.query/, retrieval.passage/, text-matching.query/, etc.
+# Should list: adapter_config.json, adapter_model.safetensors
 
 # Verify HF_HUB_OFFLINE is set (prevents accidental downloads)
 [ "$HF_HUB_OFFLINE" = "1" ] && echo "OK: offline mode" || echo "WARNING: HF_HUB_OFFLINE not set!"
@@ -173,8 +196,8 @@ cd /home/jovyan/work
 git clone https://github.com/qualiaMachine/KohakuRAG_UI.git
 cd KohakuRAG_UI
 
-# Switch to the PowerEdge setup branch (has RunAI-specific fixes)
-git checkout claude/rag-poweredge-setup-wM2Fz
+# Switch to a specific branch if needed (default is master)
+# git checkout <branch-name>
 
 # Install uv (fast Python package installer, ~10-100x faster than pip)
 pip install uv
