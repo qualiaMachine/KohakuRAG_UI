@@ -45,7 +45,7 @@ else
 fi
 
 echo "[start_app] Installing dependencies..."
-uv pip install --system streamlit openai httpx numpy python-dotenv
+uv pip install --system streamlit openai httpx "numpy<2" python-dotenv
 uv pip install --system vendor/KohakuVault vendor/KohakuRAG
 
 echo "[start_app] Starting Streamlit on port 8501..."

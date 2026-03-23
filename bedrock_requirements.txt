@@ -19,7 +19,7 @@
 boto3
 
 # Data handling (used by run_experiment.py / scoring)
-numpy>=2.3
+numpy>=1.22,<2
 pandas
 
 # HTTP client (kohakurag internals)
