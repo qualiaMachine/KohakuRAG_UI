@@ -95,11 +95,19 @@ In the RunAI UI:
      - `wattbot-data` → mount at `/wattbot-data` (**read-write**)
    - **Environment variables:**
 
-     | Key | Value |
-     |-----|-------|
-     | `HF_HOME` | `/home/jovyan/work/.cache/huggingface` |
-     | `HF_HUB_CACHE` | `/home/jovyan/work/.cache/huggingface/hub` |
-     | `TRANSFORMERS_CACHE` | `/home/jovyan/work/.cache/huggingface/hub` |
+     | Key | Value | Purpose |
+     |-----|-------|---------|
+     | `HF_HOME` | `/models/.cache/huggingface` | Read models from shared PVC |
+     | `HF_HUB_CACHE` | `/models/.cache/huggingface` | Same — HF cache root |
+     | `TRANSFORMERS_CACHE` | `/models/.cache/huggingface` | Same — transformers compat |
+     | `HF_HUB_OFFLINE` | `1` | **Prevent any model downloads** |
+
+     > **Why `HF_HUB_OFFLINE=1`?** This ensures the workspace never
+     > silently downloads models. If a model is missing from the shared
+     > PVC, you'll get a clear error instead of a multi-GB surprise
+     > download to local storage. All models should be provisioned via
+     > the `update-shared-models1` workspace — see
+     > [Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc).
 
 3. Create the Workspace and wait for it to start
 4. Click **Connect** > open the **terminal** (JupyterLab or shell)
@@ -115,16 +123,29 @@ nvidia-smi --query-gpu=index,name,memory.total,memory.free \
 ls /models/.cache/huggingface/ | grep models--
 # Should list: models--jinaai--jina-embeddings-v4,
 #              models--Qwen--Qwen2.5-7B-Instruct, etc.
+
+# Verify Jina V4 has adapters (required for embedding)
+ls /models/.cache/huggingface/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
+# Should list: retrieval.query/, retrieval.passage/, text-matching.query/, etc.
+
+# Verify HF_HUB_OFFLINE is set (prevents accidental downloads)
+[ "$HF_HUB_OFFLINE" = "1" ] && echo "OK: offline mode" || echo "WARNING: HF_HUB_OFFLINE not set!"
 ```
+
+> **If models are missing:** Do NOT download them here. Instead, use the
+> `update-shared-models1` workspace in the `shared-models` project — see
+> [Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc).
 
 ### 0c. Set up cache directories
 
-The shared models PVC is **read-only**, so any new downloads or cache
-writes must go to your personal workspace:
+Model weights are read from the shared PVC at `/models/.cache/huggingface/`.
+`HF_HUB_OFFLINE=1` (set in step 0a) prevents any model downloads — if a
+model is missing, you'll get an error instead of a silent download.
+
+Cache directories for pip, uv, and temp files go on your personal workspace:
 
 ```bash
 # Create cache directories on writable storage
-mkdir -p /home/jovyan/work/.cache/huggingface/hub
 mkdir -p /home/jovyan/work/.cache/pip
 mkdir -p /home/jovyan/work/.cache/uv
 mkdir -p /home/jovyan/work/tmp
@@ -133,10 +154,17 @@ mkdir -p /home/jovyan/work/tmp
 export TMPDIR=/home/jovyan/work/tmp
 export UV_CACHE_DIR=/home/jovyan/work/.cache/uv
 export PIP_CACHE_DIR=/home/jovyan/work/.cache/pip
-export HF_HOME=/home/jovyan/work/.cache/huggingface
-export HF_HUB_CACHE=/home/jovyan/work/.cache/huggingface/hub
-export TRANSFORMERS_CACHE=/home/jovyan/work/.cache/huggingface/hub
+
+# These should already be set from workspace env vars (step 0a),
+# but verify:
+echo "HF_HOME=$HF_HOME"           # should be /models/.cache/huggingface
+echo "HF_HUB_OFFLINE=$HF_HUB_OFFLINE"  # should be 1
 ```
+
+> **Note:** Small metadata files (tokenizer caches, config parsing) may
+> be written to `/tmp` or the container's local filesystem — that's fine.
+> The key rule is: **no model weight downloads**. All weights come from
+> the shared PVC.
 
 ### 0d. Clone the repo and install dependencies
 
@@ -228,7 +256,8 @@ import os, sys
 REPO = "/home/jovyan/work/KohakuRAG_UI"
 os.chdir(REPO)
 sys.path.insert(0, f"{REPO}/vendor/KohakuRAG/src")
-os.environ["HF_HOME"] = "/models/.cache/huggingface"
+# HF_HOME and HF_HUB_OFFLINE are already set via workspace env vars (step 0a).
+# Models load from /models/.cache/huggingface/ — no downloads allowed.
 
 from kohakurag import RAGPipeline
 from kohakurag.datastore import KVaultNodeStore
