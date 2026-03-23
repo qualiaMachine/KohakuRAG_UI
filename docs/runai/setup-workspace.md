@@ -64,16 +64,20 @@ When attaching the Data Volume to a workload in the RunAI UI, set:
 
 ## Step 0: Prepare the Workspace (one-time setup)
 
+> **Prerequisite:** You need a shared models PVC with Qwen and Jina V4
+> weights already downloaded. If you haven't done this yet, follow
+> **[Setup Shared Models PVC](setup-shared-models.md)** first.
+
 Before deploying the Inference jobs, you need the repo cloned,
 dependencies installed, and the vector index built. Model weights
-(Qwen 7B, Jina V4, and others) are **already pre-cached** on the
-shared PVC at `/models/.cache/huggingface/` — no downloads needed.
+(Qwen 7B, Jina V4, and others) should already be on your shared
+models PVC at `/models/.cache/huggingface/` from the previous step.
 
 ### Cluster storage layout
 
 | Path | Type | Access | Size | Purpose |
 |------|------|--------|------|---------|
-| `/models/` | Shared Data Volume | **Read-only** (by design — see [Managing Models](managing-models.md)) | ~744 GB | Pre-cached model weights (Qwen, Jina V4, etc.) |
+| `/models/` | Your shared models PVC ([setup](setup-shared-models.md)) | **Read-only** for inference / **RW** for provisioning | varies | Model weights (Qwen, Jina V4, etc.) |
 | `/wattbot-data/` | **Project PVC** | **RW** (setup) / **RO** (inference) | 1 GB | Vector index, corpus, PDFs — shared across all jobs |
 | `/home/jovyan/work/` | Personal workspace | Read-write | 30 GB | Git repo, Python deps, cache |
 
@@ -87,7 +91,7 @@ In the RunAI UI:
    - **Image:** `nvcr.io/nvidia/pytorch:25.02-py3`
    - **GPU:** `1.0` (PyTorch + JinaV4 model need most of a GPU's memory)
    - **Data Volumes:**
-     - `shared-model-repository` → mount at `/models` (read-only)
+     - Your shared models PVC (e.g. `wattbot-models`) → mount at `/models` (read-only is fine here)
      - `wattbot-data` → mount at `/wattbot-data` (**read-write**)
    - **Environment variables:**
 

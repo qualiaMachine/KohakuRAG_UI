@@ -6,12 +6,12 @@ The cluster has three storage areas:
 
 | Path | Type | Access | Size | Purpose |
 |------|------|--------|------|---------|
-| `/models/` | **Shared Data Volume** | **Read-only** | ~744 GB | Pre-cached model weights (Qwen, Jina V4, etc.) |
+| `/models/` | **Your shared models PVC** ([setup](setup-shared-models.md)) | **RW** by creator / **RO** for consumers | varies | Model weights (Qwen, Jina V4, etc.) |
 | `/wattbot-data/` | **Project PVC (PPVC)** | RW (setup) / RO (inference) | 1 GB | Vector index, corpus, PDFs — shared across all jobs |
 | `/home/jovyan/work/` | **Personal workspace** | Read-write | 30 GB | Git repo, Python deps, cache |
 
 ```
-/models/                                    ← shared Data Volume, read-only
+/models/                                    ← your shared models PVC (RW by creator, RO for others)
 └── .cache/huggingface/
     ├── models--Qwen--Qwen2.5-7B-Instruct/
     ├── models--Qwen--Qwen2.5-14B-Instruct/
@@ -77,14 +77,25 @@ In the RunAI UI, these are exposed as:
 
 ## Data Sources vs Data Volumes
 
-The RunAI UI has two sections under **Data & Storage**: **Data Sources**
-and **Data Volumes**. The shared model repository appears as both:
+RunAI has two related but distinct concepts for storage. Understanding
+the difference is critical for managing model weights:
 
-- **Data Sources** shows the underlying PVC (`shared-model-repository`).
-  When you attach it to a workload, it mounts at `/models/` as
-  **read-only** — all workloads see the same pre-cached models.
-- **Data Volumes** shows `shared-models`, a shareable wrapper built on
-  top of that same PVC.
+| Concept | What it is | Who can write | Who can read |
+|---------|-----------|---------------|--------------|
+| **Data Source** (PVC) | The actual storage — a Kubernetes PVC in your project's namespace | **Only workloads in the creator's project** | Creator's project |
+| **Data Volume** | A shareable wrapper around a Data Source | Nobody (read-only replicas) | Any project it's shared with |
+
+**Key insight:** RunAI creates **read-only replica PVCs** in each
+consumer's namespace when you share a Data Volume. The replicas point
+to the same underlying storage, but write access is stripped. Only the
+original project can mount the data source with write access.
+
+This means:
+- To **read** models: mount the Data Volume (any project)
+- To **add/update** models: mount the Data Source from the creator's
+  project (see [Setup Shared Models](setup-shared-models.md))
+- You **cannot** write to someone else's PVC, even if you're an admin
+  on the cluster — you'd need to create a workload in their project
 
 Your personal workspace at `/home/jovyan/work/` is separate writable
 storage for code, indexes, and caches.
@@ -93,33 +104,24 @@ storage for code, indexes, and caches.
 
 ## Access Control
 
-### Who can modify the shared PVC?
+### Who can modify the shared models PVC?
 
-| Action | Who can do it | How to configure |
-|--------|--------------|-----------------|
-| Create / delete Data Volumes | **Data Volumes Administrator** role only | **Access** > **Access Rules** > assign the `Data Volumes Administrator` role to specific users |
-| Write to the PVC (download models, clone repos) | Anyone who mounts the **Data Source** in a workload | Control by limiting who has access to the project that owns the PVC (`runai/doit-ai-cluster/default/shared-models`) |
-| Read shared data (via Data Volume) | Anyone in a project the Data Volume is shared with | Data Volume admin sets sharing scopes |
+| Action | Who can do it |
+|--------|--------------|
+| **Write** to the PVC (add/remove models) | Only workloads in the **creator's project** mounting the **data source** |
+| **Read** via Data Volume | Any project the Data Volume is shared with |
+| Create / delete Data Volumes | Users with the **Data Volumes Administrator** role |
+| Share Data Volumes across projects | Data Volumes Administrator |
 
-To restrict who can modify models on the PVC:
+### Preventing accidents
 
-1. **Limit project access.** Only users assigned to the
-   `shared-models` project can create workloads that mount the
-   read-write Data Source. Go to **Access** > **Access Rules** and
-   ensure only trusted users have roles in that project.
-2. **Use the Data Volume for consumers.** Other projects should mount
-   `shared-models` as a **Data Volume** (read-only), not the raw Data
-   Source. This prevents accidental writes.
-3. **Assign a Data Volumes Administrator.** Only users with the
-   `Data Volumes Administrator` role can create, share, or delete Data
-   Volumes. Keep this to a small set of admins.
-
-### Preventing accidents on the shared PVC
-
-The shared PVC holds ~744 GB of model weights that are expensive to
-re-download. Key safeguard: the shared PVC is mounted **read-only** at
-`/models/` for all workloads. Only cluster admins with direct PVC access
-can modify model weights.
+- Model weights are expensive to re-download. The Data Volume
+  mechanism ensures consumers can't accidentally delete or corrupt
+  weights — they only get read-only access.
+- When provisioning, use a dedicated `model-provisioner` Workspace
+  (see [Setup Shared Models](setup-shared-models.md)) rather than
+  downloading from inference jobs. This keeps the write path isolated
+  and intentional.
 
 - **Use a naming convention.** Models live under
   `/models/.cache/huggingface/models--<org>--<name>/`. Don't put

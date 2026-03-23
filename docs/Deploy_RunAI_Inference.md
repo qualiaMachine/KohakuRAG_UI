@@ -8,6 +8,7 @@ guide, or jump directly to:
 
 | Doc | What it covers |
 |-----|---------------|
+| [Setup Shared Models PVC](runai/setup-shared-models.md) | **(Admin)** Create your own models PVC, download weights |
 | [Setup & Prerequisites](runai/setup-workspace.md) | Create shared data volume, clone repo, build vector index |
 | [Deploy vLLM Server](runai/deploy-vllm.md) | LLM inference with Qwen 7B |
 | [Deploy Embedding Server](runai/deploy-embedding.md) | Jina V4 query encoding |
