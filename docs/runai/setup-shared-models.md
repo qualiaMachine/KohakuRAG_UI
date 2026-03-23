@@ -75,6 +75,13 @@ In the RunAI UI:
 
 4. Create the Data Source
 
+> **"Pending" is normal.** If your storage class uses
+> `WaitForFirstConsumer` volume binding (most do), the PVC will show
+> as **Pending** in the UI until a workload actually mounts it. This
+> is expected Kubernetes behavior — the disk isn't provisioned until
+> the first pod claims it. It will become **Bound** when you start
+> the provisioning Workspace in Step 2.
+
 ### Storage size planning
 
 Each 7B-parameter BF16 model is ~14 GB. Jina V4 with adapters is ~3 GB.
