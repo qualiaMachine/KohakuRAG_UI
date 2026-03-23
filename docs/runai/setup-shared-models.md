@@ -7,9 +7,9 @@
 > access if they mount it from a different project.
 
 This step creates a PVC you own, downloads model weights into it, and
-optionally wraps it as a Data Volume for sharing. All subsequent
-deployment steps ([Setup Workspace](setup-workspace.md),
-[Deploy vLLM](deploy-vllm.md), etc.) mount this PVC at `/models/`.
+wraps it as a cluster-wide Data Volume so everyone can read from it.
+All subsequent deployment steps ([Setup Workspace](setup-workspace.md),
+[Deploy vLLM](deploy-vllm.md), etc.) mount this at `/models/`.
 
 ---
 
@@ -65,7 +65,7 @@ In the RunAI UI:
 
 | Field | Value |
 |-------|-------|
-| **Scope** | Your project (e.g. `runai/doit-ai-cluster/default/<your-project>`) |
+| **Scope** | **Cluster** (e.g. `runai/doit-ai-cluster`) — so all projects can see this data source. If you don't have cluster-level permissions, use your department or project scope and share via a Data Volume in Step 5. |
 | **Data source name** | `wattbot-models` |
 | **PVC name** | `wattbot-models` *(creates a new PVC)* |
 | **Storage class** | Use your cluster's default (ask admin if unsure) |
@@ -201,11 +201,10 @@ start — but it's better to have them on the PVC permanently.
 
 ---
 
-## Step 5: Share as a Data Volume (optional)
+## Step 5: Share as a Data Volume (cluster-wide)
 
-If you want other projects or team members to access your models,
-wrap the PVC in a Data Volume. **If you only need models within your
-own project, skip this step** — just mount the data source directly.
+Wrap the PVC in a Data Volume so **everyone on the cluster** can mount
+it read-only. This is how other projects/teams will access the models.
 
 1. Go to **Data & Storage** > **Data Volumes** > **New Data Volume**
 2. Configure:
@@ -215,9 +214,13 @@ own project, skip this step** — just mount the data source directly.
 | **Data origin** | Select your `wattbot-models` PVC |
 | **Data volume name** | `wattbot-models` |
 | **Description** | "Shared model weights for WattBot RAG (Qwen, Jina V4)" |
-| **Sharing scope** | Select which projects/departments can access it |
+| **Sharing scope** | **Cluster** — so all projects can mount it |
 
 3. Create the Data Volume
+
+> **If cluster scope isn't available:** Your RunAI role may not allow
+> cluster-wide Data Volumes. In that case, share at the **department**
+> level, or ask a Data Volumes Administrator to set the scope for you.
 
 ### What happens to write access?
 
@@ -225,10 +228,11 @@ own project, skip this step** — just mount the data source directly.
   (`wattbot-models` PVC) with read-write access from any Workspace in
   your project. The Data Volume does not affect the original PVC.
 - **Other projects:** They mount the **Data Volume** (read-only
-  replicas). They cannot write to your PVC.
+  replicas). They can read all your models but cannot modify them.
 
 To update models later, just re-start the `model-provisioner` Workspace
-— it mounts the data source, not the data volume.
+— it mounts the data source, not the data volume. Everyone else sees
+the updates immediately.
 
 ---
 
