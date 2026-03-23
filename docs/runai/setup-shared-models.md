@@ -51,7 +51,27 @@ writable. To add models later:
 
 The key distinction:
 - **Data Source** (PVC) → writable by creator, mount this to add/update models
-- **Data Volume** (wrapper) → read-only replicas for consumers
+- **Data Volume** (wrapper) → **always read-only**, even in the creator's project
+
+> **Common gotcha:** If you connect to a workspace and `/models/` is
+> read-only, check **which** asset it mounted. In the RunAI UI, look at
+> the workspace's data sources/volumes configuration:
+>
+> | Mounted asset | Name (example) | Result |
+> |---------------|----------------|--------|
+> | **Data Source** | `wattbot-models` | **Read-write** (if you're in the creator's project) |
+> | **Data Volume** | `wattbot-models` | **Read-only** (always, even in the same project) |
+>
+> They can have the same name but behave very differently. If you need
+> to write, make sure the workspace mounts the **data source**, not the
+> data volume. When creating the workspace, attach it under "Data
+> Sources", not "Data Volumes."
+>
+> Also: if the storage class is `local-path` with RWO (read-write by
+> one node), only one workload can mount read-write at a time. If
+> another workload already has the PVC mounted, yours may be forced
+> to read-only. Stop any other workloads using the PVC before
+> provisioning.
 
 ---
 
