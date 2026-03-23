@@ -149,7 +149,7 @@ ls /models/.cache/huggingface/ | grep models--
 
 # Verify Jina V4 has adapters (required for embedding)
 ls /models/.cache/huggingface/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
-# Should list: retrieval.query/, retrieval.passage/, text-matching.query/, etc.
+# Should list: adapter_config.json, adapter_model.safetensors
 
 # Verify HF_HUB_OFFLINE is set (prevents accidental downloads)
 [ "$HF_HUB_OFFLINE" = "1" ] && echo "OK: offline mode" || echo "WARNING: HF_HUB_OFFLINE not set!"
