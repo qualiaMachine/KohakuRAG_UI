@@ -35,6 +35,29 @@ in a `Pending` state, which RunAI reports as `OriginalPvcNotBound`.
 The workaround is to let a job create and claim the PVC first, then
 wrap it in a Data Volume afterward.
 
+## Inference workload fails with "Readiness probe failed" on wrong port
+
+**Symptom:** Logs show the server started successfully (e.g.
+`Serving on 0.0.0.0:8080`), but the workload transitions to **Failed**
+with events like:
+
+```
+Readiness probe failed: Get "http://...:8012/": context deadline exceeded
+```
+
+**Cause:** The **container port** in the RunAI Inference workload doesn't
+match the port the server is actually listening on. Knative uses the
+configured container port for its readiness probe. If you set port 8012
+but the server listens on 8080, the probe times out and Knative kills
+the revision.
+
+**Fix:** Delete and recreate the workload with the correct container port:
+- **Embedding server:** `8080` (see [deploy-embedding](deploy-embedding.md))
+- **vLLM server:** `8000` (see [deploy-vllm](deploy-vllm.md))
+
+You cannot edit the port of a running Inference workload — you must
+delete and recreate it.
+
 ## Read-only file system errors in embedding server logs
 
 The writable overlay handles this automatically. If you still see
