@@ -8,12 +8,27 @@ from .datastore import (
 )
 from .embeddings import (
     EmbeddingModel,
-    JinaEmbeddingModel,
-    LocalHFEmbeddingModel,
     average_embeddings,
 )
+
+# Torch-dependent classes — only available when torch/transformers are installed.
+try:
+    from .embeddings import (
+        JinaEmbeddingModel,
+        LocalHFEmbeddingModel,
+    )
+except Exception:  # ImportError or numpy/scipy crash
+    JinaEmbeddingModel = None  # type: ignore[assignment,misc]
+    LocalHFEmbeddingModel = None  # type: ignore[assignment,misc]
+
 from .indexer import DocumentIndexer
-from .llm import HuggingFaceLocalChatModel, OpenAIChatModel
+from .llm import OpenAIChatModel
+
+try:
+    from .llm import HuggingFaceLocalChatModel
+except Exception:
+    HuggingFaceLocalChatModel = None  # type: ignore[assignment,misc]
+
 from .parsers import (
     dict_to_payload,
     markdown_to_payload,

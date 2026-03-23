@@ -18,6 +18,7 @@ Launch (remote — vLLM + embedding server):
     EMBEDDING_SERVICE_URL=http://wattbot-embedding:8080 \\
     streamlit run app.py
 """
+from __future__ import annotations
 
 import asyncio
 import csv
@@ -46,9 +47,13 @@ sys.path.insert(0, str(_repo_root / "scripts"))
 
 from kohakurag import RAGPipeline
 from kohakurag.datastore import KVaultNodeStore
-from kohakurag.embeddings import JinaV4EmbeddingModel
-from kohakurag.llm import HuggingFaceLocalChatModel
 from kohakurag.pipeline import LLMQueryPlanner, SimpleQueryPlanner
+
+# Local-only imports (require torch/transformers) — skip in remote mode
+_rag_mode = os.environ.get("RAG_MODE", "local")
+if _rag_mode == "local":
+    from kohakurag.embeddings import JinaV4EmbeddingModel
+    from kohakurag.llm import HuggingFaceLocalChatModel
 
 # Remote inference clients (vLLM + embedding server)
 try:
