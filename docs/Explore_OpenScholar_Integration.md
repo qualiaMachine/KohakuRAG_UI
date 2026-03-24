@@ -45,6 +45,36 @@ OpenScholar is a retrieval-augmented LM specifically designed to answer scientif
 
 ---
 
+## What You Get vs. What You Don't
+
+The hosted demo at [openscilm.allen.ai](https://openscilm.allen.ai/) runs the **full** OpenScholar pipeline end-to-end. Simply swapping in OpenScholar-8B as our generator model (Option 1 below) does **not** replicate that experience. Here's the breakdown:
+
+### What using OpenScholar-8B as our generator gives us
+
+- A model fine-tuned on 130K scientific RAG instances — better at synthesizing retrieved passages into coherent, cited answers
+- Better citation behavior (trained to produce inline citations grounded in provided context)
+- Drop-in compatible with our existing pipeline (Jina V4 embeddings + KohakuVault retrieval)
+- Runs in ~6 GB VRAM (4-bit quantized)
+
+### What the hosted demo provides that we would NOT get
+
+The demo's thorough, well-cited answers come from the full pipeline working together, not just the model:
+
+- **45M paper datastore** (peS2o) with a science-tuned Contriever retriever — we search only our curated corpus
+- **Semantic Scholar API** keyword search as secondary retrieval — we have no external retrieval source
+- **Web search** (You.com API) as tertiary retrieval
+- **BGE-reranker-large** cross-encoder reranking — we use heuristic frequency/score reranking
+- **Self-feedback loop** (generate → LM critiques its own output → retrieve more → refine, up to 3 iterations) — we do single-pass generation
+- **Citation verification** post-processing — we have no post-hoc citation check
+
+### Highest-impact tricks to adapt (per paper ablation studies)
+
+1. **Cross-encoder reranker** (Option 3) — removing this caused the largest performance drop in ablations. Adding `OpenSciLM/OpenScholar_Reranker` would improve passage selection quality significantly.
+2. **Semantic Scholar API** (Option 2) — easiest high-impact addition. Gives on-demand access to 200M+ papers without hosting anything. Good complement to our curated corpus for broader questions.
+3. **Self-feedback loop** (Option 4) — 3–5% correctness improvement and large citation F1 gains, but 2–4x slower inference due to multiple LLM calls per query.
+
+---
+
 ## Integration Options (Ranked by Effort)
 
 ### Option 1: Add OpenScholar-8B as a Generator Model (LOW EFFORT)
@@ -213,6 +243,6 @@ The 8B model + reranker can comfortably fit on a single GPU alongside Jina V4 em
 - Paper: Asai et al. (2024) "OpenScholar: Synthesizing Scientific Literature with Retrieval-Augmented LMs" — Nature
 - Code: https://github.com/AkariAsai/OpenScholar
 - Models: https://huggingface.co/OpenSciLM
-- Demo: https://openscholar.allen.ai
+- Demo: https://openscilm.allen.ai/
 - Datastore V3: https://huggingface.co/datasets/OpenSciLM/OpenScholar-DataStore-V3
 - Semantic Scholar API: https://api.semanticscholar.org/

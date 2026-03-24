@@ -82,6 +82,7 @@ If `--mode` is omitted, the app defaults to **bedrock**.
 - [RunAI Deployment Guide](docs/runai/README.md) - Multi-service cluster deployment (vLLM + embedding + Streamlit)
 - [PowerEdge Setup](docs/Setup_PowerEdge.md) - On-prem GPU server setup
 - [Benchmarking Guide](docs/Benchmarking_Guide.md) - How to run model benchmarks
+- [OpenScholar Integration](docs/Explore_OpenScholar_Integration.md) - Exploration of OpenScholar model, retriever, and reranker integration
 - [Meeting Notes](docs/meeting-notes.md) - Team discussions and decisions
 
 ## Repository Structure
@@ -123,6 +124,7 @@ If `--mode` is omitted, the app defaults to **bedrock**.
 
 - [KohakuRAG](https://github.com/KohakuBlueleaf/KohakuRAG) - Core RAG engine
 - [WattBot 2025 Competition](https://www.kaggle.com/competitions/WattBot2025/overview) - Original challenge
+- [OpenScholar Demo](https://openscilm.allen.ai/) - Try OpenScholar's full scientific QA pipeline (Allen Institute)
 - [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/) - Managed LLM service
 - [Generative AI with Amazon Bedrock](https://www.coursera.org/learn/generative-ai-applications-amazon-bedrock) - Coursera course
 

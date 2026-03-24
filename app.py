@@ -48,6 +48,14 @@ sys.path.insert(0, str(_repo_root / "scripts"))
 from kohakurag import RAGPipeline
 from kohakurag.datastore import KVaultNodeStore, ImageStore
 from kohakurag.pipeline import LLMQueryPlanner, SimpleQueryPlanner
+from kohakurag.semantic_scholar import SemanticScholarRetriever
+
+# Cross-encoder reranker — requires sentence-transformers (optional)
+try:
+    from kohakurag.reranker import CrossEncoderReranker
+    RERANKER_AVAILABLE = True
+except Exception:
+    RERANKER_AVAILABLE = False
 
 # Local-only imports (require torch/transformers) — skip in remote mode
 _rag_mode = os.environ.get("RAG_MODE", "local")
@@ -176,6 +184,37 @@ def _load_metadata_urls() -> dict[str, str]:
     return mapping
 
 METADATA_URLS: dict[str, str] = _load_metadata_urls()
+
+
+def _build_corpus_summary() -> dict:
+    """Summarize the corpus from metadata.csv for the welcome message."""
+    if not _METADATA_CSV.exists():
+        return {"count": 0, "types": {}, "year_range": "", "titles": []}
+
+    titles = []
+    types: dict[str, int] = {}
+    years = []
+    with open(_METADATA_CSV, newline="", encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            title = row.get("title", "").strip()
+            doc_type = row.get("type", "unknown").strip()
+            year = row.get("year", "").strip()
+            if title:
+                titles.append(title)
+            types[doc_type] = types.get(doc_type, 0) + 1
+            if year.isdigit():
+                years.append(int(year))
+
+    year_range = f"{min(years)}\u2013{max(years)}" if years else ""
+    return {
+        "count": len(titles),
+        "types": types,
+        "year_range": year_range,
+        "titles": titles,
+    }
+
+
+CORPUS_SUMMARY: dict = _build_corpus_summary()
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +390,35 @@ def _apply_planner(
         )
     else:
         pipeline._planner = SimpleQueryPlanner()
+
+
+@st.cache_resource(show_spinner="Loading cross-encoder reranker...")
+def _load_cross_encoder(model_name: str) -> CrossEncoderReranker:
+    """Load and cache a cross-encoder reranker model."""
+    return CrossEncoderReranker(model_name)
+
+
+def _apply_retrieval_enhancements(
+    pipeline: RAGPipeline,
+    *,
+    enable_cross_encoder: bool = False,
+    cross_encoder_model: str = "BAAI/bge-reranker-v2-m3",
+    enable_semantic_scholar: bool = False,
+    s2_top_k: int = 5,
+) -> None:
+    """Configure cross-encoder reranker and Semantic Scholar on an existing pipeline."""
+    # Cross-encoder reranker
+    if enable_cross_encoder and RERANKER_AVAILABLE:
+        pipeline._cross_encoder = _load_cross_encoder(cross_encoder_model)
+    else:
+        pipeline._cross_encoder = None
+
+    # Semantic Scholar retriever
+    if enable_semantic_scholar:
+        pipeline._semantic_scholar = SemanticScholarRetriever(max_results=s2_top_k)
+        pipeline._semantic_scholar_top_k = s2_top_k
+    else:
+        pipeline._semantic_scholar = None
 
 
 @st.cache_resource(show_spinner="Loading model and vector store...")
@@ -559,6 +627,7 @@ def run_ensemble_sequential_query(
     with_images: bool = False,
     top_k_images: int = 0,
     send_images_to_llm: bool = False,
+    enhancement_kwargs: dict | None = None,
 ) -> dict[str, object]:
     """Load each model one at a time, query, unload. Saves VRAM."""
     embedder, store, image_store = init_shared_only()
@@ -575,6 +644,8 @@ def run_ensemble_sequential_query(
             image_store=image_store,
         )
         _apply_planner(pipeline, use_planner, planner_queries)
+        if enhancement_kwargs:
+            _apply_retrieval_enhancements(pipeline, **enhancement_kwargs)
 
         t0 = time.time()
         result = _run_qa_sync(
@@ -752,6 +823,24 @@ def main():
                     help="Send actual image data to a vision-capable LLM (vs. captions only).",
                 )
 
+            st.divider()
+            st.subheader("Retrieval enhancements")
+            enable_semantic_scholar = st.toggle(
+                "Semantic Scholar search", value=False,
+                help=(
+                    "Supplement local retrieval with paper abstracts from the "
+                    "Semantic Scholar API (~200M papers)."
+                ),
+            )
+            s2_top_k = 5
+            if enable_semantic_scholar:
+                s2_top_k = st.slider(
+                    "S2 papers to include", min_value=1, max_value=20, value=5,
+                    help="Number of external paper abstracts to append to context.",
+                )
+            enable_cross_encoder = False
+            cross_encoder_model = "BAAI/bge-reranker-v2-m3"
+
     # ---- Local mode: full sidebar with model selection ----
     else:
         configs = discover_configs()
@@ -811,6 +900,50 @@ def main():
                 )
 
             st.divider()
+            st.subheader("Retrieval enhancements")
+            enable_semantic_scholar = st.toggle(
+                "Semantic Scholar search", value=False,
+                help=(
+                    "Supplement local retrieval with paper abstracts from the "
+                    "Semantic Scholar API (~200M papers). Useful for questions "
+                    "that go beyond the curated corpus."
+                ),
+            )
+            s2_top_k = 5
+            if enable_semantic_scholar:
+                s2_top_k = st.slider(
+                    "S2 papers to include", min_value=1, max_value=20, value=5,
+                    help="Number of external paper abstracts to append to context.",
+                )
+
+            enable_cross_encoder = False
+            cross_encoder_model = "BAAI/bge-reranker-v2-m3"
+            if RERANKER_AVAILABLE:
+                enable_cross_encoder = st.toggle(
+                    "Cross-encoder reranker", value=True,
+                    help=(
+                        "Use a cross-encoder model to rescore passages after "
+                        "retrieval. Improves relevance ranking but adds ~1-2s latency. "
+                        "Requires ~0.5-2 GB VRAM depending on model."
+                    ),
+                )
+                if enable_cross_encoder:
+                    cross_encoder_model = st.selectbox(
+                        "Reranker model",
+                        [
+                            "BAAI/bge-reranker-v2-m3",
+                            "BAAI/bge-reranker-large",
+                            "OpenSciLM/OpenScholar_Reranker",
+                        ],
+                        index=0,
+                        help=(
+                            "bge-reranker-v2-m3: small & fast (~0.5 GB). "
+                            "bge-reranker-large: better quality (~1.3 GB). "
+                            "OpenScholar_Reranker: science-tuned (~1.2 GB)."
+                        ),
+                    )
+
+            st.divider()
             config_list = list(configs.keys())
 
             if mode == "Single model":
@@ -857,6 +990,14 @@ def main():
         st.info("Select at least 2 models for ensemble mode.")
         return
 
+    # ---- Retrieval enhancement kwargs (shared across all modes) ----
+    _enhancement_kwargs = dict(
+        enable_cross_encoder=enable_cross_encoder,
+        cross_encoder_model=cross_encoder_model,
+        enable_semantic_scholar=enable_semantic_scholar,
+        s2_top_k=s2_top_k,
+    )
+
     # ---- Load pipelines ----
     try:
         if is_remote:
@@ -865,9 +1006,11 @@ def main():
                 max_tokens=VLLM_MAX_TOKENS, temperature=VLLM_TEMPERATURE,
             )
             _apply_planner(pipeline, use_planner, planner_queries)
+            _apply_retrieval_enhancements(pipeline, **_enhancement_kwargs)
         elif mode == "Single model":
             pipeline = init_single_pipeline(selected_configs[0], precision)
             _apply_planner(pipeline, use_planner, planner_queries)
+            _apply_retrieval_enhancements(pipeline, **_enhancement_kwargs)
         elif mode == "Ensemble":
             plan = plan_ensemble(selected_configs, precision, gpu_info)
             if plan["mode"] == "error":
@@ -879,6 +1022,7 @@ def main():
                 )
                 for _p in ensemble_pipelines.values():
                     _apply_planner(_p, use_planner, planner_queries)
+                    _apply_retrieval_enhancements(_p, **_enhancement_kwargs)
             # sequential doesn't pre-load models (planner set inside query fn)
     except Exception as e:
         st.error(f"Failed to load pipeline: {e}")
@@ -891,6 +1035,34 @@ def main():
     # ---- Chat interface ----
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
+    # Welcome message (shown only when chat is empty)
+    if not st.session_state.messages:
+        with st.chat_message("assistant"):
+            s = CORPUS_SUMMARY
+            type_parts = [
+                f"{count} {t}{'s' if count != 1 else ''}"
+                for t, count in s["types"].items()
+            ]
+            type_str = " and ".join(type_parts)
+
+            st.markdown(
+                f"**Welcome to WattBot!** Ask me questions about AI's environmental "
+                f"impact \u2014 energy consumption, carbon emissions, water usage, "
+                f"and sustainability.\n\n"
+                f"My knowledge base contains **{s['count']} documents** ({type_str}) "
+                f"spanning **{s['year_range']}**, covering topics like:"
+            )
+            for t in s["titles"][:5]:
+                st.markdown(f"- *{t}*")
+            if s["count"] > 5:
+                st.markdown(f"- ...and {s['count'] - 5} more")
+            st.page_link("pages/1_Corpus.py", label="\U0001F4DA Browse full corpus")
+
+            st.caption(
+                "Tip: Enable **Semantic Scholar search** in the sidebar to "
+                "supplement the local corpus with abstracts from ~200M papers."
+            )
 
     # Render history
     for msg in st.session_state.messages:
@@ -965,6 +1137,7 @@ def main():
                             planner_queries=planner_queries,
                             with_images=with_images, top_k_images=top_k_images,
                             send_images_to_llm=send_images_to_llm,
+                            enhancement_kwargs=_enhancement_kwargs,
                         )
                         status.update(label="Aggregating results...", state="complete")
                 except Exception as e:
@@ -1001,13 +1174,19 @@ def _humanize_ref_id(rid: str) -> str:
     """Convert a ref_id like ``luccioni2025c`` to ``Luccioni et al., 2025``.
 
     Expects the common ``<surname><4-digit-year>[suffix]`` pattern.
+    Handles ``s2_`` prefix for Semantic Scholar references.
     Falls back to the raw id if the pattern doesn't match.
     """
-    m = re.match(r"([a-zA-Z]+)(\d{4})", rid)
+    # Strip Semantic Scholar prefix for display
+    display_rid = rid.removeprefix("s2_")
+    m = re.match(r"([a-zA-Z]+)(\d{4})", display_rid)
     if m:
         author = m.group(1).capitalize()
         year = m.group(2)
-        return f"{author} et al., {year}"
+        label = f"{author} et al., {year}"
+        if rid.startswith("s2_"):
+            label += " [S2]"
+        return label
     return rid
 
 

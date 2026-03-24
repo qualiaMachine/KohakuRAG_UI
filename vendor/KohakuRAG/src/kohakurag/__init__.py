@@ -46,6 +46,14 @@ from .pipeline import (
     StructuredAnswerResult,
     format_snippets,
 )
+
+# Optional components — degrade gracefully when dependencies are missing.
+try:
+    from .reranker import CrossEncoderReranker
+except Exception:
+    CrossEncoderReranker = None  # type: ignore[assignment,misc]
+
+from .semantic_scholar import SemanticScholarRetriever
 from .types import (
     ContextSnippet,
     DocumentPayload,
@@ -58,6 +66,7 @@ from .types import (
 __all__ = [
     "average_embeddings",
     "ContextSnippet",
+    "CrossEncoderReranker",
     "DocumentIndexer",
     "DocumentPayload",
     "EmbeddingModel",
@@ -75,6 +84,7 @@ __all__ = [
     "QueryPlanner",
     "RAGPipeline",
     "RetrievalMatch",
+    "SemanticScholarRetriever",
     "SimpleQueryPlanner",
     "StoredNode",
     "StructuredAnswer",
