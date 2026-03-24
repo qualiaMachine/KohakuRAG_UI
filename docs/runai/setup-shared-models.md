@@ -171,7 +171,17 @@ In the RunAI UI:
 | `HF_HUB_CACHE` | `/models/.cache/huggingface/hub` |
 | `TRANSFORMERS_CACHE` | `/models/.cache/huggingface/hub` |
 
-5. Create the Workspace, wait for it to start, then **Connect** > open terminal
+5. Under **Runtime Settings**, set the command/args so `huggingface_hub`
+   is installed automatically on every start:
+
+| Field | Value |
+|-------|-------|
+| **Command** | `bash` |
+| **Args** | `-c`, `pip install -q huggingface_hub && sleep infinity` |
+
+   This way you never have to manually `pip install` after each restart.
+
+6. Create the Workspace, wait for it to start, then **Connect** > open terminal
 
 ---
 
