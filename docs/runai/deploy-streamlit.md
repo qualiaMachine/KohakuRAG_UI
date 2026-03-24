@@ -44,16 +44,26 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | Field | Value |
 |-------|-------|
 | **Command** | `bash` |
-| **Arguments** | `-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b master --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && ln -sf /wattbot-data/embeddings data/embeddings && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx numpy python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=\$STREAMLIT_BASE_PATH"` |
+| **Arguments** | `-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b master --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && mkdir -p /tmp/vectordb && cp /wattbot-data/embeddings/wattbot_jinav4.db /tmp/vectordb/ && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx 'numpy<2' python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=\$STREAMLIT_BASE_PATH"` |
 | **Working directory** | *(leave empty)* |
 
 > **What the command does:**
 > 1. Installs `uv` (fast Python package installer)
 > 2. Removes the PEP 668 `EXTERNALLY-MANAGED` marker (safe in ephemeral containers)
 > 3. Clones the repo to ephemeral `/tmp` (not on PVC)
-> 4. Symlinks data dirs to the shared PPVC
-> 5. Installs Python deps + vendored KohakuVault/KohakuRAG
-> 6. Starts Streamlit with proxy-compatible settings
+> 4. **Copies** the vector DB to a writable `/tmp/vectordb/` directory (the PPVC
+>    is read-only, and KVaultNodeStore writes metadata on open, so symlinks
+>    to the PPVC won't work — the app auto-discovers the DB at `/tmp/vectordb/`)
+> 5. Symlinks corpus data dir to the shared PPVC
+> 6. Installs Python deps + vendored KohakuVault/KohakuRAG
+> 7. Starts Streamlit with proxy-compatible settings
+>
+> **Why copy instead of symlink for the DB?** KVaultNodeStore writes metadata
+> and runs `auto_pack` when opening the database. If the PPVC is mounted
+> read-only (or the volume doesn't support writes from this pod), the
+> store silently creates a new empty DB instead — resulting in **zero
+> vectors** and no local retrieval. The app auto-discovers the copied DB
+> at `/tmp/vectordb/wattbot_jinav4.db`.
 >
 > **Using a different branch?** Replace `master` in the `git clone` command
 > with the desired branch name.
@@ -67,6 +77,7 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | `EMBEDDING_SERVICE_URL` | `http://wattbot-embedding.runai-<project>.svc.cluster.local` |
 | `RERANKER_SERVICE_URL` | `http://wattbot-reranker.runai-<project>.svc.cluster.local` |
 | `STREAMLIT_BASE_PATH` | `/<project>/<workspace-name>/proxy/8501` |
+| `VECTOR_DB_PATH` | `/tmp/vectordb/wattbot_jinav4.db` *(optional — the app auto-discovers this path, but setting it explicitly is recommended)* |
 
 > **Knative DNS for Inference workloads:** RunAI Inference workloads use
 > Knative serving, which routes through **port 80** (not the container

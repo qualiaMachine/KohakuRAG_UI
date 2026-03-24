@@ -28,18 +28,29 @@ command -v uv >/dev/null 2>&1 || {
     pip install uv 2>&1 | tail -1
 }
 
-# Data symlinks: point data dirs at the wattbot-data PPVC so the app
-# reads the pre-built vector index and corpus from shared storage.
-# The git repo ships placeholder dirs, so we must replace them with
-# symlinks even when the paths already exist.
+# Data setup: the PPVC volume may be read-only. KVaultNodeStore writes
+# metadata on open, so we must COPY the vector DB to a writable location.
+# Corpus and PDFs can be symlinked since they're read-only.
 if [[ -d /wattbot-data ]]; then
-    echo "[start_app] Creating data symlinks to /wattbot-data PPVC..."
+    echo "[start_app] Setting up data from /wattbot-data PPVC..."
     mkdir -p data
-    # Remove placeholder dirs (or stale symlinks) before linking
-    rm -rf data/embeddings data/corpus data/pdfs
-    ln -sf /wattbot-data/embeddings data/embeddings
-    ln -sf /wattbot-data/corpus     data/corpus
-    ln -sf /wattbot-data/pdfs       data/pdfs
+
+    # Copy vector DB to writable temp dir (PPVC may be read-only)
+    DB_SRC="/wattbot-data/embeddings/wattbot_jinav4.db"
+    DB_DST="/tmp/vectordb/wattbot_jinav4.db"
+    if [[ -f "$DB_SRC" ]]; then
+        mkdir -p /tmp/vectordb
+        cp "$DB_SRC" "$DB_DST"
+        export VECTOR_DB_PATH="$DB_DST"
+        echo "[start_app] Copied vector DB to $DB_DST"
+    else
+        echo "[start_app] WARNING: Vector DB not found at $DB_SRC"
+    fi
+
+    # Symlink read-only data dirs
+    rm -rf data/corpus data/pdfs
+    ln -sf /wattbot-data/corpus data/corpus
+    ln -sf /wattbot-data/pdfs   data/pdfs
 else
     echo "[start_app] WARNING: /wattbot-data PPVC not mounted — using local data dirs."
 fi
