@@ -42,14 +42,61 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 | Field | Value |
 |-------|-------|
 | **Command** | `bash` |
-| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/master.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-master /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate && python3 scripts/reranker_server.py"` |
+| **Arguments** | see below |
 | **Working directory** | *(leave empty)* |
 
-> **Using a different branch?** Replace `master` in the URL and the `mv`
-> target with your branch name. If the branch has slashes (e.g.
-> `claude/my-feature`), use the full name in the URL but replace slashes
-> with dashes in the `mv` target (GitHub converts `/` to `-` in tarball
-> directory names).
+**Arguments** (copy-paste this entire block):
+
+```
+-c "pip install uv && uv pip install --system fastapi uvicorn sentence-transformers && python3 /tmp/server.py"
+```
+
+But first, the command needs to write the server script. Use this full
+arguments string instead:
+
+```
+-c "pip install uv && uv pip install --system fastapi uvicorn sentence-transformers && cat > /tmp/server.py << 'PYEOF'
+import os, time
+from sentence_transformers import CrossEncoder
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uvicorn
+
+MODEL = os.environ.get('RERANKER_MODEL', 'BAAI/bge-reranker-v2-m3')
+app = FastAPI()
+model = None
+
+class RerankRequest(BaseModel):
+    query: str
+    texts: list[str]
+
+@app.on_event('startup')
+async def startup():
+    global model
+    print(f'[reranker] Loading {MODEL}...', flush=True)
+    t0 = time.time()
+    model = CrossEncoder(MODEL)
+    print(f'[reranker] Loaded in {time.time()-t0:.1f}s', flush=True)
+
+@app.get('/health')
+async def health():
+    return {'status': 'ok' if model else 'loading'}
+
+@app.post('/rerank')
+async def rerank(r: RerankRequest):
+    t0 = time.time()
+    scores = model.predict([(r.query, t) for t in r.texts], show_progress_bar=False)
+    return {'scores': [float(s) for s in scores], 'count': len(r.texts), 'elapsed_ms': round((time.time()-t0)*1000, 2)}
+
+uvicorn.run(app, host='0.0.0.0', port=8082)
+PYEOF
+python3 /tmp/server.py"
+```
+
+> **No repo download needed.** Unlike the embedding server, the reranker
+> is simple enough to inline via a heredoc. Same pattern as vLLM — just
+> pick the container, set the model via env var, done. No git clone, no
+> tarball, no KohakuRAG dependency.
 
 **Environment variables:**
 
@@ -124,20 +171,35 @@ snapshot_download('OpenSciLM/OpenScholar_Reranker', cache_dir='/models/.cache/hu
 
 ## Pre-deploy testing
 
-### Step 1: Test the startup command locally
+### Step 1: Test locally (any machine with Python 3.10+)
 
 ```bash
-rm -rf /tmp/KohakuRAG_UI && \
-curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/<your-branch>.tar.gz \
-  | tar xz -C /tmp && \
-mv /tmp/KohakuRAG_UI-<your-branch> /tmp/KohakuRAG_UI && \
-cd /tmp/KohakuRAG_UI && \
-uv pip install --system fastapi uvicorn httpx numpy \
-  sentence-transformers 'transformers>=4.42,<5' accelerate && \
-python3 scripts/reranker_server.py
+pip install fastapi uvicorn sentence-transformers && \
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3 python3 -c "
+import os, time
+from sentence_transformers import CrossEncoder
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uvicorn
+MODEL = os.environ.get('RERANKER_MODEL', 'BAAI/bge-reranker-v2-m3')
+app = FastAPI(); model = None
+class RerankRequest(BaseModel):
+    query: str
+    texts: list[str]
+@app.on_event('startup')
+async def startup():
+    global model; model = CrossEncoder(MODEL)
+@app.get('/health')
+async def health(): return {'status': 'ok' if model else 'loading'}
+@app.post('/rerank')
+async def rerank(r: RerankRequest):
+    t0 = time.time(); scores = model.predict([(r.query, t) for t in r.texts], show_progress_bar=False)
+    return {'scores': [float(s) for s in scores], 'count': len(r.texts), 'elapsed_ms': round((time.time()-t0)*1000, 2)}
+uvicorn.run(app, host='0.0.0.0', port=8082)
+"
 ```
 
-Expected: `[reranker_server] Model loaded in Xs. Serving on 0.0.0.0:8082`
+Expected: `[reranker] Loaded in Xs` then serving on 8082
 
 ### Step 2: Smoke-test the /health endpoint
 
@@ -192,14 +254,36 @@ runai submit wattbot-reranker \
   --env RERANKER_MODEL=BAAI/bge-reranker-v2-m3 \
   --port 8082 \
   --command -- /bin/bash -c \
-    "pip install uv && \
-     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/master.tar.gz \
-       | tar xz -C /tmp && \
-     mv /tmp/KohakuRAG_UI-master /tmp/KohakuRAG_UI && \
-     cd /tmp/KohakuRAG_UI && \
-     uv pip install --system fastapi uvicorn httpx numpy \
-       sentence-transformers 'transformers>=4.42,<5' accelerate && \
-     python3 scripts/reranker_server.py"
+    'pip install uv && uv pip install --system fastapi uvicorn sentence-transformers && cat > /tmp/server.py << "PYEOF"
+import os, time
+from sentence_transformers import CrossEncoder
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uvicorn
+MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+app = FastAPI()
+model = None
+class RerankRequest(BaseModel):
+    query: str
+    texts: list[str]
+@app.on_event("startup")
+async def startup():
+    global model
+    print(f"[reranker] Loading {MODEL}...", flush=True)
+    t0 = time.time()
+    model = CrossEncoder(MODEL)
+    print(f"[reranker] Loaded in {time.time()-t0:.1f}s", flush=True)
+@app.get("/health")
+async def health():
+    return {"status": "ok" if model else "loading"}
+@app.post("/rerank")
+async def rerank(r: RerankRequest):
+    t0 = time.time()
+    scores = model.predict([(r.query, t) for t in r.texts], show_progress_bar=False)
+    return {"scores": [float(s) for s in scores], "count": len(r.texts), "elapsed_ms": round((time.time()-t0)*1000, 2)}
+uvicorn.run(app, host="0.0.0.0", port=8082)
+PYEOF
+python3 /tmp/server.py'
 ```
 
 ## Updated architecture
