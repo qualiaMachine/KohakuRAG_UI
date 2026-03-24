@@ -56,7 +56,7 @@ tarball and installs dependencies at startup.
 | Field | Value |
 |-------|-------|
 | **Command** | `bash` |
-| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/master.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-master /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate huggingface_hub peft && python3 scripts/embedding_server.py"` |
+| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/rag-poweredge-setup-wM2Fz.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate huggingface_hub peft && python3 scripts/embedding_server.py"` |
 | **Working directory** | *(leave empty)* |
 
 > **Using a different branch?** Replace `master` in the URL and the `mv`
@@ -209,9 +209,9 @@ runai submit wattbot-embedding \
   --port 8080 \
   --command -- /bin/bash -c \
     "pip install uv && \
-     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/master.tar.gz \
+     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/rag-poweredge-setup-wM2Fz.tar.gz \
        | tar xz -C /tmp && \
-     mv /tmp/KohakuRAG_UI-master /tmp/KohakuRAG_UI && \
+     mv /tmp/KohakuRAG_UI-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && \
      cd /tmp/KohakuRAG_UI && \
      uv pip install --system fastapi uvicorn httpx numpy \
        sentence-transformers 'transformers>=4.42,<5' accelerate && \
