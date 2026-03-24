@@ -64,7 +64,6 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 |-----|-------|
 | `RAG_MODE` | `remote` |
 | `VLLM_BASE_URL` | `http://<vllm-name>.<runai-namespace>.svc.cluster.local/v1` |
-| `VLLM_MODEL` | *(must match the model loaded by vLLM — e.g. `Qwen/Qwen2.5-7B-Instruct`)* |
 | `EMBEDDING_SERVICE_URL` | `http://<embedding-name>.<runai-namespace>.svc.cluster.local` |
 | `STREAMLIT_BASE_PATH` | `/<project>/<workspace-name>/proxy/8501` |
 
@@ -82,9 +81,8 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 >
 > **No port number** — Knative maps port 80 → container port automatically.
 >
-> **`VLLM_MODEL`** must match the `--model` argument used when launching
-> vLLM. Check with:
-> `curl http://<vllm-fqdn>/v1/models`
+> **Model auto-detection:** The app automatically discovers the model name
+> from the vLLM `/v1/models` endpoint — no `VLLM_MODEL` env var needed.
 
 > **`STREAMLIT_BASE_PATH`** tells Streamlit the proxy subpath so
 > WebSocket connections route correctly. Replace `<project>` with your
