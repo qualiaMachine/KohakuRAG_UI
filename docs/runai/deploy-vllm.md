@@ -124,6 +124,25 @@ so vLLM can't accidentally modify or delete weights.
 curl http://wattbot-chat:8000/v1/models
 ```
 
+## Switching to OpenScholar 8B
+
+OpenScholar (`OpenSciLM/Llama-3.1_OpenScholar-8B`) is a Llama 3.1 8B
+fine-tune trained for scientific literature synthesis. It's a drop-in
+replacement for Qwen 7B — same VRAM footprint (~16 GB bf16, ~6 GB 4-bit).
+
+1. Download the model to the shared PVC (see [Managing Models](managing-models.md)):
+   ```bash
+   python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
+   ```
+2. Change the vLLM job's **Arguments** to:
+   `--model OpenSciLM/Llama-3.1_OpenScholar-8B`
+3. Change the Streamlit job's `VLLM_MODEL` env var to:
+   `OpenSciLM/Llama-3.1_OpenScholar-8B`
+4. Restart both jobs
+
+No other changes needed — the embedding model, vector DB, and retrieval
+pipeline are unchanged.
+
 ## GPU VRAM and quantization
 
 The current deployment uses **bitsandbytes** quantization, which reduces

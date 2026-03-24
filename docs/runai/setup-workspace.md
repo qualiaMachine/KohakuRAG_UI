@@ -26,7 +26,7 @@ documents) or to debug issues.
 - **Does not serve anything in production.** The three production services
   are deployed separately as Inference workloads (steps 2-4).
 
-To add or update models on the shared PVC, use the `update-shared-models1`
+To add or update models on the shared PVC, use the `update-shared-models`
 workspace instead — see
 [Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc).
 
@@ -129,7 +129,7 @@ In the RunAI UI:
      > silently downloads models. If a model is missing from the shared
      > PVC, you'll get a clear error instead of a multi-GB surprise
      > download to local storage. All models should be provisioned via
-     > the `update-shared-models1` workspace — see
+     > the `update-shared-models` workspace — see
      > [Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc).
 
 3. Create the Workspace and wait for it to start
@@ -156,7 +156,7 @@ ls /models/.cache/huggingface/models--jinaai--jina-embeddings-v4/snapshots/*/ada
 ```
 
 > **If models are missing:** Do NOT download them here. Instead, use the
-> `update-shared-models1` workspace in the `shared-models` project — see
+> `update-shared-models` workspace in the `shared-models` project — see
 > [Managing Models](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc).
 
 ### 0c. Set up cache directories
