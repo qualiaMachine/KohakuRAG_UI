@@ -1,8 +1,8 @@
 # Deploying WattBot RAG on RunAI
 
-Production deployment using 2 RunAI **Inference** workloads + 1
-**Workspace** across 1.5 GPUs (~90 GB), with vLLM for high-throughput
-LLM serving.
+Production deployment using 2-3 RunAI **Inference** workloads + 1
+**Workspace** across 1.5-1.75 GPUs, with vLLM for high-throughput
+LLM serving and optional cross-encoder reranking.
 
 ## Why this architecture?
 
@@ -24,7 +24,8 @@ Splitting into 3 independent services solves all of these:
 |----------|------|-------------|-----|------|
 | **`wattbot-vllm`** | Inference | Serves the LLM (Qwen 7B) via vLLM's OpenAI-compatible API | 1.0 | 8000 |
 | **`wattbot-embedding`** | Inference | Encodes user questions into vectors (Jina V4) for DB lookup | 0.5 | 8080 |
-| **`wattbot-app`** | Workspace | Streamlit UI — connects to the other two via HTTP | 0 | 8501 |
+| **`wattbot-reranker`** | Inference | *(optional)* Cross-encoder reranking of retrieved passages | 0.25 | 8082 |
+| **`wattbot-app`** | Workspace | Streamlit UI — connects to the other services via HTTP | 0 | 8501 |
 
 ### Multi-user scaling with vLLM
 
@@ -61,18 +62,15 @@ only expose internal Knative routes.
 ┌─────────────────────┐
 │   Streamlit App     │  CPU only, no GPU
 │   Port 8501         │
-└────────┬────────────┘
-         │ HTTP (internal cluster DNS)
-   ┌─────┴──────┐
-   ▼            ▼
-┌──────────┐  ┌──────────────────────────────┐
-│  vLLM    │  │  Embedding Server            │
-│  Server  │  │  Encodes user questions into │
-│  Port    │  │  vectors for DB lookup       │
-│  8000    │  │  Port 8080, GPU ~0.5         │
-│  GPU     │  └──────────────────────────────┘
-│  ~1.0    │
-└──────────┘
+└──┬──────┬───────┬───┘
+   │      │       │ HTTP (internal cluster DNS)
+   ▼      ▼       ▼
+┌──────┐ ┌──────┐ ┌──────────┐
+│ vLLM │ │Embed │ │ Reranker │
+│ 8000 │ │ 8080 │ │   8082   │
+│GPU 1 │ │GPU½  │ │  GPU¼    │
+└──────┘ └──────┘ └──────────┘
+                   (optional)
 ```
 
 **Query flow:** User asks a question → Streamlit [`wattbot-app`] sends
@@ -83,8 +81,8 @@ with citations.
 
 All three mount a shared model PVC at `/models/` (read-only) and share
 one physical GPU via RunAI's fractional allocation. GPU budget: **1.5
-GPUs** (~90 GB) total — 1.0 for vLLM, 0.5 for embeddings, 0 for
-Streamlit.
+GPUs** total — 1.0 for vLLM, 0.5 for embeddings, 0.25 for reranker
+(optional), 0 for Streamlit.
 
 ---
 
@@ -96,7 +94,8 @@ Follow these docs in order:
 1. **[Setup & Prerequisites](setup-workspace.md)** — Create the data volume for the vector index, clone the repo, build the index (one-time)
 2. **[Deploy vLLM Server](deploy-vllm.md)** — LLM inference with Qwen 7B
 3. **[Deploy Embedding Server](deploy-embedding.md)** — Jina V4 query encoding
-4. **[Deploy Streamlit App](deploy-streamlit.md)** — Browser UI connecting to both services
+4. **[Deploy Reranker Server](deploy-reranker.md)** *(optional)* — Cross-encoder reranking for better retrieval quality
+5. **[Deploy Streamlit App](deploy-streamlit.md)** — Browser UI connecting to all services
 
 All steps use the **RunAI web UI only** — no CLI tools required.
 
@@ -106,7 +105,8 @@ All steps use the **RunAI web UI only** — no CLI tools required.
 1. **Setup workspace** — clone repo, install deps, build vector index, then stop
 2. **vLLM** — loads Qwen from your PVC (~30s)
 3. **Embedding server** — loads Jina V4 from your PVC (~30s)
-4. **Streamlit app** — last, needs both services running
+4. **Reranker** *(optional)* — loads cross-encoder from your PVC (~10s)
+5. **Streamlit app** — last, needs vLLM + embedding running (reranker is optional)
 
 Restarts are fast since all model weights are on the PVC — no downloads
 at runtime.
