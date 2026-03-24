@@ -46,7 +46,7 @@ sys.path.insert(0, str(_repo_root / "vendor" / "KohakuRAG" / "src"))
 sys.path.insert(0, str(_repo_root / "scripts"))
 
 from kohakurag import RAGPipeline
-from kohakurag.datastore import KVaultNodeStore
+from kohakurag.datastore import KVaultNodeStore, ImageStore
 from kohakurag.pipeline import LLMQueryPlanner, SimpleQueryPlanner
 
 # Local-only imports (require torch/transformers) — skip in remote mode
@@ -273,8 +273,13 @@ def plan_ensemble(config_names: list[str], precision: str, gpu_info: dict) -> di
 # ---------------------------------------------------------------------------
 # Pipeline init
 # ---------------------------------------------------------------------------
-def _load_shared_resources(config: dict) -> tuple[JinaV4EmbeddingModel, KVaultNodeStore]:
-    """Load embedder and vector store from config."""
+def _load_shared_resources(config: dict) -> tuple[JinaV4EmbeddingModel, KVaultNodeStore, Path]:
+    """Load embedder and vector store from config.
+
+    Returns:
+        Tuple of (embedder, store, db_path).  The *db_path* is forwarded so
+        callers can open an :class:`ImageStore` on the same database file.
+    """
     embedding_dim = config.get("embedding_dim", 1024)
     embedding_task = config.get("embedding_task", "retrieval")
     db_raw = config.get("db", "data/embeddings/wattbot_jinav4.db")
@@ -305,7 +310,7 @@ def _load_shared_resources(config: dict) -> tuple[JinaV4EmbeddingModel, KVaultNo
         f"Store opened: dimensions={store._dimensions}, "
         f"vec_count={store._vectors.info().get('count', '?')}"
     )
-    return embedder, store
+    return embedder, store, db_path
 
 
 def _load_chat_model(config: dict, precision: str) -> HuggingFaceLocalChatModel:
@@ -352,9 +357,13 @@ def _apply_planner(
 def init_single_pipeline(config_name: str, precision: str) -> RAGPipeline:
     """Load a single-model pipeline. Cached across reruns."""
     config = load_config(CONFIGS_DIR / f"{config_name}.py")
-    embedder, store = _load_shared_resources(config)
+    embedder, store, db_path = _load_shared_resources(config)
     chat_model = _load_chat_model(config, precision)
-    return RAGPipeline(store=store, embedder=embedder, chat_model=chat_model, planner=None)
+    image_store = ImageStore(db_path)
+    return RAGPipeline(
+        store=store, embedder=embedder, chat_model=chat_model, planner=None,
+        image_store=image_store,
+    )
 
 
 @st.cache_resource(show_spinner="Loading ensemble models...")
@@ -362,7 +371,9 @@ def init_ensemble_parallel(config_names: tuple[str, ...], precision: str) -> dic
     """Load all ensemble models into memory (parallel mode). Cached."""
     # Use first config for shared resources (db/embedder are the same across configs)
     ref_config = load_config(CONFIGS_DIR / f"{config_names[0]}.py")
-    embedder, store = _load_shared_resources(ref_config)
+    # db_path is needed for ImageStore but not used directly here — see below
+    embedder, store, db_path = _load_shared_resources(ref_config)
+    image_store = ImageStore(db_path)
 
     pipelines = {}
     for name in config_names:
@@ -370,15 +381,18 @@ def init_ensemble_parallel(config_names: tuple[str, ...], precision: str) -> dic
         chat_model = _load_chat_model(config, precision)
         pipelines[name] = RAGPipeline(
             store=store, embedder=embedder, chat_model=chat_model, planner=None,
+            image_store=image_store,
         )
     return pipelines
 
 
 @st.cache_resource(show_spinner="Loading embedder and vector store...")
-def init_shared_only() -> tuple[JinaV4EmbeddingModel, KVaultNodeStore]:
+def init_shared_only() -> tuple[JinaV4EmbeddingModel, KVaultNodeStore, ImageStore]:
     """Load only the embedder + store (for sequential ensemble). Cached."""
     ref_config = load_config(next(CONFIGS_DIR.glob("hf_*.py")))
-    return _load_shared_resources(ref_config)
+    embedder, store, db_path = _load_shared_resources(ref_config)
+    image_store = ImageStore(db_path)
+    return embedder, store, image_store
 
 
 # ---------------------------------------------------------------------------
@@ -444,8 +458,10 @@ def init_remote_pipeline(
         f"vec_count={store._vectors.info().get('count', '?')}"
     )
 
+    image_store = ImageStore(db_path)
     return RAGPipeline(
         store=store, embedder=embedder, chat_model=chat_model, planner=None,
+        image_store=image_store,
     )
 
 
@@ -458,6 +474,9 @@ def _run_qa_sync(
     top_k: int,
     best_guess: bool = False,
     max_retries: int = 0,
+    with_images: bool = False,
+    top_k_images: int = 0,
+    send_images_to_llm: bool = False,
 ):
     """Run pipeline.run_qa synchronously, retrying on failures.
 
@@ -477,6 +496,9 @@ def _run_qa_sync(
                     system_prompt=sys_prompt,
                     user_template=usr_template,
                     top_k=top_k,
+                    with_images=with_images,
+                    top_k_images=top_k_images,
+                    send_images_to_llm=send_images_to_llm,
                 )
             )
         except Exception as exc:
@@ -492,17 +514,23 @@ def _run_qa_sync(
 def run_single_query(
     pipeline: RAGPipeline, question: str, top_k: int,
     best_guess: bool = False, max_retries: int = 0,
+    with_images: bool = False, top_k_images: int = 0,
+    send_images_to_llm: bool = False,
 ):
     """Run a single model query."""
     return _run_qa_sync(
         pipeline, question, top_k,
         best_guess=best_guess, max_retries=max_retries,
+        with_images=with_images, top_k_images=top_k_images,
+        send_images_to_llm=send_images_to_llm,
     )
 
 
 def run_ensemble_parallel_query(
     pipelines: dict[str, RAGPipeline], question: str, top_k: int,
     best_guess: bool = False, max_retries: int = 0,
+    with_images: bool = False, top_k_images: int = 0,
+    send_images_to_llm: bool = False,
 ) -> dict[str, object]:
     """Query all pre-loaded models concurrently."""
     results = {}
@@ -511,6 +539,8 @@ def run_ensemble_parallel_query(
         result = _run_qa_sync(
             pipeline, question, top_k,
             best_guess=best_guess, max_retries=max_retries,
+            with_images=with_images, top_k_images=top_k_images,
+            send_images_to_llm=send_images_to_llm,
         )
         results[name] = {"result": result, "time": time.time() - t0}
     return results
@@ -526,9 +556,12 @@ def run_ensemble_sequential_query(
     max_retries: int = 0,
     use_planner: bool = False,
     planner_queries: int = 3,
+    with_images: bool = False,
+    top_k_images: int = 0,
+    send_images_to_llm: bool = False,
 ) -> dict[str, object]:
     """Load each model one at a time, query, unload. Saves VRAM."""
-    embedder, store = init_shared_only()
+    embedder, store, image_store = init_shared_only()
     results = {}
 
     for i, name in enumerate(config_names):
@@ -539,6 +572,7 @@ def run_ensemble_sequential_query(
         chat_model = _load_chat_model(config, precision)
         pipeline = RAGPipeline(
             store=store, embedder=embedder, chat_model=chat_model, planner=None,
+            image_store=image_store,
         )
         _apply_planner(pipeline, use_planner, planner_queries)
 
@@ -546,6 +580,8 @@ def run_ensemble_sequential_query(
         result = _run_qa_sync(
             pipeline, question, top_k,
             best_guess=best_guess, max_retries=max_retries,
+            with_images=with_images, top_k_images=top_k_images,
+            send_images_to_llm=send_images_to_llm,
         )
         elapsed = time.time() - t0
         results[name] = {"result": result, "time": elapsed}
@@ -698,6 +734,24 @@ def main():
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
             )
 
+            st.divider()
+            st.subheader("Image retrieval")
+            with_images = st.toggle(
+                "Enable image retrieval", value=True,
+                help="Extract figures/charts from retrieved PDF sections for visual reasoning.",
+            )
+            top_k_images = 0
+            send_images_to_llm = False
+            if with_images:
+                top_k_images = st.slider(
+                    "Image search results", min_value=0, max_value=10, value=3,
+                    help="Additional images from the dedicated image index (0 = only from text sections).",
+                )
+                send_images_to_llm = st.toggle(
+                    "Send images to LLM", value=True,
+                    help="Send actual image data to a vision-capable LLM (vs. captions only).",
+                )
+
     # ---- Local mode: full sidebar with model selection ----
     else:
         configs = discover_configs()
@@ -737,6 +791,24 @@ def main():
                 "call, and lowering retries caps worst-case wait time. Both "
                 "reduce end-to-end latency per question."
             )
+
+            st.divider()
+            st.subheader("Image retrieval")
+            with_images = st.toggle(
+                "Enable image retrieval", value=True,
+                help="Extract figures/charts from retrieved PDF sections for visual reasoning.",
+            )
+            top_k_images = 0
+            send_images_to_llm = False
+            if with_images:
+                top_k_images = st.slider(
+                    "Image search results", min_value=0, max_value=10, value=3,
+                    help="Additional images from the dedicated image index (0 = only from text sections).",
+                )
+                send_images_to_llm = st.toggle(
+                    "Send images to LLM", value=True,
+                    help="Send actual image data to a vision-capable LLM (vs. captions only).",
+                )
 
             st.divider()
             config_list = list(configs.keys())
@@ -851,6 +923,8 @@ def main():
                         result = run_single_query(
                             pipeline, question, top_k,
                             best_guess=best_guess, max_retries=max_retries,
+                            with_images=with_images, top_k_images=top_k_images,
+                            send_images_to_llm=send_images_to_llm,
                         )
                     except Exception as e:
                         st.error(f"Pipeline error: {e}")
@@ -860,7 +934,7 @@ def main():
                             st.code(tb, language="python")
                         return
                 elapsed = time.time() - t0
-                _display_single_result(result, elapsed)
+                _display_single_result(result, elapsed, pipeline=pipeline)
 
             else:  # Ensemble (local mode only)
                 try:
@@ -872,6 +946,8 @@ def main():
                                 ensemble_pipelines, question, top_k,
                                 best_guess=best_guess,
                                 max_retries=max_retries,
+                                with_images=with_images, top_k_images=top_k_images,
+                                send_images_to_llm=send_images_to_llm,
                             )
                     else:
                         status = st.status(
@@ -887,6 +963,8 @@ def main():
                             max_retries=max_retries,
                             use_planner=use_planner,
                             planner_queries=planner_queries,
+                            with_images=with_images, top_k_images=top_k_images,
+                            send_images_to_llm=send_images_to_llm,
                         )
                         status.update(label="Aggregating results...", state="complete")
                 except Exception as e:
@@ -1013,7 +1091,44 @@ def _linkify_citations(
     return text
 
 
-def _display_single_result(result, elapsed: float):
+def _display_retrieved_images(image_nodes, image_store=None):
+    """Show retrieved PDF figures in an expander.
+
+    Works both for live results (StoredNode objects) and history replay
+    (serialized dicts with storage_key/caption/page/doc_id).
+    """
+    if not image_nodes:
+        return
+    with st.expander(f"Retrieved figures ({len(image_nodes)})", expanded=False):
+        for node in image_nodes:
+            # Support both StoredNode objects and plain dicts (history replay)
+            if hasattr(node, "metadata"):
+                storage_key = node.metadata.get("image_storage_key")
+                caption = node.text or ""
+                page = node.metadata.get("page", "?")
+                doc_id = node.metadata.get("document_id", "unknown")
+            else:
+                storage_key = node.get("storage_key")
+                caption = node.get("caption", "")
+                page = node.get("page", "?")
+                doc_id = node.get("doc_id", "unknown")
+
+            label = f"{doc_id} p.{page}"
+            if caption:
+                label += f": {caption[:120]}"
+
+            # Try to display actual image if available
+            if storage_key and image_store:
+                img_bytes = image_store._sync_get(storage_key)
+                if img_bytes:
+                    st.image(img_bytes, caption=label, use_container_width=True)
+                    continue
+            # Fallback: show caption text
+            if caption:
+                st.markdown(f"**{doc_id} p.{page}:** {caption}")
+
+
+def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | None = None):
     """Display a single-model answer."""
     answer = result.answer
     timing = result.timing
@@ -1051,6 +1166,20 @@ def _display_single_result(result, elapsed: float):
                 links.append(label)
         st.markdown("Sources: " + " · ".join(links))
 
+    # Display retrieved figures from PDF images
+    image_store = getattr(pipeline, "_image_store", None) if pipeline else None
+    _display_retrieved_images(result.retrieval.image_nodes, image_store)
+
+    # Serialize image metadata for history replay
+    image_details = []
+    for n in (result.retrieval.image_nodes or []):
+        image_details.append({
+            "storage_key": n.metadata.get("image_storage_key"),
+            "caption": n.text,
+            "page": n.metadata.get("page"),
+            "doc_id": n.metadata.get("document_id"),
+        })
+
     details = {
         "timing": timing,
         "elapsed": elapsed,
@@ -1062,6 +1191,7 @@ def _display_single_result(result, elapsed: float):
             for s in result.retrieval.snippets
         ],
         "raw_response": result.raw_response,
+        "image_nodes": image_details,
     }
     _render_details(details)
 
@@ -1143,11 +1273,25 @@ def _display_ensemble_result(
                 st.text(s.text[:500] + ("..." if len(s.text) > 500 else ""))
                 st.divider()
 
+    # Display retrieved figures (shared across ensemble models)
+    image_nodes = first_result.retrieval.image_nodes
+    _display_retrieved_images(image_nodes)
+
     # Raw responses per model
     with st.expander("Raw LLM responses"):
         for name, info in agg["individual"].items():
             st.markdown(f"**{name}**")
             st.code(info["raw_response"], language="json")
+
+    # Serialize image metadata for history replay
+    image_details = []
+    for n in (image_nodes or []):
+        image_details.append({
+            "storage_key": n.metadata.get("image_storage_key"),
+            "caption": n.text,
+            "page": n.metadata.get("page"),
+            "doc_id": n.metadata.get("document_id"),
+        })
 
     details = {
         "elapsed": elapsed,
@@ -1156,6 +1300,7 @@ def _display_ensemble_result(
         "models": list(model_results.keys()),
         "answer": agg["answer"],
         "answer_value": agg["answer_value"],
+        "image_nodes": image_details,
     }
     if total_cost is not None:
         details["total_cost"] = total_cost
@@ -1186,6 +1331,10 @@ def _render_details(details: dict):
             cols[0].metric("Models", len(details.get("models", [])))
             cols[1].metric("Aggregation", details.get("strategy", ""))
             cols[2].metric("Total", f"{details.get('elapsed', 0):.1f}s")
+        # Show images in ensemble history replay too
+        image_details = details.get("image_nodes", [])
+        if image_details:
+            _display_retrieved_images(image_details)
         return
 
     timing = details.get("timing", {})
@@ -1223,6 +1372,11 @@ def _render_details(details: dict):
                 st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f})")
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
                 st.divider()
+
+    # Replay retrieved images from history (serialized dicts)
+    image_details = details.get("image_nodes", [])
+    if image_details:
+        _display_retrieved_images(image_details)
 
     raw = details.get("raw_response", "")
     if raw:
