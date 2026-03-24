@@ -128,6 +128,51 @@ Choose quantization based on your GPU VRAM:
 | 24 GB (L4/4090) | `--quantization awq` or `--quantization gptq` | |
 | 16 GB | `--quantization awq --max-model-len 4096` | |
 
+## Deploying larger models (14B, 72B)
+
+A model's bf16 weight size is roughly **2 × parameters (in billions) GB**.
+Qwen 72B at bf16 needs ~144 GB — it will **not** fit on a single A100 (80 GB).
+
+### Option A: AWQ 4-bit quantization (recommended, 1 GPU)
+
+Use a pre-quantized AWQ model. At 4-bit, Qwen 72B needs ~40 GB — fits on
+one A100 with room for KV cache.
+
+1. Download the quantized model to the PVC:
+   ```bash
+   python provision_shared_models.py download Qwen/Qwen2.5-72B-Instruct-AWQ
+   ```
+2. Update the vLLM job arguments:
+   ```
+   --model Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq --max-model-len 8192
+   ```
+3. Update `wattbot-app` env var: `VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct-AWQ`
+4. Increase memory request to `32 GB` (quantization still needs CPU RAM for loading)
+
+### Option B: Tensor parallelism (2 GPUs, full precision)
+
+Split the model across multiple GPUs. Preserves full bf16 precision.
+
+1. Change GPU request to `2`
+2. Update the vLLM job arguments:
+   ```
+   --model Qwen/Qwen2.5-72B-Instruct --tensor-parallel-size 2 --dtype bfloat16
+   ```
+3. Update `wattbot-app` env var: `VLLM_MODEL=Qwen/Qwen2.5-72B-Instruct`
+4. Increase CPU to `8` cores and memory to `32 GB`
+
+> **Note:** The full-precision `Qwen/Qwen2.5-72B-Instruct` model is
+> already on the shared PVC (~135 GB). The AWQ variant is **not** — you
+> must download it first (see Option A step 1).
+
+### Quick reference: Qwen model resource requirements
+
+| Model | bf16 size | 4-bit AWQ size | Min GPUs (bf16) | Min GPUs (AWQ) |
+|-------|-----------|----------------|-----------------|----------------|
+| Qwen2.5-7B | ~14 GB | ~6 GB | 1× A100 | 1× any 24GB+ |
+| Qwen2.5-14B | ~28 GB | ~10 GB | 1× A100 | 1× any 24GB+ |
+| Qwen2.5-72B | ~144 GB | ~40 GB | 2× A100 | 1× A100 |
+
 ## CLI equivalent
 
 If you prefer the CLI over the UI:

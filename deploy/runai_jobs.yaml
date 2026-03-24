@@ -69,6 +69,28 @@
 #   - 40GB (A6000): --dtype bfloat16
 #   - 24GB (L4/4090): --quantization awq or --quantization gptq
 #   - 16GB: --quantization awq --max-model-len 4096
+#
+# IMPORTANT: For larger models (14B+), you MUST adjust GPU resources:
+#
+#   Qwen2.5-72B-Instruct (bf16, ~144 GB weights):
+#     Option A — 2× A100 with tensor parallelism:
+#       --gpu 2
+#       Arguments: --model Qwen/Qwen2.5-72B-Instruct --tensor-parallel-size 2 --dtype bfloat16
+#       Memory: 32Gi, CPU: 8
+#
+#     Option B — 1× A100 with AWQ 4-bit quantization (~40 GB):
+#       --gpu 1
+#       Arguments: --model Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq
+#       Memory: 32Gi, CPU: 4
+#       NOTE: Requires the AWQ model on the PVC. Download it first:
+#         python provision_shared_models.py download Qwen/Qwen2.5-72B-Instruct-AWQ
+#
+#   Qwen2.5-14B-Instruct (bf16, ~28 GB weights):
+#     --gpu 1, --dtype bfloat16 (fits on a single A100)
+#
+#   General rule: bf16 VRAM ≈ 2 × params (in billions) GB.
+#   If that exceeds your GPU, either add GPUs (--tensor-parallel-size N)
+#   or use a quantized model variant (AWQ/GPTQ = ~4-bit ≈ 0.5× params GB).
 
 # ---------------------------------------------------------------------------
 # Job 2: Embedding Server (Inference workload)
