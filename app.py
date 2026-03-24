@@ -1585,11 +1585,7 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
                 links.append(label)
         st.markdown("Sources: " + " · ".join(links))
 
-    # Show retrieved figures if image retrieval is enabled
-    image_store = getattr(pipeline, "_image_store", None) if pipeline else None
-    _display_retrieved_images(result.retrieval.image_nodes, image_store)
-
-    # Serialize image nodes for history replay
+    # Serialize image nodes for history replay (displayed via _render_details below)
     image_details = []
     if result.retrieval.image_nodes:
         for node in result.retrieval.image_nodes:
@@ -1625,7 +1621,8 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
         "image_nodes": image_details,
         "s2_snippet_count": s2_snippet_count,
     }
-    _render_details(details)
+    image_store = getattr(pipeline, "_image_store", None) if pipeline else None
+    _render_details(details, image_store=image_store)
 
     if answer.explanation and answer.explanation != "is_blank":
         display_answer = answer.explanation
@@ -1697,7 +1694,7 @@ def _display_ensemble_result(
     first_result = next(iter(model_results.values()))["result"]
     snippets = first_result.retrieval.snippets
     if snippets:
-        display_snippets = snippets[:10]
+        display_snippets = snippets[:5]
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
         with st.expander(label):
             for s in display_snippets:
@@ -1708,7 +1705,7 @@ def _display_ensemble_result(
 
     # Show retrieved figures from first model's retrieval
     image_nodes = first_result.retrieval.image_nodes
-    _display_retrieved_images(image_nodes)
+    _display_retrieved_images(image_nodes[:5] if image_nodes else None)
 
     # Raw responses available via debug logging (removed from UI for cleanliness)
 
@@ -1736,7 +1733,7 @@ def _display_ensemble_result(
     })
 
 
-def _render_details(details: dict):
+def _render_details(details: dict, *, image_store=None):
     """Render expandable sections for a stored message (history replay)."""
     if details.get("ensemble"):
         # Minimal replay for ensemble messages
@@ -1754,7 +1751,7 @@ def _render_details(details: dict):
             cols[2].metric("Total", f"{details.get('elapsed', 0):.1f}s")
         image_details = details.get("image_nodes", [])
         if image_details:
-            _display_retrieved_images(image_details)
+            _display_retrieved_images(image_details[:5], image_store)
         return
 
     timing = details.get("timing", {})
@@ -1785,7 +1782,7 @@ def _render_details(details: dict):
 
     snippets = details.get("snippets", [])
     if snippets:
-        display_snippets = snippets[:10]
+        display_snippets = snippets[:5]
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
         with st.expander(label):
             for s in display_snippets:
@@ -1796,7 +1793,7 @@ def _render_details(details: dict):
 
     image_details = details.get("image_nodes", [])
     if image_details:
-        _display_retrieved_images(image_details)
+        _display_retrieved_images(image_details[:5], image_store)
 
     # Raw LLM response available in debug logs (removed from UI for cleanliness)
 
