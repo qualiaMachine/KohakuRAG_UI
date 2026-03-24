@@ -64,9 +64,11 @@ python workflows/jinav4_pipeline.py
 
 **Steps:**
 1. Build text index (JinaV4 multimodal embeddings)
-2. Build image-only index (JinaV4 direct image embeddings)
-3. Answer questions (OpenRouter + GPT5-nano)
-4. Validate results
+2. Render PDF pages as images and store in DB
+3. Re-index to pick up page_image nodes with `image_storage_key`
+4. Build image-only index (JinaV4 direct image embeddings)
+5. Answer questions (OpenRouter + GPT5-nano)
+6. Validate results
 
 **Usage:**
 ```bash
@@ -78,9 +80,16 @@ python workflows/jinav4_pipeline_nocaption.py
 - Predictions: `artifacts/jinav4_nocap_preds.csv`
 
 **When to use:**
-- `docs_with_images/` folder already exists with captions
+- **WattBot deployment** — no vision LLM API key needed
+- JinaV4 embeds page images directly (not captions)
 - Want to quickly rebuild index with different JinaV4 settings
 - Testing different embedding dimensions
+
+> **Note:** This workflow uses `wattbot_store_images.py` to render full
+> PDF pages, then JinaV4's `encode_image()` to embed them directly into
+> the same vector space as text. No captioning step or external API
+> required — the multimodal embedding handles cross-modal retrieval
+> natively.
 
 ---
 
@@ -180,16 +189,48 @@ ignore_blank = False  # Filter out "is_blank" before voting
 
 ## Pipeline Details
 
-### Stage 1: Image Captioning
+There are two image processing paths. Choose based on your setup:
+
+| Path | Requires | Image quality | Use case |
+|------|----------|---------------|----------|
+| **Page renders (recommended)** | GPU only | Full page images | WattBot deployment, no API key needed |
+| **Extracted + captioned** | Vision LLM API | Individual figures with captions | Research, better per-figure retrieval |
+
+---
+
+### Stage 1a: Page Image Rendering (no API key needed)
+
+**Script:** `scripts/wattbot_store_images.py`
+
+**What it does:**
+1. Renders each PDF page as a high-quality JPEG using PyMuPDF
+2. Stores page images in the `image_blobs` table (ImageStore)
+3. Adds `page_image` paragraphs with `image_storage_key` metadata to
+   the corpus JSON files
+
+**Config:** Uses the same config as the text index (`configs/jinav4/index.py`)
+
+**Output:**
+- Page images stored in `{db}::image_blobs` table
+- Updated JSONs in `data/corpus/` with `page_image` paragraphs
+
+> **Important:** After running this, you must **re-run the text indexer**
+> (Stage 2) so the new `page_image` nodes with `image_storage_key`
+> metadata are embedded into the vector store. Without re-indexing, the
+> image index builder (Stage 3) won't find any images.
+
+---
+
+### Stage 1b: Image Captioning (optional, needs vision LLM)
 
 **Script:** `scripts/wattbot_add_image_captions.py`
 
 **What it does:**
-1. Reads images from PDFs
+1. Extracts individual images from PDF pages
 2. Compresses images to reduce size
-3. Generates captions using vision model (Qwen3-VL)
-4. Stores images in database (ImageStore)
-5. Updates JSON documents with image metadata
+3. Generates captions using a vision model (e.g. Qwen3-VL)
+4. Stores images in database (ImageStore) with `image_storage_key`
+5. Updates JSON documents with image metadata and captions
 
 **Config:**
 ```python
@@ -201,6 +242,10 @@ max_concurrent = 5  # Vision API concurrency
 - Updated JSONs in `docs_with_images/` with image metadata
 - Images stored in `{db}::image_blobs` table
 
+> **Note:** This step is only needed if you want per-figure captions for
+> text-based image search. For JinaV4 direct embedding, Stage 1a (page
+> renders) is sufficient — JinaV4 understands images natively.
+
 ---
 
 ### Stage 2: Text Indexing
@@ -208,13 +253,13 @@ max_concurrent = 5  # Vision API concurrency
 **Script:** `scripts/wattbot_build_index.py`
 
 **What it does:**
-1. Loads documents from `docs_with_images/`
+1. Loads documents from `data/corpus/` (or `docs_with_images/`)
 2. Builds hierarchical structure (document → section → paragraph → sentence)
-3. Embeds all text nodes using JinaV4
+3. Embeds all text nodes (including `page_image` caption nodes) using JinaV4
 4. Stores in vector database
 
 **JinaV4 Features:**
-- **Unified embeddings**: Text and image captions in same space
+- **Unified embeddings**: Text and images in same vector space
 - **Matryoshka**: Configurable dimensions (128-2048)
 - **Task-specific**: Optimized for retrieval
 
@@ -229,6 +274,9 @@ embedding_task = "retrieval"
 - Vector database: `{db}::{prefix}_vec` table
 - Node store: `{db}::{prefix}_nodes` table
 
+> **Run this after Stage 1a or 1b** so nodes with `image_storage_key`
+> exist in the DB for the image index builder to find.
+
 ---
 
 ### Stage 3: Image-Only Index
@@ -236,25 +284,15 @@ embedding_task = "retrieval"
 **Script:** `scripts/wattbot_build_image_index.py`
 
 **What it does:**
-
-**Caption-based (JinaV3):**
-1. Extracts image nodes from text index
-2. Copies their caption embeddings
-3. Creates separate image-only vector table
-
-**Direct embedding (JinaV4):**
-1. Extracts image nodes from text index
-2. Loads actual image bytes from `image_data` metadata
-3. **Embeds images directly** using `JinaV4.encode_image()`
-4. Creates separate image-only vector table
+1. Scans the node store for nodes with `attachment_type` = `"image"` or
+   `"page_image"` that have `image_storage_key` metadata
+2. Loads actual image bytes from ImageStore via `image_storage_key`
+3. Embeds images directly using `JinaV4.encode_image()`
+4. Creates a separate image-only vector table
 
 **Config:**
 ```python
-# For caption-based (current default)
-embedding_model = "jina"
-embed_images_directly = False
-
-# For JinaV4 direct embedding
+# JinaV4 direct embedding (recommended)
 embedding_model = "jinav4"
 embedding_dim = 1024  # Must match text index
 embed_images_directly = True
@@ -267,6 +305,11 @@ embed_images_directly = True
 - Better visual understanding (not limited by caption quality)
 - Unified multimodal search (text and images share vector space)
 - Can find images without good captions
+- No external API or vision LLM required
+
+**Common error — "No images loaded from ImageStore":**
+This means nodes don't have `image_storage_key` metadata. Make sure you
+ran Stage 1a (or 1b) **and then re-ran Stage 2** before this step.
 
 ---
 
@@ -385,14 +428,22 @@ Update your config:
 embedding_dim = 1024  # Use valid Matryoshka dimension
 ```
 
-### Issue: "No image_data in node metadata"
+### Issue: "No images loaded from ImageStore"
 
-**Cause:** Images were indexed before captioning added image_data
+**Cause:** Nodes don't have `image_storage_key` metadata. This happens
+when the image index builder runs before the text index has been rebuilt
+after storing images.
 
 **Solution:**
-Run the full pipeline with captioning:
+Run the 3-step image pipeline in order:
 ```bash
-python workflows/jinav4_pipeline.py  # Not the nocaption version
+cd vendor/KohakuRAG
+# 1. Store page images and update corpus JSONs
+kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
+# 2. Re-index to embed page_image nodes with image_storage_key
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+# 3. Build image vector index
+kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
 ```
 
 ### Issue: JinaV4 model loading fails
@@ -641,13 +692,16 @@ After running the workflow:
 
 ## Summary
 
-### Quick Start (No Captioning)
+### Quick Start — Page Renders + JinaV4 Direct Embedding (no API key)
 ```bash
-export OPENROUTER_API_KEY="your-key"
-python workflows/jinav4_pipeline_nocaption.py
+cd vendor/KohakuRAG
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py   # re-index
+kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
 ```
 
-### Full Pipeline (With Captioning)
+### Full Pipeline (With Captioning — needs vision LLM API)
 ```bash
 export OPENROUTER_API_KEY="your-key"
 python workflows/jinav4_pipeline.py
