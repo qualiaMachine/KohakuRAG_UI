@@ -69,6 +69,11 @@
 #   - 40GB (A6000): --dtype bfloat16
 #   - 24GB (L4/4090): --quantization awq or --quantization gptq
 #   - 16GB: --quantization awq --max-model-len 4096
+#
+# ALTERNATIVE MODEL: OpenScholar 8B (scientific synthesis, Llama 3.1 8B fine-tune)
+#   Replace --model with: --model OpenSciLM/Llama-3.1_OpenScholar-8B
+#   Same VRAM requirements as Qwen 7B. Download first:
+#     python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
 
 # ---------------------------------------------------------------------------
 # Job 2: Embedding Server (Inference workload)

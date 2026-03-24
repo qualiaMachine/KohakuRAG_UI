@@ -130,8 +130,9 @@ Budget ~20 GB per model you plan to cache:
 | Models you want | Total size | Recommended PVC |
 |-----------------|------------|-----------------|
 | Jina V4 + Qwen 7B only | ~17 GB | `50Gi` |
-| + Qwen 14B | ~45 GB | `100Gi` |
-| + Qwen 72B | ~190 GB | `250Gi` |
+| + OpenScholar 8B | ~33 GB | `50Gi` |
+| + Qwen 14B | ~61 GB | `100Gi` |
+| + Qwen 72B | ~196 GB | `250Gi` |
 | All models from admin PVC | ~490 GB | `600Gi` |
 
 > **Tip:** Start small. You can always create a larger PVC later and
@@ -188,18 +189,23 @@ mkdir -p /models/.cache/huggingface/hub
 # ── Install tools ──
 pip install huggingface_hub
 
+# ── Copy the provisioning script to the PVC (persists across restarts) ──
+cp scripts/provision_shared_models.py /models/provision_shared_models.py
+
 # ── Download Jina V4 embeddings (FULL model with adapters, ~3 GB) ──
-huggingface-cli download jinaai/jina-embeddings-v4
+python /models/provision_shared_models.py download jinaai/jina-embeddings-v4
 # Verify adapters were included:
-ls /models/.cache/huggingface/hub/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
-# Should list: adapter_config.json, adapter_model.safetensors
+python /models/provision_shared_models.py verify jinaai/jina-embeddings-v4
 
 # ── Download Qwen 2.5 7B for vLLM (~14 GB) ──
-huggingface-cli download Qwen/Qwen2.5-7B-Instruct
+python /models/provision_shared_models.py download Qwen/Qwen2.5-7B-Instruct
+
+# ── Download OpenScholar 8B for scientific synthesis (~16 GB) ──
+python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
 
 # ── Optional: download additional models ──
-# huggingface-cli download Qwen/Qwen2.5-14B-Instruct   # ~28 GB
-# huggingface-cli download Qwen/Qwen3.5-35B-A3B        # ~17 GB (MoE)
+# python /models/provision_shared_models.py download Qwen/Qwen2.5-14B-Instruct   # ~28 GB
+# python /models/provision_shared_models.py download Qwen/Qwen3.5-35B-A3B        # ~17 GB (MoE)
 ```
 
 > **Download times** depend on your cluster's internet bandwidth.
@@ -306,14 +312,18 @@ Everything else (env vars, `HF_HOME`, etc.) is unchanged.
 2. Find your provisioning workspace and **Start** it (or create a new
    Workspace mounting the **data source**)
 3. Connect to the terminal
-4. Upload `scripts/provision_shared_models.py` to `/home/jovyan/work/`
-   and use it to manage models:
+4. Run the provisioning script from the PVC:
 
 ```bash
-python /home/jovyan/work/provision_shared_models.py list       # see what's cached
-python /home/jovyan/work/provision_shared_models.py download <org>/<model>
-python /home/jovyan/work/provision_shared_models.py verify <org>/<model>
+python /models/provision_shared_models.py list       # see what's cached
+python /models/provision_shared_models.py download <org>/<model>
+python /models/provision_shared_models.py verify <org>/<model>
 ```
+
+> **First time?** Copy the script to the PVC so it persists:
+> ```bash
+> cp scripts/provision_shared_models.py /models/provision_shared_models.py
+> ```
 
 5. Stop the Workspace when done
 
@@ -323,4 +333,4 @@ changed, in which case restart that specific job).
 
 > **Using the admin's shared PVC instead?** See
 > [Managing Models — Adding or updating models on the admin's shared PVC](managing-models.md#adding-or-updating-models-on-the-admins-shared-pvc)
-> for instructions using the `update-shared-models1` workspace.
+> for instructions using the `update-shared-models` workspace.
