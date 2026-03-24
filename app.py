@@ -178,6 +178,37 @@ def _load_metadata_urls() -> dict[str, str]:
 METADATA_URLS: dict[str, str] = _load_metadata_urls()
 
 
+def _build_corpus_summary() -> dict:
+    """Summarize the corpus from metadata.csv for the welcome message."""
+    if not _METADATA_CSV.exists():
+        return {"count": 0, "types": {}, "year_range": "", "titles": []}
+
+    titles = []
+    types: dict[str, int] = {}
+    years = []
+    with open(_METADATA_CSV, newline="", encoding="utf-8", errors="replace") as f:
+        for row in csv.DictReader(f):
+            title = row.get("title", "").strip()
+            doc_type = row.get("type", "unknown").strip()
+            year = row.get("year", "").strip()
+            if title:
+                titles.append(title)
+            types[doc_type] = types.get(doc_type, 0) + 1
+            if year.isdigit():
+                years.append(int(year))
+
+    year_range = f"{min(years)}\u2013{max(years)}" if years else ""
+    return {
+        "count": len(titles),
+        "types": types,
+        "year_range": year_range,
+        "titles": titles,
+    }
+
+
+CORPUS_SUMMARY: dict = _build_corpus_summary()
+
+
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
@@ -819,6 +850,29 @@ def main():
     # ---- Chat interface ----
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
+    # Welcome message (shown only when chat is empty)
+    if not st.session_state.messages:
+        with st.chat_message("assistant"):
+            s = CORPUS_SUMMARY
+            type_parts = [
+                f"{count} {t}{'s' if count != 1 else ''}"
+                for t, count in s["types"].items()
+            ]
+            type_str = " and ".join(type_parts)
+
+            st.markdown(
+                f"**Welcome to WattBot!** Ask me questions about AI's environmental "
+                f"impact \u2014 energy consumption, carbon emissions, water usage, "
+                f"and sustainability.\n\n"
+                f"My knowledge base contains **{s['count']} documents** ({type_str}) "
+                f"spanning **{s['year_range']}**, covering topics like:"
+            )
+            for t in s["titles"][:5]:
+                st.markdown(f"- *{t}*")
+            if s["count"] > 5:
+                st.markdown(f"- ...and {s['count'] - 5} more")
+            st.page_link("pages/1_Corpus.py", label="\U0001F4DA Browse full corpus")
 
     # Render history
     for msg in st.session_state.messages:
