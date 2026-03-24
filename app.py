@@ -47,7 +47,7 @@ _repo_root = Path(__file__).resolve().parent
 sys.path.insert(0, str(_repo_root / "vendor" / "KohakuRAG" / "src"))
 sys.path.insert(0, str(_repo_root / "scripts"))
 
-from kohakurag import RAGPipeline
+from kohakurag import RAGPipeline, LLMQueryPlanner, SimpleQueryPlanner
 from kohakurag.datastore import KVaultNodeStore, ImageStore
 from kohakurag.semantic_scholar import SemanticScholarRetriever
 
@@ -76,7 +76,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 RAG_MODE = os.environ.get("RAG_MODE", "local")  # "local" or "remote"
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
-VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "512"))
+VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "1024"))
 VLLM_TEMPERATURE = float(os.environ.get("VLLM_TEMPERATURE", "0.2"))
 EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhost:8080")
 RERANKER_SERVICE_URL = os.environ.get("RERANKER_SERVICE_URL", "")
@@ -457,8 +457,10 @@ def _apply_retrieval_enhancements(
     cross_encoder_model: str = "BAAI/bge-reranker-v2-m3",
     enable_semantic_scholar: bool = False,
     s2_top_k: int = 5,
+    enable_query_planner: bool = False,
+    planner_max_queries: int = 3,
 ) -> None:
-    """Configure cross-encoder reranker and Semantic Scholar on an existing pipeline."""
+    """Configure cross-encoder reranker, Semantic Scholar, and query planner on an existing pipeline."""
     # Cross-encoder reranker — use remote service if URL is set, else local
     if enable_cross_encoder:
         if RERANKER_SERVICE_URL and REMOTE_AVAILABLE:
@@ -478,6 +480,19 @@ def _apply_retrieval_enhancements(
         pipeline._semantic_scholar_top_k = s2_top_k
     else:
         pipeline._semantic_scholar = None
+
+    # LLM query planner — expands a single question into diverse retrieval queries
+    if enable_query_planner:
+        pipeline._planner = LLMQueryPlanner(
+            chat_model=pipeline._chat,
+            max_queries=planner_max_queries,
+        )
+        # Enable dedup + reranking to handle multi-query overlap
+        pipeline._deduplicate = True
+        pipeline._rerank_strategy = pipeline._rerank_strategy or "combined"
+        _debug(f"LLM query planner enabled (max_queries={planner_max_queries})")
+    else:
+        pipeline._planner = SimpleQueryPlanner()
 
 
 @st.cache_resource(show_spinner="Loading model and vector store...")
@@ -984,19 +999,53 @@ def main():
 
             st.divider()
             st.subheader("Retrieval enhancements")
+
+            # Research mode auto-configures sensible defaults
+            _s2_default = True if research_mode else False
+            _s2_topk_default = 12 if research_mode else 5
+            _qp_default = True if research_mode else False
+
             enable_semantic_scholar = st.toggle(
-                "Semantic Scholar search", value=False,
+                "Semantic Scholar search", value=_s2_default,
                 help=(
                     "Supplement local retrieval with paper abstracts from the "
                     "Semantic Scholar API (~200M papers)."
                 ),
             )
-            s2_top_k = 5
+            s2_top_k = _s2_topk_default
             if enable_semantic_scholar:
                 s2_top_k = st.slider(
-                    "S2 papers to include", min_value=1, max_value=20, value=5,
+                    "S2 papers to include", min_value=1, max_value=20,
+                    value=_s2_topk_default,
                     help="Number of external paper abstracts to append to context.",
                 )
+                # Show API key status
+                _s2_key_set = bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY", ""))
+                if _s2_key_set:
+                    st.caption("S2 API key: **set** (100 req/s)")
+                else:
+                    st.caption(
+                        "S2 API key: **not set** (1 req/s, frequent 429s). "
+                        "Set `SEMANTIC_SCHOLAR_API_KEY` env var for better results."
+                    )
+
+            enable_query_planner = st.toggle(
+                "Query expansion", value=_qp_default,
+                help=(
+                    "Use the LLM to expand your question into 3 diverse search "
+                    "queries with different terminology. Improves retrieval recall "
+                    "at the cost of ~1-2s extra latency."
+                ),
+            )
+            planner_max_queries = 3
+            if enable_query_planner and not research_mode:
+                planner_max_queries = st.slider(
+                    "Expansion queries", min_value=2, max_value=5, value=3,
+                    help="Number of diverse queries to generate from your question.",
+                )
+            elif research_mode:
+                planner_max_queries = 4  # more diverse queries for research
+
             if RERANKER_SERVICE_URL:
                 enable_cross_encoder = st.toggle(
                     "Cross-encoder reranker", value=True,
@@ -1054,20 +1103,53 @@ def main():
 
             st.divider()
             st.subheader("Retrieval enhancements")
+
+            # Research mode auto-configures sensible defaults
+            _s2_default = True if research_mode else False
+            _s2_topk_default = 12 if research_mode else 5
+            _qp_default = True if research_mode else False
+
             enable_semantic_scholar = st.toggle(
-                "Semantic Scholar search", value=False,
+                "Semantic Scholar search", value=_s2_default,
                 help=(
                     "Supplement local retrieval with paper abstracts from the "
                     "Semantic Scholar API (~200M papers). Useful for questions "
                     "that go beyond the curated corpus."
                 ),
             )
-            s2_top_k = 5
+            s2_top_k = _s2_topk_default
             if enable_semantic_scholar:
                 s2_top_k = st.slider(
-                    "S2 papers to include", min_value=1, max_value=20, value=5,
+                    "S2 papers to include", min_value=1, max_value=20,
+                    value=_s2_topk_default,
                     help="Number of external paper abstracts to append to context.",
                 )
+                # Show API key status
+                _s2_key_set = bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY", ""))
+                if _s2_key_set:
+                    st.caption("S2 API key: **set** (100 req/s)")
+                else:
+                    st.caption(
+                        "S2 API key: **not set** (1 req/s, frequent 429s). "
+                        "Set `SEMANTIC_SCHOLAR_API_KEY` env var for better results."
+                    )
+
+            enable_query_planner = st.toggle(
+                "Query expansion", value=_qp_default,
+                help=(
+                    "Use the LLM to expand your question into 3 diverse search "
+                    "queries with different terminology. Improves retrieval recall "
+                    "at the cost of ~1-2s extra latency."
+                ),
+            )
+            planner_max_queries = 3
+            if enable_query_planner and not research_mode:
+                planner_max_queries = st.slider(
+                    "Expansion queries", min_value=2, max_value=5, value=3,
+                    help="Number of diverse queries to generate from your question.",
+                )
+            elif research_mode:
+                planner_max_queries = 4
 
             enable_cross_encoder = False
             cross_encoder_model = "BAAI/bge-reranker-v2-m3"
@@ -1149,6 +1231,8 @@ def main():
         cross_encoder_model=cross_encoder_model,
         enable_semantic_scholar=enable_semantic_scholar,
         s2_top_k=s2_top_k,
+        enable_query_planner=enable_query_planner,
+        planner_max_queries=planner_max_queries,
     )
 
     # ---- Load pipelines ----
@@ -1237,12 +1321,14 @@ def main():
 
         with st.chat_message("assistant"):
             t0 = time.time()
+            # Research mode uses more context for comprehensive answers
+            effective_top_k = max(top_k, 15) if research_mode else top_k
 
             if is_remote or mode == "Single model":
                 with st.spinner("Retrieving and generating..."):
                     try:
                         result = run_single_query(
-                            pipeline, question, top_k,
+                            pipeline, question, effective_top_k,
                             best_guess=best_guess, max_retries=max_retries,
                             with_images=with_images, top_k_images=top_k_images,
                             send_images_to_llm=send_images_to_llm,
@@ -1266,7 +1352,7 @@ def main():
                             f"Querying {len(selected_configs)} models in parallel..."
                         ):
                             model_results = run_ensemble_parallel_query(
-                                ensemble_pipelines, question, top_k,
+                                ensemble_pipelines, question, effective_top_k,
                                 best_guess=best_guess,
                                 max_retries=max_retries,
                                 with_images=with_images, top_k_images=top_k_images,
@@ -1280,7 +1366,7 @@ def main():
                         def _progress(i, total, name):
                             status.update(label=f"[{i+1}/{total}] Loading {name}...")
                         model_results = run_ensemble_sequential_query(
-                            selected_configs, precision, question, top_k,
+                            selected_configs, precision, question, effective_top_k,
                             progress_callback=_progress,
                             best_guess=best_guess,
                             max_retries=max_retries,

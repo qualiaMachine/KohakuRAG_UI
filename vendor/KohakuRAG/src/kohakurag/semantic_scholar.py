@@ -274,7 +274,13 @@ class SemanticScholarRetriever:
                 author_str += " et al."
             year_str = f" ({paper.year})" if paper.year else ""
 
-            text = f"{paper.title}\n{author_str}{year_str}\n\n{paper.abstract}"
+            # Structured format helps the LLM cite properly
+            text = (
+                f"Title: {paper.title}\n"
+                f"Authors: {author_str}{year_str}\n"
+                f"Citations: {paper.citation_count}\n\n"
+                f"{paper.abstract}"
+            )
 
             # Create a ref_id that the LLM can cite
             # Use first-author-surname + year pattern when possible
