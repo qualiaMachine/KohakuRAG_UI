@@ -1302,6 +1302,17 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
             "doc_id": n.metadata.get("document_id"),
         })
 
+    # Count S2 snippets for debug visibility
+    s2_snippet_count = sum(
+        1 for s in result.retrieval.snippets
+        if s.node_id.startswith("s2:")
+    )
+    total_snippet_count = len(result.retrieval.snippets)
+    if s2_snippet_count:
+        _debug(f"Retrieval: {total_snippet_count} snippets ({s2_snippet_count} from Semantic Scholar)")
+    else:
+        _debug(f"Retrieval: {total_snippet_count} snippets (no Semantic Scholar results)")
+
     details = {
         "timing": timing,
         "elapsed": elapsed,
@@ -1314,6 +1325,7 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
         ],
         "raw_response": result.raw_response,
         "image_nodes": image_details,
+        "s2_snippet_count": s2_snippet_count,
     }
     _render_details(details)
 

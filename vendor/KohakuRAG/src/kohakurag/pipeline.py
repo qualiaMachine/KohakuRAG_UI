@@ -653,8 +653,11 @@ class RAGPipeline:
         # Append Semantic Scholar results as additional context snippets
         s2_snippets: list[ContextSnippet] = []
         if self._semantic_scholar is not None:
+            # Include the original question as a query — planner sub-queries
+            # can be too specific for S2's keyword-based search.
+            s2_queries = [question] + [q for q in queries if q != question]
             s2_papers = await self._semantic_scholar.search_multi(
-                queries, top_k=self._semantic_scholar_top_k,
+                s2_queries, top_k=self._semantic_scholar_top_k,
             )
             if s2_papers:
                 # If cross-encoder is available, rerank S2 results too
