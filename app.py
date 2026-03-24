@@ -793,9 +793,19 @@ def main():
 
             st.divider()
             st.subheader("Retrieval enhancements")
-            # TODO: re-enable once Semantic Scholar API key is provisioned
-            enable_semantic_scholar = False
+            enable_semantic_scholar = st.toggle(
+                "Semantic Scholar search", value=False,
+                help=(
+                    "Supplement local retrieval with paper abstracts from the "
+                    "Semantic Scholar API (~200M papers)."
+                ),
+            )
             s2_top_k = 5
+            if enable_semantic_scholar:
+                s2_top_k = st.slider(
+                    "S2 papers to include", min_value=1, max_value=20, value=5,
+                    help="Number of external paper abstracts to append to context.",
+                )
             enable_cross_encoder = False
             cross_encoder_model = "BAAI/bge-reranker-v2-m3"
 
@@ -840,9 +850,20 @@ def main():
 
             st.divider()
             st.subheader("Retrieval enhancements")
-            # TODO: re-enable once Semantic Scholar API key is provisioned
-            enable_semantic_scholar = False
+            enable_semantic_scholar = st.toggle(
+                "Semantic Scholar search", value=False,
+                help=(
+                    "Supplement local retrieval with paper abstracts from the "
+                    "Semantic Scholar API (~200M papers). Useful for questions "
+                    "that go beyond the curated corpus."
+                ),
+            )
             s2_top_k = 5
+            if enable_semantic_scholar:
+                s2_top_k = st.slider(
+                    "S2 papers to include", min_value=1, max_value=20, value=5,
+                    help="Number of external paper abstracts to append to context.",
+                )
 
             enable_cross_encoder = False
             cross_encoder_model = "BAAI/bge-reranker-v2-m3"

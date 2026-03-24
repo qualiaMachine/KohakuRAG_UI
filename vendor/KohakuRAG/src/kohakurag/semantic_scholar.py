@@ -178,10 +178,16 @@ class SemanticScholarRetriever:
         *,
         top_k: int | None = None,
     ) -> list[S2Paper]:
-        """Run multiple queries concurrently and deduplicate results by paper_id."""
+        """Run queries sequentially (1 req/s rate limit) and deduplicate by paper_id."""
         print(f"[S2] Searching {len(queries)} queries (top_k={top_k})...", flush=True)
-        tasks = [self.search_papers(q, top_k=top_k) for q in queries]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results: list[list[S2Paper] | BaseException] = []
+        for i, q in enumerate(queries):
+            if i > 0:
+                await asyncio.sleep(1.0)  # respect 1 req/s rate limit
+            try:
+                results.append(await self.search_papers(q, top_k=top_k))
+            except Exception as exc:
+                results.append(exc)
 
         seen_ids: set[str] = set()
         papers: list[S2Paper] = []
