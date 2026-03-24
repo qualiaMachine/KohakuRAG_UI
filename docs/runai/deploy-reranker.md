@@ -36,6 +36,7 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 |-------|-------|
 | **Protocol** | HTTP |
 | **Container port** | `8082` |
+| **Access** | External (Public access) |
 
 ## Runtime settings
 
@@ -48,55 +49,12 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 **Arguments** (copy-paste this entire block):
 
 ```
--c "pip install uv && uv pip install --system fastapi uvicorn sentence-transformers && python3 /tmp/server.py"
+-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn sentence-transformers && python3 scripts/reranker_server.py"
 ```
 
-But first, the command needs to write the server script. Use this full
-arguments string instead:
-
-```
--c "pip install uv && uv pip install --system fastapi uvicorn sentence-transformers && cat > /tmp/server.py << 'PYEOF'
-import os, time
-from sentence_transformers import CrossEncoder
-from fastapi import FastAPI
-from pydantic import BaseModel
-import uvicorn
-
-MODEL = os.environ.get('RERANKER_MODEL', 'BAAI/bge-reranker-v2-m3')
-app = FastAPI()
-model = None
-
-class RerankRequest(BaseModel):
-    query: str
-    texts: list[str]
-
-@app.on_event('startup')
-async def startup():
-    global model
-    print(f'[reranker] Loading {MODEL}...', flush=True)
-    t0 = time.time()
-    model = CrossEncoder(MODEL)
-    print(f'[reranker] Loaded in {time.time()-t0:.1f}s', flush=True)
-
-@app.get('/health')
-async def health():
-    return {'status': 'ok' if model else 'loading'}
-
-@app.post('/rerank')
-async def rerank(r: RerankRequest):
-    t0 = time.time()
-    scores = model.predict([(r.query, t) for t in r.texts], show_progress_bar=False)
-    return {'scores': [float(s) for s in scores], 'count': len(r.texts), 'elapsed_ms': round((time.time()-t0)*1000, 2)}
-
-uvicorn.run(app, host='0.0.0.0', port=8082)
-PYEOF
-python3 /tmp/server.py"
-```
-
-> **No repo download needed.** Unlike the embedding server, the reranker
-> is simple enough to inline via a heredoc. Same pattern as vLLM — just
-> pick the container, set the model via env var, done. No git clone, no
-> tarball, no KohakuRAG dependency.
+> **Same pattern as the embedding server.** Downloads the repo tarball,
+> installs dependencies, and runs `scripts/reranker_server.py` which
+> includes the writable HF cache overlay for read-only PVC mounts.
 
 **Environment variables:**
 
@@ -118,7 +76,7 @@ python3 /tmp/server.py"
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `1` |
-| **GPU fractioning** | Enabled — set to `25%` of device (reranker models are small, ~0.5–1.3 GB VRAM) |
+| **GPU fractioning** | Enabled — set to `10%` of device (reranker models are small, ~0.5 GB VRAM) |
 | **CPU request** | *(leave default)* |
 | **CPU memory request** | *(leave default)* |
 | **Replica autoscaling** | Min `1`, Max `1` (no autoscaling) |
@@ -246,7 +204,7 @@ without Semantic Scholar search enabled:
 runai submit wattbot-reranker \
   --type inference \
   --image vllm/vllm-openai:latest \
-  --gpu 0.25 \
+  --gpu 0.10 \
   --cpu 2 \
   --memory 4Gi \
   --pvc shared-models:/models \
@@ -254,36 +212,13 @@ runai submit wattbot-reranker \
   --env RERANKER_MODEL=BAAI/bge-reranker-v2-m3 \
   --port 8082 \
   --command -- /bin/bash -c \
-    'pip install uv && uv pip install --system fastapi uvicorn sentence-transformers && cat > /tmp/server.py << "PYEOF"
-import os, time
-from sentence_transformers import CrossEncoder
-from fastapi import FastAPI
-from pydantic import BaseModel
-import uvicorn
-MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
-app = FastAPI()
-model = None
-class RerankRequest(BaseModel):
-    query: str
-    texts: list[str]
-@app.on_event("startup")
-async def startup():
-    global model
-    print(f"[reranker] Loading {MODEL}...", flush=True)
-    t0 = time.time()
-    model = CrossEncoder(MODEL)
-    print(f"[reranker] Loaded in {time.time()-t0:.1f}s", flush=True)
-@app.get("/health")
-async def health():
-    return {"status": "ok" if model else "loading"}
-@app.post("/rerank")
-async def rerank(r: RerankRequest):
-    t0 = time.time()
-    scores = model.predict([(r.query, t) for t in r.texts], show_progress_bar=False)
-    return {"scores": [float(s) for s in scores], "count": len(r.texts), "elapsed_ms": round((time.time()-t0)*1000, 2)}
-uvicorn.run(app, host="0.0.0.0", port=8082)
-PYEOF
-python3 /tmp/server.py'
+    'pip install uv && \
+     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz \
+       | tar xz -C /tmp && \
+     mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && \
+     cd /tmp/KohakuRAG_UI && \
+     uv pip install --system fastapi uvicorn sentence-transformers && \
+     python3 scripts/reranker_server.py'
 ```
 
 ## Updated architecture
@@ -298,7 +233,7 @@ python3 /tmp/server.py'
   ┌──────┐ ┌──────┐ ┌──────────┐
   │ vLLM │ │Embed │ │ Reranker │
   │ 8000 │ │ 8080 │ │   8082   │
-  │GPU 1 │ │GPU½  │ │  GPU¼    │
+  │GPU80%│ │GPU10%│ │  GPU 10% │
   └──────┘ └──────┘ └──────────┘
-     Total: 1.75 GPUs
+     Total: 1.00 GPU
 ```
