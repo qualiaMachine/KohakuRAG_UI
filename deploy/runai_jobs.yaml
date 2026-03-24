@@ -163,8 +163,11 @@
 # ---------------------------------------------------------------------------
 # Job 3: Reranker Server (Inference workload, optional)
 # ---------------------------------------------------------------------------
-# Serves cross-encoder reranking via FastAPI. Same image as embedding server.
+# Serves cross-encoder reranking via FastAPI. Same image as other services.
 # Small GPU footprint — BGE reranker uses ~0.5 GB VRAM.
+#
+# NO repo download needed — the server script is written inline via heredoc.
+# Same idea as vLLM: pick container, set model via env var, done.
 #
 # The system works without this job. When RERANKER_SERVICE_URL is not set,
 # the Streamlit app simply skips cross-encoder reranking.
@@ -175,10 +178,10 @@
 # RunAI UI settings:
 #   Inference type:  Custom
 #   Name:            wattbot-reranker
-#   Image:           vllm/vllm-openai:latest (same image as other services)
+#   Image:           vllm/vllm-openai:latest
 #   Container port:  8082
 #   Command:         bash
-#   Arguments:       -c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/master.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-master /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate && python3 scripts/reranker_server.py"
+#   Arguments:       (see deploy-reranker.md for the full heredoc arguments string)
 #   Env:             HF_HOME=/models/.cache/huggingface
 #                    RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 #   GPU:             0.25 (fractional)
@@ -186,26 +189,8 @@
 #   Memory:          4Gi
 #   Data volume:     shared-models -> /models
 #
-# CLI equivalent:
-#   runai submit wattbot-reranker \
-#     --type inference \
-#     --image vllm/vllm-openai:latest \
-#     --gpu 0.25 \
-#     --cpu 2 \
-#     --memory 4Gi \
-#     --pvc shared-models:/models \
-#     --env HF_HOME=/models/.cache/huggingface \
-#     --env RERANKER_MODEL=BAAI/bge-reranker-v2-m3 \
-#     --port 8082 \
-#     --command -- /bin/bash -c \
-#       "pip install uv && \
-#        curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/master.tar.gz \
-#          | tar xz -C /tmp && \
-#        mv /tmp/KohakuRAG_UI-master /tmp/KohakuRAG_UI && \
-#        cd /tmp/KohakuRAG_UI && \
-#        uv pip install --system fastapi uvicorn httpx numpy \
-#          sentence-transformers 'transformers>=4.42,<5' accelerate && \
-#        python3 scripts/reranker_server.py"
+# See docs/runai/deploy-reranker.md for full CLI equivalent and copy-paste
+# arguments string.
 #
 # Model options (set RERANKER_MODEL env var):
 #   - BAAI/bge-reranker-v2-m3        (small, fast, ~0.5 GB)
