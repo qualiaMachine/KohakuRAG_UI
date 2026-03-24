@@ -66,8 +66,8 @@ is required.
 |-------|-------|
 | **GPU devices** | `1` (full GPU) |
 | **GPU fractioning** | *(leave disabled — using full device)* |
-| **CPU request** | `4` cores |
-| **CPU memory request** | `16 GB` |
+| **CPU request** | *(leave default)* |
+| **CPU memory request** | *(leave default)* |
 | **Replica autoscaling** | Min `1`, Max `1` (no autoscaling) |
 
 ## Data & storage

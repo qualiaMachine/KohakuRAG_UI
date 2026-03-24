@@ -109,8 +109,8 @@ tarball and installs dependencies at startup.
 |-------|-------|
 | **GPU devices** | `1` |
 | **GPU fractioning** | Enabled — set to `50%` of device (Jina V4 needs ~3 GB VRAM). The UI will show "0.33–0.66 GPUs" as the allocated range. |
-| **CPU request** | `2` cores |
-| **CPU memory request** | `8 GB` |
+| **CPU request** | *(leave default)* |
+| **CPU memory request** | *(leave default)* |
 | **Replica autoscaling** | Min `1`, Max `1` (no autoscaling) |
 
 ## Data & storage

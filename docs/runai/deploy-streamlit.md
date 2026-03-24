@@ -96,8 +96,8 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `0` (no GPU — Streamlit is CPU-only) |
-| **CPU request** | `1` core |
-| **CPU memory request** | `2 GB` |
+| **CPU request** | *(leave default)* |
+| **CPU memory request** | *(leave default)* |
 
 ## Data & storage
 
