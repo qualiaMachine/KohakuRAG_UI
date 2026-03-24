@@ -11,10 +11,10 @@
 #   ┌──────┐ ┌──────┐ ┌──────────┐
 #   │ vLLM │ │Embed │ │ Reranker │
 #   │ 8000 │ │ 8080 │ │   8082   │
-#   │GPU 1 │ │GPU½  │ │  GPU¼    │
+#   │GPU 1 │ │GPU½  │ │ GPU 10%  │
 #   └──────┘ └──────┘ └──────────┘
 #
-# All 4 services on 1.75 GPUs (fractional allocation).
+# All 4 services on 1.60 GPUs (fractional allocation).
 # vLLM gets a full GPU since LLM inference is the bottleneck.
 # Reranker is optional — system works without it.
 #
@@ -181,10 +181,10 @@
 #   Image:           vllm/vllm-openai:latest
 #   Container port:  8082
 #   Command:         bash
-#   Arguments:       (see deploy-reranker.md for the full heredoc arguments string)
+#   Arguments:       -c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn sentence-transformers && python3 scripts/reranker_server.py"
 #   Env:             HF_HOME=/models/.cache/huggingface
 #                    RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-#   GPU:             0.25 (fractional)
+#   GPU:             0.10 (fractional)
 #   CPU:             2
 #   Memory:          4Gi
 #   Data volume:     shared-models -> /models
