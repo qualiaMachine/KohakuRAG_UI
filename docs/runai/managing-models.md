@@ -36,34 +36,43 @@ GPUs natively, and on Ampere GPUs via FP8 Marlin (vLLM v0.9.0+).
 
 The admin's PVC (`shared-model-repository`) lives in the **`shared-models`**
 project. If you have access to that project, you can write to it directly
-using the pre-built **`update-shared-models1`** workspace:
+using the pre-built **`update-shared-models`** workspace:
 
 1. In the RunAI UI, go to **Workloads**
 2. Switch to the **`shared-models`** project
-3. Find **`update-shared-models1`** and **Start** it
+3. Find **`update-shared-models`** and **Start** it
 4. Once running, **Connect** > open a terminal
-5. Upload `scripts/provision_shared_models.py` to `/home/jovyan/work/`
-   (via JupyterLab's file browser)
-6. Run commands:
+5. Run the provisioning script directly from the PVC:
 
 ```bash
 # List models and confirm PVC is writable
-python /home/jovyan/work/provision_shared_models.py list
+python /models/provision_shared_models.py list
 
 # Download a new model
-python /home/jovyan/work/provision_shared_models.py download <org>/<model-name>
-# e.g. python /home/jovyan/work/provision_shared_models.py download Qwen/Qwen2.5-14B-Instruct
+python /models/provision_shared_models.py download <org>/<model-name>
+# e.g. python /models/provision_shared_models.py download Qwen/Qwen2.5-14B-Instruct
+
+# Download OpenScholar 8B (Llama 3.1 8B fine-tuned for scientific synthesis)
+python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
 
 # Download specific files (e.g. Jina V4 adapters)
-python /home/jovyan/work/provision_shared_models.py download jinaai/jina-embeddings-v4 --include "adapters/*"
+python /models/provision_shared_models.py download jinaai/jina-embeddings-v4 --include "adapters/*"
 
 # Verify a model has all required files
-python /home/jovyan/work/provision_shared_models.py verify jinaai/jina-embeddings-v4
+python /models/provision_shared_models.py verify jinaai/jina-embeddings-v4
 ```
 
-7. **Stop** the workspace when done to free resources
+6. **Stop** the workspace when done to free resources
 
-> **Important:** The `update-shared-models1` workspace uses `local-path`
+> **Tip:** The provisioning script lives on the PVC at
+> `/models/provision_shared_models.py` so it persists across workspace
+> restarts — no need to re-upload it each time. To update the script,
+> copy the latest version from the repo:
+> ```bash
+> cp scripts/provision_shared_models.py /models/provision_shared_models.py
+> ```
+
+> **Important:** The `update-shared-models` workspace uses `local-path`
 > (RWO) storage, so **only one workspace can mount the PVC read-write at
 > a time**. Make sure no other workspace in `shared-models` is running
 > with the same PVC before starting.
@@ -78,7 +87,7 @@ If you created your own PVC (via [Setup Shared Models](setup-shared-models.md)),
 re-start your provisioning Workspace and use the same script:
 
 ```bash
-python /home/jovyan/work/provision_shared_models.py download <org>/<model-name>
+python /models/provision_shared_models.py download <org>/<model-name>
 ```
 
 ## Swapping the LLM (e.g., Qwen 7B → Llama 3 8B)
@@ -115,6 +124,7 @@ Based on `ls /models/.cache/huggingface/`:
 | `Qwen/Qwen3-Next-80B-A3B-Instruct` | ~152 GB | MoE (active ~3B) |
 | `Qwen/Qwen3-Next-80B-A3B-Thinking-FP8` | ~76 GB | MoE FP8 |
 | `Qwen/Qwen3.5-35B-A3B` | ~67 GB | MoE (active ~3B) |
+| `OpenSciLM/Llama-3.1_OpenScholar-8B` | ~16 GB | Llama 3.1 8B fine-tuned for scientific synthesis |
 | `jinaai/jina-embeddings-v4` | ~7 GB | Used by embedding server. Includes `adapters/` |
 
 ---

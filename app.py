@@ -14,9 +14,11 @@ Launch (local):
 Launch (remote — vLLM + embedding server):
     RAG_MODE=remote \\
     VLLM_BASE_URL=http://wattbot-vllm:8000/v1 \\
-    VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct \\
     EMBEDDING_SERVICE_URL=http://wattbot-embedding:8080 \\
     streamlit run app.py
+
+    The served model name is auto-detected via GET /v1/models.
+    Set VLLM_MODEL as a fallback if the vLLM server is unreachable at startup.
 """
 from __future__ import annotations
 
@@ -74,10 +76,29 @@ except ImportError:
 # ---------------------------------------------------------------------------
 RAG_MODE = os.environ.get("RAG_MODE", "local")  # "local" or "remote"
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
-VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "512"))
 VLLM_TEMPERATURE = float(os.environ.get("VLLM_TEMPERATURE", "0.2"))
 EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhost:8080")
+
+
+def _detect_vllm_model(base_url: str) -> str:
+    """Query the vLLM /v1/models endpoint to discover the served model.
+
+    Falls back to VLLM_MODEL env var (then a hardcoded default) if the
+    server is unreachable.
+    """
+    fallback = os.environ.get("VLLM_MODEL", "unknown")
+    try:
+        import httpx
+        resp = httpx.get(f"{base_url}/models", timeout=5)
+        resp.raise_for_status()
+        models = resp.json().get("data", [])
+        if models:
+            return models[0]["id"]
+    except Exception:
+        pass
+    return fallback
+
 
 # ---------------------------------------------------------------------------
 # Prompts (shared with run_experiment.py)
@@ -754,11 +775,12 @@ def main():
         ensemble_strategy = None
         selected_configs = []  # not used in remote mode
         gpu_info = {"gpu_count": 0, "gpus": [], "total_free_gb": 0}
+        vllm_model = _detect_vllm_model(VLLM_BASE_URL)
 
         with st.sidebar:
             st.header("Settings")
             st.caption(f"**Remote mode** — vLLM + embedding server")
-            st.caption(f"LLM: `{VLLM_MODEL}`")
+            st.caption(f"LLM: `{vllm_model}`")
             st.caption(f"vLLM: `{VLLM_BASE_URL}`")
             st.caption(f"Embeddings: `{EMBEDDING_SERVICE_URL}`")
 
@@ -925,7 +947,7 @@ def main():
     try:
         if is_remote:
             pipeline = init_remote_pipeline(
-                VLLM_BASE_URL, VLLM_MODEL, EMBEDDING_SERVICE_URL,
+                VLLM_BASE_URL, vllm_model, EMBEDDING_SERVICE_URL,
                 max_tokens=VLLM_MAX_TOKENS, temperature=VLLM_TEMPERATURE,
             )
             _apply_retrieval_enhancements(pipeline, **_enhancement_kwargs)
