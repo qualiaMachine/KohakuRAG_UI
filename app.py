@@ -47,7 +47,6 @@ sys.path.insert(0, str(_repo_root / "scripts"))
 
 from kohakurag import RAGPipeline
 from kohakurag.datastore import KVaultNodeStore, ImageStore
-from kohakurag.pipeline import LLMQueryPlanner, SimpleQueryPlanner
 from kohakurag.semantic_scholar import SemanticScholarRetriever
 
 # Cross-encoder reranker — requires sentence-transformers (optional)
@@ -377,20 +376,6 @@ def _unload_chat_model(chat_model: HuggingFaceLocalChatModel) -> None:
         torch.cuda.empty_cache()
 
 
-def _apply_planner(
-    pipeline: RAGPipeline, use_planner: bool, planner_queries: int,
-) -> None:
-    """Configure the query planner on an already-built pipeline.
-
-    Swaps the lightweight planner object without reloading model weights.
-    """
-    if use_planner:
-        pipeline._planner = LLMQueryPlanner(
-            pipeline._chat, max_queries=planner_queries,
-        )
-    else:
-        pipeline._planner = SimpleQueryPlanner()
-
 
 @st.cache_resource(show_spinner="Loading cross-encoder reranker...")
 def _load_cross_encoder(model_name: str) -> CrossEncoderReranker:
@@ -622,8 +607,6 @@ def run_ensemble_sequential_query(
     progress_callback=None,
     best_guess: bool = False,
     max_retries: int = 0,
-    use_planner: bool = False,
-    planner_queries: int = 3,
     with_images: bool = False,
     top_k_images: int = 0,
     send_images_to_llm: bool = False,
@@ -643,7 +626,6 @@ def run_ensemble_sequential_query(
             store=store, embedder=embedder, chat_model=chat_model, planner=None,
             image_store=image_store,
         )
-        _apply_planner(pipeline, use_planner, planner_queries)
         if enhancement_kwargs:
             _apply_retrieval_enhancements(pipeline, **enhancement_kwargs)
 
@@ -786,20 +768,6 @@ def main():
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
 
             st.divider()
-            st.subheader("Query planner & retries")
-            use_planner = st.toggle(
-                "Enable query planner", value=False,
-                help=(
-                    "Expands each question into multiple diverse search queries "
-                    "via the LLM for better retrieval coverage."
-                ),
-            )
-            planner_queries = 3
-            if use_planner:
-                planner_queries = st.slider(
-                    "Planner queries", min_value=2, max_value=10, value=3,
-                    help="Number of diverse search queries the LLM generates per question.",
-                )
             max_retries = st.number_input(
                 "Max retries", min_value=0, max_value=10, value=2,
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
@@ -857,28 +825,9 @@ def main():
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
 
             st.divider()
-            st.subheader("Query planner & retries")
-            use_planner = st.toggle(
-                "Enable query planner", value=False,
-                help=(
-                    "Expands each question into multiple diverse search queries "
-                    "via the LLM for better retrieval coverage."
-                ),
-            )
-            planner_queries = 3
-            if use_planner:
-                planner_queries = st.slider(
-                    "Planner queries", min_value=2, max_value=10, value=3,
-                    help="Number of diverse search queries the LLM generates per question.",
-                )
             max_retries = st.number_input(
                 "Max retries", min_value=0, max_value=10, value=2,
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
-            )
-            st.caption(
-                "Tip: Disabling the query planner skips an extra LLM inference "
-                "call, and lowering retries caps worst-case wait time. Both "
-                "reduce end-to-end latency per question."
             )
 
             st.divider()
@@ -1005,11 +954,9 @@ def main():
                 VLLM_BASE_URL, VLLM_MODEL, EMBEDDING_SERVICE_URL,
                 max_tokens=VLLM_MAX_TOKENS, temperature=VLLM_TEMPERATURE,
             )
-            _apply_planner(pipeline, use_planner, planner_queries)
             _apply_retrieval_enhancements(pipeline, **_enhancement_kwargs)
         elif mode == "Single model":
             pipeline = init_single_pipeline(selected_configs[0], precision)
-            _apply_planner(pipeline, use_planner, planner_queries)
             _apply_retrieval_enhancements(pipeline, **_enhancement_kwargs)
         elif mode == "Ensemble":
             plan = plan_ensemble(selected_configs, precision, gpu_info)
@@ -1021,9 +968,7 @@ def main():
                     tuple(selected_configs), precision,
                 )
                 for _p in ensemble_pipelines.values():
-                    _apply_planner(_p, use_planner, planner_queries)
                     _apply_retrieval_enhancements(_p, **_enhancement_kwargs)
-            # sequential doesn't pre-load models (planner set inside query fn)
     except Exception as e:
         st.error(f"Failed to load pipeline: {e}")
         tb = traceback.format_exc()
@@ -1133,8 +1078,6 @@ def main():
                             progress_callback=_progress,
                             best_guess=best_guess,
                             max_retries=max_retries,
-                            use_planner=use_planner,
-                            planner_queries=planner_queries,
                             with_images=with_images, top_k_images=top_k_images,
                             send_images_to_llm=send_images_to_llm,
                             enhancement_kwargs=_enhancement_kwargs,
