@@ -10,7 +10,7 @@ Usage:
 from kohakuengine import Config
 
 # Database settings
-db = "artifacts/wattbot_jinav4.db"
+db = "../../data/embeddings/wattbot_jinav4.db"
 table_prefix = "wattbot_jv4"
 image_table = None  # Auto: {prefix}_images_vec
 

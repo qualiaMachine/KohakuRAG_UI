@@ -730,7 +730,7 @@ class RAGPipeline:
                         child_node = await self._store.get_node(child_id)
 
                         # Check if this is an image node
-                        if child_node.metadata.get("attachment_type") == "image":
+                        if child_node.metadata.get("attachment_type") in ("image", "page_image"):
                             image_nodes.append(child_node)
 
                     except KeyError:
