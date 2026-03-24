@@ -805,23 +805,10 @@ def main():
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
             )
 
-            st.divider()
-            st.subheader("Image retrieval")
-            with_images = st.toggle(
-                "Enable image retrieval", value=False,
-                help="Extract figures/charts from retrieved PDF sections for visual reasoning.",
-            )
+            # Image retrieval sidebar hidden while debugging
+            with_images = False
             top_k_images = 0
             send_images_to_llm = False
-            if with_images:
-                top_k_images = st.slider(
-                    "Image search results", min_value=0, max_value=10, value=3,
-                    help="Additional images from the dedicated image index (0 = only from text sections).",
-                )
-                send_images_to_llm = st.toggle(
-                    "Send images to LLM", value=False,
-                    help="Send actual image data to a vision-capable LLM (vs. captions only).",
-                )
 
             st.divider()
             st.subheader("Retrieval enhancements")
@@ -881,23 +868,10 @@ def main():
                 "reduce end-to-end latency per question."
             )
 
-            st.divider()
-            st.subheader("Image retrieval")
-            with_images = st.toggle(
-                "Enable image retrieval", value=False,
-                help="Extract figures/charts from retrieved PDF sections for visual reasoning.",
-            )
+            # Image retrieval sidebar hidden while debugging
+            with_images = False
             top_k_images = 0
             send_images_to_llm = False
-            if with_images:
-                top_k_images = st.slider(
-                    "Image search results", min_value=0, max_value=10, value=3,
-                    help="Additional images from the dedicated image index (0 = only from text sections).",
-                )
-                send_images_to_llm = st.toggle(
-                    "Send images to LLM", value=False,
-                    help="Send actual image data to a vision-capable LLM (vs. captions only).",
-                )
 
             st.divider()
             st.subheader("Retrieval enhancements")
@@ -1345,19 +1319,11 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
                 links.append(label)
         st.markdown("Sources: " + " · ".join(links))
 
-    # Display retrieved figures from PDF images
-    image_store = getattr(pipeline, "_image_store", None) if pipeline else None
-    _display_retrieved_images(result.retrieval.image_nodes, image_store)
+    # Image display disabled while debugging
+    # image_store = getattr(pipeline, "_image_store", None) if pipeline else None
+    # _display_retrieved_images(result.retrieval.image_nodes, image_store)
 
-    # Serialize image metadata for history replay
     image_details = []
-    for n in (result.retrieval.image_nodes or []):
-        image_details.append({
-            "storage_key": n.metadata.get("image_storage_key"),
-            "caption": n.text,
-            "page": n.metadata.get("page"),
-            "doc_id": n.metadata.get("document_id"),
-        })
 
     details = {
         "timing": timing,
@@ -1452,9 +1418,9 @@ def _display_ensemble_result(
                 st.text(s.text[:500] + ("..." if len(s.text) > 500 else ""))
                 st.divider()
 
-    # Display retrieved figures (shared across ensemble models)
-    image_nodes = first_result.retrieval.image_nodes
-    _display_retrieved_images(image_nodes)
+    # Image display disabled while debugging
+    # image_nodes = first_result.retrieval.image_nodes
+    # _display_retrieved_images(image_nodes)
 
     # Raw responses per model
     with st.expander("Raw LLM responses"):
@@ -1462,15 +1428,7 @@ def _display_ensemble_result(
             st.markdown(f"**{name}**")
             st.code(info["raw_response"], language="json")
 
-    # Serialize image metadata for history replay
     image_details = []
-    for n in (image_nodes or []):
-        image_details.append({
-            "storage_key": n.metadata.get("image_storage_key"),
-            "caption": n.text,
-            "page": n.metadata.get("page"),
-            "doc_id": n.metadata.get("document_id"),
-        })
 
     details = {
         "elapsed": elapsed,
@@ -1510,10 +1468,10 @@ def _render_details(details: dict):
             cols[0].metric("Models", len(details.get("models", [])))
             cols[1].metric("Aggregation", details.get("strategy", ""))
             cols[2].metric("Total", f"{details.get('elapsed', 0):.1f}s")
-        # Show images in ensemble history replay too
-        image_details = details.get("image_nodes", [])
-        if image_details:
-            _display_retrieved_images(image_details)
+        # Image display disabled while debugging
+        # image_details = details.get("image_nodes", [])
+        # if image_details:
+        #     _display_retrieved_images(image_details)
         return
 
     timing = details.get("timing", {})
@@ -1552,10 +1510,10 @@ def _render_details(details: dict):
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
                 st.divider()
 
-    # Replay retrieved images from history (serialized dicts)
-    image_details = details.get("image_nodes", [])
-    if image_details:
-        _display_retrieved_images(image_details)
+    # Image display disabled while debugging
+    # image_details = details.get("image_nodes", [])
+    # if image_details:
+    #     _display_retrieved_images(image_details)
 
     raw = details.get("raw_response", "")
     if raw:
