@@ -155,8 +155,8 @@ In the RunAI UI:
 | **Name** | `model-provisioner` |
 | **Image** | `nvcr.io/nvidia/pytorch:25.02-py3` |
 | **GPU** | `0` (no GPU needed) |
-| **CPU** | `2` cores |
-| **Memory** | `8 GB` |
+| **CPU** | *(leave default)* |
+| **Memory** | *(leave default)* |
 
 3. Under **Data & Storage**, attach:
 

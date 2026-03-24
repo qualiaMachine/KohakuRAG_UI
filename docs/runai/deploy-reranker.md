@@ -119,8 +119,8 @@ python3 /tmp/server.py"
 |-------|-------|
 | **GPU devices** | `1` |
 | **GPU fractioning** | Enabled — set to `25%` of device (reranker models are small, ~0.5–1.3 GB VRAM) |
-| **CPU request** | `2` cores |
-| **CPU memory request** | `4 GB` |
+| **CPU request** | *(leave default)* |
+| **CPU memory request** | *(leave default)* |
 | **Replica autoscaling** | Min `1`, Max `1` (no autoscaling) |
 
 ## Data & storage
