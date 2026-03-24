@@ -992,31 +992,10 @@ def main():
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
             )
 
-            with_images = st.toggle(
-                "Image retrieval", value=False,
-                help=(
-                    "Extract figures and charts from retrieved PDF sections. "
-                    "Shows relevant images alongside text answers."
-                ),
-            )
-            top_k_images = 0
-            send_images_to_llm = False
-            if with_images:
-                top_k_images = st.slider(
-                    "Additional image results", min_value=0, max_value=10, value=3,
-                    help=(
-                        "Images to retrieve from dedicated image index "
-                        "(on top of images found in text sections). "
-                        "Requires the image index to be built."
-                    ),
-                )
-                send_images_to_llm = st.toggle(
-                    "Send images to LLM", value=False,
-                    help=(
-                        "Send retrieved images directly to a vision-capable LLM. "
-                        "Requires a multimodal model (e.g. Qwen-VL)."
-                    ),
-                )
+            # Images are always retrieved from PDF page renders
+            with_images = True
+            top_k_images = 3  # Additional images from dedicated image index
+            send_images_to_llm = False  # Enable when using a vision-capable LLM
 
             st.divider()
             st.subheader("Retrieval enhancements")
@@ -1117,31 +1096,10 @@ def main():
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
             )
 
-            with_images = st.toggle(
-                "Image retrieval", value=False,
-                help=(
-                    "Extract figures and charts from retrieved PDF sections. "
-                    "Shows relevant images alongside text answers."
-                ),
-            )
-            top_k_images = 0
-            send_images_to_llm = False
-            if with_images:
-                top_k_images = st.slider(
-                    "Additional image results", min_value=0, max_value=10, value=3,
-                    help=(
-                        "Images to retrieve from dedicated image index "
-                        "(on top of images found in text sections). "
-                        "Requires the image index to be built."
-                    ),
-                )
-                send_images_to_llm = st.toggle(
-                    "Send images to LLM", value=False,
-                    help=(
-                        "Send retrieved images directly to a vision-capable LLM. "
-                        "Requires a multimodal model (e.g. Qwen-VL)."
-                    ),
-                )
+            # Images are always retrieved from PDF page renders
+            with_images = True
+            top_k_images = 3  # Additional images from dedicated image index
+            send_images_to_llm = False  # Enable when using a vision-capable LLM
 
             st.divider()
             st.subheader("Retrieval enhancements")

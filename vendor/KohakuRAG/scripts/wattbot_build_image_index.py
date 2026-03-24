@@ -94,8 +94,9 @@ async def main() -> None:
 
             node = await store.get_node(node_id)
 
-            # Check if this is an image caption node
-            if node.metadata.get("attachment_type") == "image":
+            # Check if this is an image node (embedded or page render)
+            att_type = node.metadata.get("attachment_type", "")
+            if att_type in ("image", "page_image"):
                 image_nodes.append(node)
 
         except Exception:
