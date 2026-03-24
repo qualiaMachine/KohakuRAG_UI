@@ -416,12 +416,17 @@ def init_remote_pipeline(
     embedder = RemoteEmbeddingModel(base_url=embedding_url)
 
     # Vector store is local (lightweight SQLite reads, no GPU needed).
-    # Read db path and table_prefix from config (same source as local mode)
-    # so the symlink to wattbot-data PVC is respected.
+    # VECTOR_DB_PATH env var overrides the config-derived path so the
+    # Streamlit pod can point directly at the PPVC without symlinks.
     ref_config = load_config(next(CONFIGS_DIR.glob("hf_*.py")))
-    db_raw = ref_config.get("db", "data/embeddings/wattbot_jinav4.db")
-    db_path = _repo_root / db_raw.removeprefix("../").removeprefix("../")
     table_prefix = ref_config.get("table_prefix", "wattbot_jv4")
+
+    db_env = os.environ.get("VECTOR_DB_PATH")
+    if db_env:
+        db_path = Path(db_env)
+    else:
+        db_raw = ref_config.get("db", "data/embeddings/wattbot_jinav4.db")
+        db_path = _repo_root / db_raw.removeprefix("../").removeprefix("../")
     embedding_dim = embedder.dimension
 
     _debug(
