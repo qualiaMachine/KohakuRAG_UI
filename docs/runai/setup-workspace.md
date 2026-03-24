@@ -367,7 +367,58 @@ else
 fi
 ```
 
-### 0i. Stop the Workspace
+### 0i. Updating the Corpus (adding new papers)
+
+To add new papers and rebuild the index, restart the `wattbot-setup`
+workspace and run the following:
+
+```bash
+cd /home/jovyan/work/KohakuRAG_UI
+source .venv/bin/activate
+git pull
+
+# Clear old corpus and index so the indexer re-downloads all PDFs
+rm -f /wattbot-data/corpus/*.json
+rm -f /wattbot-data/embeddings/wattbot_jinav4.db
+
+# Ensure symlinks point to PPVC (so builds write to shared storage)
+rm -rf data/embeddings data/corpus data/pdfs
+ln -s /wattbot-data/embeddings data/embeddings
+ln -s /wattbot-data/corpus     data/corpus
+ln -s /wattbot-data/pdfs       data/pdfs
+
+# Build index (downloads PDFs, parses to JSON, creates embeddings)
+cd vendor/KohakuRAG
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+cd ../..
+
+# Verify
+echo "PDFs:    $(ls /wattbot-data/pdfs/*.pdf 2>/dev/null | wc -l)"
+echo "JSONs:   $(ls /wattbot-data/corpus/*.json 2>/dev/null | wc -l)"
+echo "DB size: $(du -h /wattbot-data/embeddings/wattbot_jinav4.db | cut -f1)"
+```
+
+The index is written directly to the PPVC via symlinks — no manual
+copy needed. After the build completes, **restart `wattbot-app`** so it
+picks up the new database.
+
+**How to add papers to the corpus:**
+
+1. **Using the helper script** (recommended):
+   - Edit `scripts/add_papers.py` — add entries to the `NEW_PAPERS` list
+   - Run `python scripts/add_papers.py` to preview, then `--apply` to write
+   - Commit and push, then rebuild on `wattbot-setup` as above
+
+2. **Manually editing `data/metadata.csv`:**
+   - Add a row: `id,type,title,year,citation,url`
+   - The `url` must be a direct PDF link (e.g. `https://arxiv.org/pdf/XXXX.XXXXX`)
+   - The indexer auto-downloads the PDF, parses it to JSON, and embeds it
+
+> **Tip:** You don't need to delete PDFs that already exist in
+> `/wattbot-data/pdfs/` — the indexer skips re-downloading cached PDFs.
+> Only delete `corpus/*.json` and the `.db` file to force a full rebuild.
+
+### 0j. Stop the Workspace
 
 Once the pipeline test passes, you can **stop the Workspace** from the RunAI UI
 to free its GPU. The vector index persists on the PPVC (`wattbot-data`) —
