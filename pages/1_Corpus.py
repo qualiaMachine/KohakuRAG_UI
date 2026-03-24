@@ -43,4 +43,5 @@ st.dataframe(
     },
     use_container_width=True,
     hide_index=True,
+    height=(len(display_df) + 1) * 35 + 3,
 )
