@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Sequence
@@ -11,6 +12,8 @@ import httpx
 import numpy as np
 
 from .types import ContextSnippet, NodeKind, RetrievalMatch, StoredNode
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -53,10 +56,11 @@ class SemanticScholarRetriever:
         self,
         *,
         api_key: str | None = None,
-        timeout: float = 10.0,
+        timeout: float = 15.0,
         max_results: int = 5,
     ) -> None:
         key = api_key or os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
+        self._has_api_key = bool(key)
         headers: dict[str, str] = {}
         if key:
             headers["x-api-key"] = key
@@ -65,6 +69,12 @@ class SemanticScholarRetriever:
             timeout=timeout,
         )
         self._max_results = max_results
+        print(
+            f"[S2] SemanticScholarRetriever initialized "
+            f"(api_key={'set' if self._has_api_key else 'NOT SET'}, "
+            f"timeout={timeout:.0f}s, max_results={max_results})",
+            flush=True,
+        )
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -100,14 +110,43 @@ class SemanticScholarRetriever:
         if year_range:
             params["year"] = year_range
 
-        try:
-            resp = await self._client.get(_S2_SEARCH, params=params)
-            resp.raise_for_status()
-        except httpx.HTTPError:
-            # Network or rate-limit error — degrade gracefully
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                resp = await self._client.get(_S2_SEARCH, params=params)
+                resp.raise_for_status()
+                break  # success
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status == 429 and attempt < 2:
+                    wait = (attempt + 1) * 2  # 2s, 4s
+                    print(f"[S2] Rate-limited (429), retrying in {wait}s...", flush=True)
+                    await asyncio.sleep(wait)
+                    last_exc = exc
+                    continue
+                print(
+                    f"[S2] HTTP {status} for query {query[:80]!r}: "
+                    f"{exc.response.text[:200]}",
+                    flush=True,
+                )
+                return []
+            except httpx.HTTPError as exc:
+                print(
+                    f"[S2] Request failed for query {query[:80]!r}: {exc}",
+                    flush=True,
+                )
+                return []
+        else:
+            # All retries exhausted (rate-limited)
+            print(f"[S2] Rate limit retries exhausted for query {query[:80]!r}", flush=True)
             return []
 
         data = resp.json().get("data", [])
+        print(
+            f"[S2] Search returned {len(data)} raw results for query "
+            f"{query[:80]!r} (limit={params['limit']})",
+            flush=True,
+        )
 
         papers: list[S2Paper] = []
         for item in data:
@@ -140,19 +179,22 @@ class SemanticScholarRetriever:
         top_k: int | None = None,
     ) -> list[S2Paper]:
         """Run multiple queries concurrently and deduplicate results by paper_id."""
+        print(f"[S2] Searching {len(queries)} queries (top_k={top_k})...", flush=True)
         tasks = [self.search_papers(q, top_k=top_k) for q in queries]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         seen_ids: set[str] = set()
         papers: list[S2Paper] = []
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, BaseException):
+                print(f"[S2] search_multi query {i} failed: {result}", flush=True)
                 continue
             for paper in result:
                 if paper.paper_id not in seen_ids:
                     seen_ids.add(paper.paper_id)
                     papers.append(paper)
 
+        print(f"[S2] search_multi total: {len(papers)} unique papers from {len(queries)} queries", flush=True)
         return papers
 
     # ------------------------------------------------------------------
