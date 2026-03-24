@@ -660,16 +660,29 @@ class RAGPipeline:
                 s2_queries, top_k=self._semantic_scholar_top_k,
             )
             if s2_papers:
-                # If cross-encoder is available, rerank S2 results too
-                if self._cross_encoder is not None:
-                    ranked = self._cross_encoder.rerank_texts(
-                        [p.abstract for p in s2_papers], question,
-                    )
-                    s2_papers = [s2_papers[i] for i, _ in ranked[: self._semantic_scholar_top_k]]
                 s2_snippets = SemanticScholarRetriever.papers_to_snippets(
                     s2_papers, rank_offset=len(snippets),
                 )
                 snippets = list(snippets) + s2_snippets
+
+        # Joint reranking: when S2 results are mixed in, rerank ALL snippets
+        # together so local and S2 compete fairly on relevance.  When S2 is
+        # off, local matches are already cross-encoder-ranked at match level.
+        if self._cross_encoder is not None and s2_snippets and snippets:
+            all_texts = [s.text for s in snippets]
+            ranked = self._cross_encoder.rerank_texts(all_texts, question)
+            reranked: list[ContextSnippet] = []
+            for new_rank, (orig_idx, score) in enumerate(ranked):
+                s = snippets[orig_idx]
+                reranked.append(ContextSnippet(
+                    node_id=s.node_id,
+                    document_title=s.document_title,
+                    text=s.text,
+                    metadata=s.metadata,
+                    rank=new_rank,
+                    score=score,
+                ))
+            snippets = reranked
 
         return RetrievalResult(
             question=question,

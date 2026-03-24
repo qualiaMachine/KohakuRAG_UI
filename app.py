@@ -64,9 +64,9 @@ if _rag_mode == "local":
     from kohakurag.embeddings import JinaV4EmbeddingModel
     from kohakurag.llm import HuggingFaceLocalChatModel
 
-# Remote inference clients (vLLM + embedding server)
+# Remote inference clients (vLLM + embedding server + reranker)
 try:
-    from kohakurag.remote import RemoteEmbeddingModel, VLLMChatModel
+    from kohakurag.remote import RemoteEmbeddingModel, VLLMChatModel, RemoteCrossEncoderReranker
     REMOTE_AVAILABLE = True
 except ImportError:
     REMOTE_AVAILABLE = False
@@ -79,6 +79,7 @@ VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "512"))
 VLLM_TEMPERATURE = float(os.environ.get("VLLM_TEMPERATURE", "0.2"))
 EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhost:8080")
+RERANKER_SERVICE_URL = os.environ.get("RERANKER_SERVICE_URL", "")
 
 
 def _detect_vllm_model(base_url: str) -> str:
@@ -413,9 +414,16 @@ def _apply_retrieval_enhancements(
     s2_top_k: int = 5,
 ) -> None:
     """Configure cross-encoder reranker and Semantic Scholar on an existing pipeline."""
-    # Cross-encoder reranker
-    if enable_cross_encoder and RERANKER_AVAILABLE:
-        pipeline._cross_encoder = _load_cross_encoder(cross_encoder_model)
+    # Cross-encoder reranker — use remote service if URL is set, else local
+    if enable_cross_encoder:
+        if RERANKER_SERVICE_URL and REMOTE_AVAILABLE:
+            pipeline._cross_encoder = RemoteCrossEncoderReranker(
+                base_url=RERANKER_SERVICE_URL,
+            )
+        elif RERANKER_AVAILABLE:
+            pipeline._cross_encoder = _load_cross_encoder(cross_encoder_model)
+        else:
+            pipeline._cross_encoder = None
     else:
         pipeline._cross_encoder = None
 
@@ -815,7 +823,17 @@ def main():
                     "S2 papers to include", min_value=1, max_value=20, value=5,
                     help="Number of external paper abstracts to append to context.",
                 )
-            enable_cross_encoder = False
+            if RERANKER_SERVICE_URL:
+                enable_cross_encoder = st.toggle(
+                    "Cross-encoder reranker", value=True,
+                    help=(
+                        "Use a cross-encoder model to rescore passages after "
+                        "retrieval. Improves relevance ranking. Calls remote "
+                        "reranker service."
+                    ),
+                )
+            else:
+                enable_cross_encoder = False
             cross_encoder_model = "BAAI/bge-reranker-v2-m3"
 
     # ---- Local mode: full sidebar with model selection ----
@@ -1308,7 +1326,7 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
         "ref_url": answer.ref_url,
         "supporting_materials": answer.supporting_materials,
         "snippets": [
-            {"rank": s.rank, "score": s.score, "title": s.document_title, "text": s.text}
+            {"rank": s.rank, "score": s.score, "title": s.document_title, "text": s.text, "node_id": s.node_id}
             for s in result.retrieval.snippets
         ],
         "raw_response": result.raw_response,
@@ -1391,7 +1409,8 @@ def _display_ensemble_result(
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
         with st.expander(label):
             for s in display_snippets:
-                st.markdown(f"**#{s.rank}** _{s.document_title}_ (score: {s.score:.3f})")
+                tag = " **[S2]**" if s.node_id.startswith("s2:") else ""
+                st.markdown(f"**#{s.rank}** _{s.document_title}_ (score: {s.score:.3f}){tag}")
                 st.text(s.text[:500] + ("..." if len(s.text) > 500 else ""))
                 st.divider()
 
@@ -1483,7 +1502,8 @@ def _render_details(details: dict):
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
         with st.expander(label):
             for s in display_snippets:
-                st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f})")
+                tag = " **[S2]**" if s.get("node_id", "").startswith("s2:") else ""
+                st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f}){tag}")
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
                 st.divider()
 
