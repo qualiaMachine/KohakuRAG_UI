@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -14,6 +15,23 @@ import numpy as np
 from .types import ContextSnippet, NodeKind, RetrievalMatch, StoredNode
 
 logger = logging.getLogger(__name__)
+
+# Stopwords to strip when converting natural-language questions to keyword queries.
+# S2's /paper/search is keyword-based; removing filler dramatically improves recall.
+_STOPWORDS = frozenset(
+    "a an the is are was were be been being do does did have has had "
+    "how what which who whom why when where will would shall should "
+    "can could may might must need ought dare "
+    "of in to for on with at by from as into about between through "
+    "and or but not no nor so yet both either neither "
+    "i me my we our you your he she it they them their its "
+    "this that these those there here "
+    "very much many more most some any all each every "
+    "also just only even still already too really "
+    "if then than because since while although though however "
+    "up down out off over under again further "
+    "compare compared comparison vs versus".split()
+)
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +59,25 @@ class S2Paper:
 _S2_API_BASE = "https://api.semanticscholar.org/graph/v1"
 _S2_SEARCH = f"{_S2_API_BASE}/paper/search"
 _S2_FIELDS = "paperId,title,abstract,authors,year,citationCount,url"
+
+
+def _to_keywords(query: str) -> str:
+    """Convert a natural-language question into a compact keyword string for S2.
+
+    Examples:
+        "How much energy to train an LLM?"  →  "energy train LLM"
+        "How much energy for LLM inference? how do providers compare?"
+            →  "energy LLM inference providers"
+    """
+    # Strip punctuation except hyphens (useful in compound terms)
+    text = re.sub(r"[^\w\s-]", " ", query)
+    tokens = text.split()
+    keywords = [t for t in tokens if t.lower() not in _STOPWORDS and len(t) > 1]
+    result = " ".join(keywords)
+    # If aggressive filtering removed everything, fall back to original
+    if len(result) < 3:
+        return query.strip()
+    return result
 
 
 class SemanticScholarRetriever:
@@ -102,9 +139,11 @@ class SemanticScholarRetriever:
             if fewer results are available or abstracts are missing).
         """
         k = top_k or self._max_results
+        kw_query = _to_keywords(query)
+        print(f"[S2] Keywords: {kw_query!r}  (from {query[:80]!r})", flush=True)
         params: dict[str, str | int] = {
-            "query": query,
-            "limit": min(k * 2, 100),  # fetch extra to filter out abstract-less papers
+            "query": kw_query,
+            "limit": min(k * 3, 100),  # fetch extra to filter out abstract-less papers
             "fields": _S2_FIELDS,
         }
         if year_range:
