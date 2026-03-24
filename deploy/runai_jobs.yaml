@@ -184,12 +184,14 @@
 #   Image:           nvcr.io/nvidia/pytorch:25.02-py3
 #   Tool:            Custom URL -> "streamlit" -> port 8501
 #   Command:         bash
-#   Arguments:       -c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b claude/rag-poweredge-setup-wM2Fz --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && ln -sf /wattbot-data/embeddings data/embeddings && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx numpy python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=\$STREAMLIT_BASE_PATH"
+#   Arguments:       -c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b main --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && ln -sf /wattbot-data/embeddings data/embeddings && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx numpy python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false"
 #   Env:             RAG_MODE=remote
 #                    VLLM_BASE_URL=http://<vllm-name>.runai-<project>.svc.cluster.local/v1
-#                    VLLM_MODEL=<model-loaded-by-vllm>
 #                    EMBEDDING_SERVICE_URL=http://<embedding-name>.runai-<project>.svc.cluster.local
-#                    STREAMLIT_BASE_PATH=/<project>/<workspace-name>/proxy/8501
+#   NOTE: VLLM_MODEL env var is no longer needed — the app auto-detects
+#         the served model via GET /v1/models.
+#   NOTE: Do NOT set --server.baseUrlPath or STREAMLIT_BASE_PATH — the
+#         RunAI proxy handles path rewriting. Setting it causes 404s.
 #   NOTE: Inference workloads use Knative (envoy). You MUST use the FQDN
 #         (workload.runai-project.svc.cluster.local) on port 80 (no port
 #         number). Short names like wattbot-vllm:8000 return envoy 404.

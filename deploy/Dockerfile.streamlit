@@ -10,8 +10,8 @@
 #   docker run -p 8501:8501 \
 #     -e VLLM_BASE_URL=http://vllm-service:8000/v1 \
 #     -e EMBEDDING_SERVICE_URL=http://embedding-service:8080 \
-#     -e VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct \
 #     kohakurag-streamlit
+#   Model name is auto-detected from the vLLM /v1/models endpoint.
 # ============================================================================
 FROM python:3.11-slim
 
@@ -35,7 +35,6 @@ RUN pip install --no-cache-dir -e /app/vendor/KohakuVault && \
 # Default env vars for remote mode
 ENV RAG_MODE=remote
 ENV VLLM_BASE_URL=http://localhost:8000/v1
-ENV VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct
 ENV EMBEDDING_SERVICE_URL=http://localhost:8080
 ENV STREAMLIT_PORT=8501
 

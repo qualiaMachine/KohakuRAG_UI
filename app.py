@@ -84,8 +84,13 @@ EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhos
 def _detect_vllm_model(base_url: str) -> str:
     """Query the vLLM /v1/models endpoint to discover the served model.
 
-    Falls back to VLLM_MODEL env var (then a hardcoded default) if the
-    server is unreachable.
+    When HF_HUB_OFFLINE is set, vLLM may report the local cache path
+    (e.g. ``/models/.cache/huggingface/models--Org--Name/snapshots/…``)
+    instead of the clean HuggingFace ID.  This function normalises that
+    back to ``Org/Name``.
+
+    Falls back to VLLM_MODEL env var (then ``"unknown"``) if the server
+    is unreachable.
     """
     fallback = os.environ.get("VLLM_MODEL", "unknown")
     try:
@@ -94,10 +99,28 @@ def _detect_vllm_model(base_url: str) -> str:
         resp.raise_for_status()
         models = resp.json().get("data", [])
         if models:
-            return models[0]["id"]
+            model_id = models[0]["id"]
+            return _normalise_hf_model_id(model_id)
     except Exception:
         pass
     return fallback
+
+
+def _normalise_hf_model_id(model_id: str) -> str:
+    """Convert a HF cache path back to a clean ``org/model`` identifier.
+
+    Examples::
+
+        /models/.cache/huggingface/models--OpenSciLM--Llama-3.1_OpenScholar-8B/snapshots/abc123
+        -> OpenSciLM/Llama-3.1_OpenScholar-8B
+
+    If the string doesn't look like a cache path it is returned unchanged.
+    """
+    import re
+    m = re.search(r"models--([^/]+?)--([^/]+)", model_id)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}"
+    return model_id
 
 
 # ---------------------------------------------------------------------------
