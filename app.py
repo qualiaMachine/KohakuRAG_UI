@@ -106,54 +106,66 @@ def _detect_vllm_model(base_url: str) -> str:
 # Energy tracking
 # ---------------------------------------------------------------------------
 
-# Default GPU TDP (watts) used for estimation when hardware counters are
-# unavailable (e.g. remote/cloud inference).  Can be overridden via env var.
-_DEFAULT_GPU_TDP_WATTS = float(os.environ.get("ENERGY_GPU_TDP_WATTS", "300"))
+# GPU TDP (watts) — used for local NVML fallback and vLLM estimation.
+# Override via env var to match your cluster hardware (e.g. 300 for A100,
+# 72 for L4, 450 for 4090).
+_GPU_TDP_WATTS = float(os.environ.get("ENERGY_GPU_TDP_WATTS", "300"))
 
-# Typical GPU utilisation fraction during inference (not 100% — there is
-# memory-bound idle time between kernel launches).
-_DEFAULT_GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.50"))
+# vLLM fractional GPU allocation (used to estimate vLLM energy from
+# generation time when we can't measure it directly).
+_VLLM_GPU_FRACTION = float(os.environ.get("ENERGY_VLLM_GPU_FRACTION", "0.80"))
+
+# Typical GPU utilisation during active inference (used for estimation).
+_GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.70"))
 
 
 class EnergyTracker:
-    """Measure or estimate energy consumed by a single RAG query.
+    """Track energy consumed by a RAG query across distributed services.
 
-    Priority:
-      1. NVML hardware energy counter (most accurate, requires pynvml + supported GPU)
-      2. nvidia-smi power sampling (good, requires nvidia-smi on PATH)
-      3. Time-based estimation using configurable TDP × utilisation (fallback)
+    Supports two modes depending on where the GPU lives:
+
+    **Local mode** (all models loaded in this process):
+      Uses NVML hardware counters or nvidia-smi power sampling to measure
+      actual GPU energy on this node.
+
+    **Remote mode** (vLLM + embedding + reranker on separate RunAI jobs):
+      Collects per-request energy reported by our embedding/reranker servers
+      (via ``result.timing["embed_energy_wh"]`` and ``reranker_energy_wh``).
+      Estimates vLLM energy from ``generation_s × TDP × gpu_fraction × util``
+      since we don't control the vLLM container.
 
     Usage::
 
-        tracker = EnergyTracker()
+        tracker = EnergyTracker(is_remote=True)
         tracker.start()
         # ... run query ...
-        wh = tracker.stop(elapsed_s)
+        wh = tracker.stop(elapsed_s, timing=result.timing)
     """
 
-    def __init__(
-        self,
-        gpu_tdp_watts: float = _DEFAULT_GPU_TDP_WATTS,
-        gpu_util: float = _DEFAULT_GPU_UTIL,
-    ):
-        self._gpu_tdp = gpu_tdp_watts
-        self._gpu_util = gpu_util
+    def __init__(self, *, is_remote: bool = False):
+        self._is_remote = is_remote
+        self._method = "estimate"
 
-        # Try NVML first
-        self._nvml = NVMLEnergyCounter()
+        # Local-mode: try direct GPU measurement on this node
+        self._nvml: NVMLEnergyCounter | None = None
         self._power_monitor: GPUPowerMonitor | None = None
-        if not self._nvml.available:
-            self._power_monitor = GPUPowerMonitor(interval=0.5)
-
-        self._method = "estimate"  # will be updated in start()
+        if not is_remote:
+            self._nvml = NVMLEnergyCounter()
+            if not self._nvml.available:
+                self._nvml = None
+                self._power_monitor = GPUPowerMonitor(interval=0.5)
 
     @property
     def method(self) -> str:
-        """Return the measurement method used: 'nvml', 'power_sampling', or 'estimate'."""
+        """Return the measurement method: 'nvml', 'power_sampling', 'server_reported', or 'estimate'."""
         return self._method
 
     def start(self) -> None:
-        if self._nvml.available:
+        if self._is_remote:
+            # Energy will come from service responses + vLLM estimation
+            self._method = "server_reported"
+            return
+        if self._nvml:
             self._nvml.start()
             self._method = "nvml"
         elif self._power_monitor and self._power_monitor.available:
@@ -162,9 +174,17 @@ class EnergyTracker:
         else:
             self._method = "estimate"
 
-    def stop(self, elapsed_s: float = 0.0) -> float:
-        """Stop measurement and return energy consumed in Watt-hours."""
-        if self._method == "nvml":
+    def stop(self, elapsed_s: float = 0.0, timing: dict | None = None) -> float:
+        """Stop measurement and return total energy in Watt-hours.
+
+        Args:
+            elapsed_s: Total wall-clock seconds for the query.
+            timing: The ``result.timing`` dict from the pipeline. In remote
+                mode this contains ``embed_energy_wh`` and ``reranker_energy_wh``
+                reported by the servers, plus ``generation_s`` for vLLM estimation.
+        """
+        # --- Local mode: direct GPU measurement ---
+        if self._method == "nvml" and self._nvml:
             per_gpu = self._nvml.stop()
             if per_gpu:
                 return sum(per_gpu.values())
@@ -174,8 +194,23 @@ class EnergyTracker:
             if wh > 0:
                 return wh
 
-        # Fallback: estimate from elapsed time
-        return (self._gpu_tdp * self._gpu_util * elapsed_s) / 3600.0
+        # --- Remote mode: aggregate server-reported + vLLM estimate ---
+        if timing:
+            embed_wh = timing.get("embed_energy_wh", 0.0)
+            reranker_wh = timing.get("reranker_energy_wh", 0.0)
+            gen_s = timing.get("generation_s", 0.0)
+            # vLLM energy estimate: TDP × fractional allocation × utilisation × time
+            vllm_wh = (_GPU_TDP_WATTS * _VLLM_GPU_FRACTION * _GPU_UTIL * gen_s) / 3600.0
+            total = embed_wh + reranker_wh + vllm_wh
+            if embed_wh > 0 or reranker_wh > 0:
+                self._method = "server_reported"
+            else:
+                self._method = "estimate"
+            return total
+
+        # Pure fallback: estimate everything from wall-clock time
+        self._method = "estimate"
+        return (_GPU_TDP_WATTS * _GPU_UTIL * elapsed_s) / 3600.0
 
 
 def _format_energy(wh: float) -> str:
@@ -1423,7 +1458,7 @@ def main():
 
         with st.chat_message("assistant"):
             t0 = time.time()
-            energy_tracker = EnergyTracker()
+            energy_tracker = EnergyTracker(is_remote=is_remote)
             energy_tracker.start()
             # Research mode uses more context for comprehensive answers
             effective_top_k = max(top_k, 15) if research_mode else top_k
@@ -1447,7 +1482,7 @@ def main():
                             st.code(tb, language="python")
                         return
                 elapsed = time.time() - t0
-                query_energy_wh = energy_tracker.stop(elapsed)
+                query_energy_wh = energy_tracker.stop(elapsed, timing=result.timing)
                 st.session_state.total_energy_wh += query_energy_wh
                 st.session_state.query_count += 1
                 _display_single_result(
@@ -1494,6 +1529,8 @@ def main():
                     return
 
                 elapsed = time.time() - t0
+                # Ensemble is local-only, so local NVML/power sampling works;
+                # no per-service timing to pass here.
                 query_energy_wh = energy_tracker.stop(elapsed)
                 st.session_state.total_energy_wh += query_energy_wh
                 st.session_state.query_count += 1
@@ -1778,7 +1815,7 @@ def _display_ensemble_result(
     model_times = [e["time"] for e in model_results.values()]
     total_gen = sum(model_times)
 
-    _e_label = "Energy" if energy_method in ("nvml", "power_sampling") else "Est. energy"
+    _e_label = "Energy" if energy_method in ("nvml", "power_sampling", "server_reported") else "Est. energy"
     _e_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
     cols = st.columns(4)
     cols[0].metric("Models", n_models)
@@ -1864,7 +1901,8 @@ def _render_details(details: dict, *, image_store=None):
     """Render expandable sections for a stored message (history replay)."""
     energy_wh = details.get("energy_wh", 0.0)
     energy_method = details.get("energy_method", "")
-    energy_label = "Energy" if energy_method in ("nvml", "power_sampling") else "Est. energy"
+    _measured = energy_method in ("nvml", "power_sampling", "server_reported")
+    energy_label = "Energy" if _measured else "Est. energy"
     energy_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
 
     if details.get("ensemble"):

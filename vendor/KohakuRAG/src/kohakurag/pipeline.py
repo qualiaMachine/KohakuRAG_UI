@@ -936,6 +936,12 @@ class RAGPipeline:
         # Parse JSON structure
         parsed = self._parse_structured_response(raw)
 
+        # Collect per-component energy reported by remote services
+        embed_energy_wh = getattr(self._embedder, "last_energy_wh", 0.0)
+        reranker_energy_wh = 0.0
+        if self._cross_encoder is not None:
+            reranker_energy_wh = getattr(self._cross_encoder, "last_energy_wh", 0.0)
+
         return StructuredAnswerResult(
             answer=parsed,
             retrieval=retrieval,
@@ -945,6 +951,8 @@ class RAGPipeline:
                 "retrieval_s": t_retrieval,
                 "generation_s": t_generation,
                 "total_s": t_retrieval + t_generation,
+                "embed_energy_wh": embed_energy_wh,
+                "reranker_energy_wh": reranker_energy_wh,
             },
         )
 
