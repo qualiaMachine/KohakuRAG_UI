@@ -808,7 +808,7 @@ def main():
             st.divider()
             st.subheader("Image retrieval")
             with_images = st.toggle(
-                "Enable image retrieval", value=True,
+                "Enable image retrieval", value=False,
                 help="Extract figures/charts from retrieved PDF sections for visual reasoning.",
             )
             top_k_images = 0
@@ -819,7 +819,7 @@ def main():
                     help="Additional images from the dedicated image index (0 = only from text sections).",
                 )
                 send_images_to_llm = st.toggle(
-                    "Send images to LLM", value=True,
+                    "Send images to LLM", value=False,
                     help="Send actual image data to a vision-capable LLM (vs. captions only).",
                 )
 
@@ -884,7 +884,7 @@ def main():
             st.divider()
             st.subheader("Image retrieval")
             with_images = st.toggle(
-                "Enable image retrieval", value=True,
+                "Enable image retrieval", value=False,
                 help="Extract figures/charts from retrieved PDF sections for visual reasoning.",
             )
             top_k_images = 0
@@ -895,7 +895,7 @@ def main():
                     help="Additional images from the dedicated image index (0 = only from text sections).",
                 )
                 send_images_to_llm = st.toggle(
-                    "Send images to LLM", value=True,
+                    "Send images to LLM", value=False,
                     help="Send actual image data to a vision-capable LLM (vs. captions only).",
                 )
 
