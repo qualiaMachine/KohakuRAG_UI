@@ -411,6 +411,8 @@ def init_remote_pipeline(
         max_tokens=max_tokens,
         temperature=temperature,
     )
+    # Expose the auto-detected model name for sidebar display
+    st.session_state["_vllm_detected_model"] = chat_model._model
 
     _debug(f"Connecting to embedding server at {embedding_url}")
     embedder = RemoteEmbeddingModel(base_url=embedding_url)
@@ -669,7 +671,8 @@ def main():
         with st.sidebar:
             st.header("Settings")
             st.caption(f"**Remote mode** — vLLM + embedding server")
-            st.caption(f"LLM: `{VLLM_MODEL}`")
+            _detected = st.session_state.get("_vllm_detected_model", VLLM_MODEL)
+            st.caption(f"LLM: `{_detected}`")
             st.caption(f"vLLM: `{VLLM_BASE_URL}`")
             st.caption(f"Embeddings: `{EMBEDDING_SERVICE_URL}`")
 

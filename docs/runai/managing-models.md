@@ -85,8 +85,8 @@ python /home/jovyan/work/provision_shared_models.py download <org>/<model-name>
 
 1. Make sure the new model is on the PVC (see above)
 2. In the RunAI UI, edit the `wattbot-vllm` job's command: change `--model`
-3. Edit the `wattbot-app` job's env var: change `VLLM_MODEL` to match
-4. Restart both jobs
+3. Restart the vLLM job (the Streamlit app auto-detects the model via `/v1/models`)
+4. Restart the Streamlit app so it picks up the new model
 
 No code changes needed. The embedding model and vector DB are unchanged.
 
