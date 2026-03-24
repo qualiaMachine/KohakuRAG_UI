@@ -24,7 +24,7 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 | **Cluster** | `doit-ai-cluster` |
 | **Project** | Your project (e.g. `jupyter-endemann01`) |
 | **Inference type** | **Custom** |
-| **Inference name** | `wattbot-vllm` |
+| **Inference name** | `wattbot-chat` |
 
 ## Environment image
 
@@ -51,21 +51,28 @@ is required.
 | Field | Value |
 |-------|-------|
 | **Command** | *(leave empty — image default launches the API server)* |
-| **Arguments** | `--model Qwen/Qwen2.5-7B-Instruct` |
-| **Environment variable** | Name: `HF_HOME`, Value: `/models/.cache/huggingface` |
+| **Arguments** | `--model OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto` |
 | **Working directory** | *(leave empty)* |
 
+**Environment variables:**
+
+| Name | Value |
+|------|-------|
+| `HF_HOME` | `/models/.cache/huggingface` |
+| `HF_HUB_CACHE` | `/models/.cache/huggingface` |
+| `HF_HUB_OFFLINE` | `1` |
+
 > **Note:** The image defaults to `--host 0.0.0.0` and uses the
-> container port from the serving endpoint config. If you need to
-> tune memory usage, add `--max-model-len 8192` or `--dtype float16`
-> to the Arguments field. For a first deploy, just `--model` is enough.
+> container port from the serving endpoint config. `HF_HUB_OFFLINE=1`
+> prevents downloads at runtime — the model must be pre-cached on the
+> shared PVC.
 
 ## Compute resources
 
 | Field | Value |
 |-------|-------|
-| **GPU devices** | `1` (full GPU) |
-| **GPU fractioning** | *(leave disabled — using full device)* |
+| **GPU devices** | `1` |
+| **GPU fractioning** | Enabled — set to `80%` of device |
 | **CPU request** | *(leave default)* |
 | **CPU memory request** | *(leave default)* |
 | **Replica autoscaling** | Min `1`, Max `1` (no autoscaling) |
@@ -91,8 +98,8 @@ directly in the initial setup form — no need for Advanced setup.)
 First deploy takes **5-10 minutes**:
 - **Image pull** (~2-5 min): The `vllm/vllm-openai` image is ~15 GB.
   Subsequent deploys skip this if the image is cached on the node.
-- **Model loading** (~1-2 min): vLLM loads Qwen 7B weights (~14 GB)
-  from the shared PVC into GPU memory.
+- **Model loading** (~1-2 min): vLLM loads OpenScholar 8B weights
+  from the shared PVC into GPU memory (bitsandbytes quantized).
 - **Engine warmup** (~30s): vLLM compiles CUDA kernels and initializes
   the KV cache.
 
@@ -102,10 +109,10 @@ passes. Subsequent restarts (same node, cached image) take ~2-3 minutes.
 
 ## How it works
 
-Qwen 7B weights are already pre-cached on the shared PVC at
+OpenScholar 8B weights are already pre-cached on the shared PVC at
 `/models/.cache/huggingface/` — vLLM loads them directly on startup
-(no download needed). The Data Volume is read-only, so vLLM can't
-accidentally modify or delete weights.
+(no download needed, `HF_HUB_OFFLINE=1`). The Data Volume is read-only,
+so vLLM can't accidentally modify or delete weights.
 
 > **Note:** vLLM exposes an **OpenAI-compatible** API (`/v1/chat/completions`),
 > but it runs **entirely on your local GPU** — no OpenAI account or API
@@ -114,38 +121,39 @@ accidentally modify or delete weights.
 
 **Verify (from any other pod's terminal):**
 ```bash
-curl http://wattbot-vllm:8000/v1/models
+curl http://wattbot-chat:8000/v1/models
 ```
 
 ## GPU VRAM and quantization
 
-Choose quantization based on your GPU VRAM:
+The current deployment uses **bitsandbytes** quantization, which reduces
+memory enough to fit an 8B model in 80% of a GPU. This is the recommended
+setup for fractional GPU allocation.
 
 | GPU VRAM | Flag | Notes |
 |----------|------|-------|
-| 80 GB (A100) | `--dtype bfloat16` | No quantization needed for 7B |
-| 40 GB (A6000) | `--dtype bfloat16` | |
-| 24 GB (L4/4090) | `--quantization awq` or `--quantization gptq` | |
-| 16 GB | `--quantization awq --max-model-len 4096` | |
+| 80 GB (A100) | `--quantization bitsandbytes --load-format bitsandbytes` | Current setup, 80% fraction |
+| 40 GB (A6000) | `--quantization bitsandbytes --load-format bitsandbytes` | |
+| 24 GB (L4/4090) | `--quantization bitsandbytes --load-format bitsandbytes --max-model-len 4096` | |
 
 ## CLI equivalent
 
 If you prefer the CLI over the UI:
 
 ```bash
-runai submit wattbot-vllm \
+runai submit wattbot-chat \
   --type inference \
   --image vllm/vllm-openai:latest \
-  --gpu 1.0 \
+  --gpu 0.80 \
   --cpu 4 \
   --memory 16Gi \
   --pvc shared-models:/models \
   --env HF_HOME=/models/.cache/huggingface \
+  --env HF_HUB_CACHE=/models/.cache/huggingface \
+  --env HF_HUB_OFFLINE=1 \
   --port 8000 \
-  --command -- python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen2.5-7B-Instruct \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --max-model-len 8192 \
+  -- --model OpenSciLM/Llama-3.1_OpenScholar-8B \
+    --quantization bitsandbytes \
+    --load-format bitsandbytes \
     --dtype auto
 ```

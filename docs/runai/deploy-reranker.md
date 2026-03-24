@@ -233,7 +233,7 @@ runai submit wattbot-reranker \
   ┌──────┐ ┌──────┐ ┌──────────┐
   │ vLLM │ │Embed │ │ Reranker │
   │ 8000 │ │ 8080 │ │   8082   │
-  │GPU 1 │ │GPU½  │ │  GPU 10% │
+  │GPU80%│ │GPU10%│ │  GPU 10% │
   └──────┘ └──────┘ └──────────┘
-     Total: 1.60 GPUs
+     Total: 1.00 GPU
 ```

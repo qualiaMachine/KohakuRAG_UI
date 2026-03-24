@@ -1,8 +1,8 @@
 # Deploying WattBot RAG on RunAI
 
 Production deployment using 2-3 RunAI **Inference** workloads + 1
-**Workspace** across 1.5-1.75 GPUs, with vLLM for high-throughput
-LLM serving and optional cross-encoder reranking.
+**Workspace** across ~1 GPU (fractional allocation), with vLLM for
+high-throughput LLM serving and optional cross-encoder reranking.
 
 ## Why this architecture?
 
@@ -15,16 +15,16 @@ for one developer, but falls apart with multiple users:
 - **GPU waste.** The Streamlit UI is pure Python/CPU, but a monolith
   allocates GPU to the entire container — even the parts that never
   touch it.
-- **Rigid restarts.** Swapping the LLM (Qwen 7B → 14B) kills the UI
-  and loses user sessions.
+- **Rigid restarts.** Swapping the LLM kills the UI and loses user
+  sessions.
 
 Splitting into 3 independent services solves all of these:
 
 | Workload | Type | What it does | GPU | Port |
 |----------|------|-------------|-----|------|
-| **`wattbot-vllm`** | Inference | Serves the LLM (Qwen 7B) via vLLM's OpenAI-compatible API | 1.0 | 8000 |
-| **`wattbot-embedding`** | Inference | Encodes user questions into vectors (Jina V4) for DB lookup | 0.5 | 8080 |
-| **`wattbot-reranker`** | Inference | *(optional)* Cross-encoder reranking of retrieved passages | 0.25 | 8082 |
+| **`wattbot-chat`** | Inference | Serves the LLM (OpenScholar 8B) via vLLM's OpenAI-compatible API | 0.80 | 8000 |
+| **`wattbot-embedding`** | Inference | Encodes user questions into vectors (Jina V4) for DB lookup | 0.10 | 8080 |
+| **`wattbot-reranker`** | Inference | *(optional)* Cross-encoder reranking of retrieved passages | 0.10 | 8082 |
 | **`wattbot-app`** | Workspace | Streamlit UI — connects to the other services via HTTP | 0 | 8501 |
 
 ### Multi-user scaling with vLLM
@@ -43,7 +43,7 @@ The LLM is the bottleneck in any RAG system. **vLLM** replaces naive
 
 Because each service is a separate RunAI **Inference** workload, you can
 independently scale replicas: need more LLM throughput? Set
-`wattbot-vllm` to 2 replicas. Embedding bottleneck? Scale
+`wattbot-chat` to 2 replicas. Embedding bottleneck? Scale
 `wattbot-embedding`. The Streamlit app stays at 1 replica (it's
 stateless and cheap). RunAI handles load balancing across replicas
 automatically via Knative.
@@ -68,7 +68,7 @@ only expose internal Knative routes.
 ┌──────┐ ┌──────┐ ┌──────────┐
 │ vLLM │ │Embed │ │ Reranker │
 │ 8000 │ │ 8080 │ │   8082   │
-│GPU 1 │ │GPU½  │ │  GPU¼    │
+│GPU80%│ │GPU10%│ │ GPU 10%  │
 └──────┘ └──────┘ └──────────┘
                    (optional)
 ```
@@ -76,12 +76,12 @@ only expose internal Knative routes.
 **Query flow:** User asks a question → Streamlit [`wattbot-app`] sends
 it to the Embedding Server [`wattbot-embedding`] → gets a vector back →
 searches the pre-built vector DB → sends question + retrieved context to
-vLLM [`wattbot-vllm`] → Streamlit [`wattbot-app`] displays the answer
+vLLM [`wattbot-chat`] → Streamlit [`wattbot-app`] displays the answer
 with citations.
 
 All three mount a shared model PVC at `/models/` (read-only) and share
-one physical GPU via RunAI's fractional allocation. GPU budget: **1.5
-GPUs** total — 1.0 for vLLM, 0.5 for embeddings, 0.25 for reranker
+one physical GPU via RunAI's fractional allocation. GPU budget: **1.0
+GPU** total — 0.80 for vLLM, 0.10 for embeddings, 0.10 for reranker
 (optional), 0 for Streamlit.
 
 ---

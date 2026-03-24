@@ -11,10 +11,10 @@
 #   ┌──────┐ ┌──────┐ ┌──────────┐
 #   │ vLLM │ │Embed │ │ Reranker │
 #   │ 8000 │ │ 8080 │ │   8082   │
-#   │GPU 1 │ │GPU½  │ │ GPU 10%  │
+#   │GPU80%│ │GPU10%│ │ GPU 10%  │
 #   └──────┘ └──────┘ └──────────┘
 #
-# All 4 services on 1.60 GPUs (fractional allocation).
+# All 4 services on 1.00 GPU (fractional allocation).
 # vLLM gets a full GPU since LLM inference is the bottleneck.
 # Reranker is optional — system works without it.
 #
@@ -32,41 +32,37 @@
 #
 # RunAI UI settings:
 #   Inference type:  Custom
-#   Name:            wattbot-vllm
+#   Name:            wattbot-chat
 #   Image:           vllm/vllm-openai:latest (custom image)
 #   Container port:  8000
-#   Command:         python -m vllm.entrypoints.openai.api_server
-#   Arguments:       --model Qwen/Qwen2.5-7B-Instruct --host 0.0.0.0 --port 8000 --max-model-len 8192 --dtype auto
+#   Command:         (leave empty — image default)
+#   Arguments:       --model OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto
 #   Env:             HF_HOME=/models/.cache/huggingface
-#   GPU:             1 (full device)
+#                    HF_HUB_CACHE=/models/.cache/huggingface
+#                    HF_HUB_OFFLINE=1
+#   GPU:             0.80 (fractional)
 #   CPU:             4
 #   Memory:          16Gi
 #   Data volume:     shared-models -> /models
 #
 # CLI equivalent (if not using the UI):
-#   runai submit wattbot-vllm \
+#   runai submit wattbot-chat \
 #     --type inference \
 #     --image vllm/vllm-openai:latest \
-#     --gpu 1.0 \
+#     --gpu 0.80 \
 #     --cpu 4 \
 #     --memory 16Gi \
 #     --pvc shared-models:/models \
 #     --env HF_HOME=/models/.cache/huggingface \
+#     --env HF_HUB_CACHE=/models/.cache/huggingface \
+#     --env HF_HUB_OFFLINE=1 \
 #     --port 8000 \
-#     --command -- python -m vllm.entrypoints.openai.api_server \
-#       --model Qwen/Qwen2.5-7B-Instruct \
-#       --host 0.0.0.0 \
-#       --port 8000 \
-#       --max-model-len 8192 \
+#     -- --model OpenSciLM/Llama-3.1_OpenScholar-8B \
+#       --quantization bitsandbytes \
+#       --load-format bitsandbytes \
 #       --dtype auto
 #
 # Startup time: 5-10 min (first deploy, image pull ~15 GB) / 2-3 min (cached)
-#
-# IMPORTANT: Choose quantization based on your GPU VRAM:
-#   - 80GB (A100): --dtype bfloat16 (no quantization needed for 7B)
-#   - 40GB (A6000): --dtype bfloat16
-#   - 24GB (L4/4090): --quantization awq or --quantization gptq
-#   - 16GB: --quantization awq --max-model-len 4096
 
 # ---------------------------------------------------------------------------
 # Job 2: Embedding Server (Inference workload)
@@ -132,7 +128,7 @@
 #                    EMBEDDING_MODEL=jinaai/jina-embeddings-v4
 #                    EMBEDDING_DIM=1024
 #                    EMBEDDING_TASK=retrieval
-#   GPU:             0.50 (fractional)
+#   GPU:             0.10 (fractional)
 #   CPU:             2
 #   Memory:          8Gi
 #   Data volume:     shared-models -> /models
@@ -216,14 +212,13 @@
 #   Command:         bash
 #   Arguments:       -c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && git clone -b claude/rag-poweredge-setup-wM2Fz --depth 1 https://github.com/qualiaMachine/KohakuRAG_UI.git /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && ln -sf /wattbot-data/embeddings data/embeddings && ln -sf /wattbot-data/corpus data/corpus && uv pip install --system streamlit openai httpx numpy python-dotenv && uv pip install --system vendor/KohakuVault vendor/KohakuRAG && python -m streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=\$STREAMLIT_BASE_PATH"
 #   Env:             RAG_MODE=remote
-#                    VLLM_BASE_URL=http://<vllm-name>.runai-<project>.svc.cluster.local/v1
-#                    VLLM_MODEL=<model-loaded-by-vllm>
-#                    EMBEDDING_SERVICE_URL=http://<embedding-name>.runai-<project>.svc.cluster.local
+#                    VLLM_BASE_URL=http://wattbot-chat.runai-<project>.svc.cluster.local/v1
+#                    EMBEDDING_SERVICE_URL=http://wattbot-embedding.runai-<project>.svc.cluster.local
 #                    RERANKER_SERVICE_URL=http://wattbot-reranker.runai-<project>.svc.cluster.local
 #                    STREAMLIT_BASE_PATH=/<project>/<workspace-name>/proxy/8501
 #   NOTE: Inference workloads use Knative (envoy). You MUST use the FQDN
 #         (workload.runai-project.svc.cluster.local) on port 80 (no port
-#         number). Short names like wattbot-vllm:8000 return envoy 404.
+#         number). Short names like wattbot-chat:8000 return envoy 404.
 #   GPU:             0 (none)
 #   CPU:             1
 #   Memory:          2Gi

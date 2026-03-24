@@ -84,8 +84,8 @@ python /home/jovyan/work/provision_shared_models.py download <org>/<model-name>
 ## Swapping the LLM (e.g., Qwen 7B → Llama 3 8B)
 
 1. Make sure the new model is on the PVC (see above)
-2. In the RunAI UI, edit the `wattbot-vllm` job's command: change `--model`
-3. Edit the `wattbot-app` job's env var: change `VLLM_MODEL` to match
+2. In the RunAI UI, edit the `wattbot-chat` job's arguments: change `--model`
+3. Restart the job (the app auto-detects the model name from vLLM)
 4. Restart both jobs
 
 No code changes needed. The embedding model and vector DB are unchanged.
@@ -110,7 +110,7 @@ Based on `ls /models/.cache/huggingface/`:
 | `Qwen/Qwen1.5-110B-Chat` | ~207 GB | Legacy model |
 | `Qwen/Qwen2.5-14B-Instruct` | ~28 GB | |
 | `Qwen/Qwen2.5-72B-Instruct` | ~135 GB | |
-| `Qwen/Qwen2.5-7B-Instruct` | ~14 GB | Used by vLLM server |
+| `Qwen/Qwen2.5-7B-Instruct` | ~14 GB | |
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | ~57 GB | MoE |
 | `Qwen/Qwen3-Next-80B-A3B-Instruct` | ~152 GB | MoE (active ~3B) |
 | `Qwen/Qwen3-Next-80B-A3B-Thinking-FP8` | ~76 GB | MoE FP8 |

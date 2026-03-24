@@ -13,8 +13,8 @@ Launch (local):
 
 Launch (remote — vLLM + embedding server):
     RAG_MODE=remote \\
-    VLLM_BASE_URL=http://wattbot-vllm:8000/v1 \\
-    VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct \\
+    VLLM_BASE_URL=http://wattbot-chat:8000/v1 \\
+    VLLM_MODEL=OpenSciLM/Llama-3.1_OpenScholar-8B \\
     EMBEDDING_SERVICE_URL=http://wattbot-embedding:8080 \\
     streamlit run app.py
 """

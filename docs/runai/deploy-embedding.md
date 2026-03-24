@@ -108,7 +108,7 @@ tarball and installs dependencies at startup.
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `1` |
-| **GPU fractioning** | Enabled — set to `50%` of device (Jina V4 needs ~3 GB VRAM). The UI will show "0.33–0.66 GPUs" as the allocated range. |
+| **GPU fractioning** | Enabled — set to `10%` of device |
 | **CPU request** | *(leave default)* |
 | **CPU memory request** | *(leave default)* |
 | **Replica autoscaling** | Min `1`, Max `1` (no autoscaling) |
@@ -198,7 +198,7 @@ Only proceed to RunAI deployment once all steps pass locally.
 runai submit wattbot-embedding \
   --type inference \
   --image vllm/vllm-openai:latest \
-  --gpu 0.50 \
+  --gpu 0.10 \
   --cpu 2 \
   --memory 8Gi \
   --pvc shared-models:/models \
