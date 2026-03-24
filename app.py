@@ -50,6 +50,7 @@ sys.path.insert(0, str(_repo_root / "scripts"))
 from kohakurag import RAGPipeline, LLMQueryPlanner, SimpleQueryPlanner
 from kohakurag.datastore import KVaultNodeStore, ImageStore
 from kohakurag.semantic_scholar import SemanticScholarRetriever
+from hardware_metrics import NVMLEnergyCounter, GPUPowerMonitor
 
 # Cross-encoder reranker — requires sentence-transformers (optional)
 try:
@@ -99,6 +100,89 @@ def _detect_vllm_model(base_url: str) -> str:
     except Exception:
         pass
     return fallback
+
+
+# ---------------------------------------------------------------------------
+# Energy tracking
+# ---------------------------------------------------------------------------
+
+# Default GPU TDP (watts) used for estimation when hardware counters are
+# unavailable (e.g. remote/cloud inference).  Can be overridden via env var.
+_DEFAULT_GPU_TDP_WATTS = float(os.environ.get("ENERGY_GPU_TDP_WATTS", "300"))
+
+# Typical GPU utilisation fraction during inference (not 100% — there is
+# memory-bound idle time between kernel launches).
+_DEFAULT_GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.50"))
+
+
+class EnergyTracker:
+    """Measure or estimate energy consumed by a single RAG query.
+
+    Priority:
+      1. NVML hardware energy counter (most accurate, requires pynvml + supported GPU)
+      2. nvidia-smi power sampling (good, requires nvidia-smi on PATH)
+      3. Time-based estimation using configurable TDP × utilisation (fallback)
+
+    Usage::
+
+        tracker = EnergyTracker()
+        tracker.start()
+        # ... run query ...
+        wh = tracker.stop(elapsed_s)
+    """
+
+    def __init__(
+        self,
+        gpu_tdp_watts: float = _DEFAULT_GPU_TDP_WATTS,
+        gpu_util: float = _DEFAULT_GPU_UTIL,
+    ):
+        self._gpu_tdp = gpu_tdp_watts
+        self._gpu_util = gpu_util
+
+        # Try NVML first
+        self._nvml = NVMLEnergyCounter()
+        self._power_monitor: GPUPowerMonitor | None = None
+        if not self._nvml.available:
+            self._power_monitor = GPUPowerMonitor(interval=0.5)
+
+        self._method = "estimate"  # will be updated in start()
+
+    @property
+    def method(self) -> str:
+        """Return the measurement method used: 'nvml', 'power_sampling', or 'estimate'."""
+        return self._method
+
+    def start(self) -> None:
+        if self._nvml.available:
+            self._nvml.start()
+            self._method = "nvml"
+        elif self._power_monitor and self._power_monitor.available:
+            self._power_monitor.start()
+            self._method = "power_sampling"
+        else:
+            self._method = "estimate"
+
+    def stop(self, elapsed_s: float = 0.0) -> float:
+        """Stop measurement and return energy consumed in Watt-hours."""
+        if self._method == "nvml":
+            per_gpu = self._nvml.stop()
+            if per_gpu:
+                return sum(per_gpu.values())
+        elif self._method == "power_sampling" and self._power_monitor:
+            self._power_monitor.stop()
+            wh = self._power_monitor.energy_wh
+            if wh > 0:
+                return wh
+
+        # Fallback: estimate from elapsed time
+        return (self._gpu_tdp * self._gpu_util * elapsed_s) / 3600.0
+
+
+def _format_energy(wh: float) -> str:
+    """Human-friendly energy string (auto-scale Wh / mWh)."""
+    if wh >= 1.0:
+        return f"{wh:.2f} Wh"
+    return f"{wh * 1000:.1f} mWh"
 
 
 # ---------------------------------------------------------------------------
@@ -1220,6 +1304,20 @@ def main():
                 else:
                     st.warning(plan["reason"])
 
+    # ---- Session energy accumulator (sidebar) ----
+    with st.sidebar:
+        st.divider()
+        st.subheader("Session energy")
+        _total_e = st.session_state.get("total_energy_wh", 0.0)
+        _n_queries = st.session_state.get("query_count", 0)
+        if _n_queries > 0:
+            e_col1, e_col2 = st.columns(2)
+            e_col1.metric("Total", _format_energy(_total_e))
+            e_col2.metric("Queries", _n_queries)
+            st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
+        else:
+            st.caption("No queries yet — energy will be tracked as you ask questions.")
+
     # ---- Validate ensemble selection ----
     if not is_remote and mode == "Ensemble" and len(selected_configs) < 2:
         st.info("Select at least 2 models for ensemble mode.")
@@ -1268,6 +1366,10 @@ def main():
     # ---- Chat interface ----
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "total_energy_wh" not in st.session_state:
+        st.session_state.total_energy_wh = 0.0
+    if "query_count" not in st.session_state:
+        st.session_state.query_count = 0
 
     # Welcome message (shown only when chat is empty)
     if not st.session_state.messages:
@@ -1321,6 +1423,8 @@ def main():
 
         with st.chat_message("assistant"):
             t0 = time.time()
+            energy_tracker = EnergyTracker()
+            energy_tracker.start()
             # Research mode uses more context for comprehensive answers
             effective_top_k = max(top_k, 15) if research_mode else top_k
 
@@ -1343,7 +1447,13 @@ def main():
                             st.code(tb, language="python")
                         return
                 elapsed = time.time() - t0
-                _display_single_result(result, elapsed, pipeline=pipeline)
+                query_energy_wh = energy_tracker.stop(elapsed)
+                st.session_state.total_energy_wh += query_energy_wh
+                st.session_state.query_count += 1
+                _display_single_result(
+                    result, elapsed, pipeline=pipeline,
+                    energy_wh=query_energy_wh, energy_method=energy_tracker.method,
+                )
 
             else:  # Ensemble (local mode only)
                 try:
@@ -1384,8 +1494,14 @@ def main():
                     return
 
                 elapsed = time.time() - t0
+                query_energy_wh = energy_tracker.stop(elapsed)
+                st.session_state.total_energy_wh += query_energy_wh
+                st.session_state.query_count += 1
                 agg = build_ensemble_answer(model_results, ensemble_strategy)
-                _display_ensemble_result(agg, model_results, elapsed, ensemble_strategy)
+                _display_ensemble_result(
+                    agg, model_results, elapsed, ensemble_strategy,
+                    energy_wh=query_energy_wh, energy_method=energy_tracker.method,
+                )
 
 
 def _extract_confidence(raw_response: str) -> str:
@@ -1542,7 +1658,10 @@ def _display_retrieved_images(image_nodes, image_store=None):
                 st.markdown(f"**{doc_id} p.{page}:** {caption}")
 
 
-def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | None = None):
+def _display_single_result(
+    result, elapsed: float, *, pipeline: RAGPipeline | None = None,
+    energy_wh: float = 0.0, energy_method: str = "",
+):
     """Display a single-model answer."""
     answer = result.answer
     timing = result.timing
@@ -1610,6 +1729,8 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
     details = {
         "timing": timing,
         "elapsed": elapsed,
+        "energy_wh": energy_wh,
+        "energy_method": energy_method,
         "ref_id": answer.ref_id,
         "ref_url": answer.ref_url,
         "supporting_materials": answer.supporting_materials,
@@ -1637,6 +1758,7 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
 
 def _display_ensemble_result(
     agg: dict, model_results: dict, elapsed: float, strategy: str,
+    energy_wh: float = 0.0, energy_method: str = "",
 ):
     """Display aggregated ensemble answer + per-model breakdown."""
     linked_explanation = _linkify_citations(
@@ -1656,10 +1778,13 @@ def _display_ensemble_result(
     model_times = [e["time"] for e in model_results.values()]
     total_gen = sum(model_times)
 
-    cols = st.columns(3)
+    _e_label = "Energy" if energy_method in ("nvml", "power_sampling") else "Est. energy"
+    _e_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
+    cols = st.columns(4)
     cols[0].metric("Models", n_models)
     cols[1].metric("Aggregation", strategy)
     cols[2].metric("Total", f"{elapsed:.1f}s")
+    cols[3].metric(_e_label, _e_str)
 
     # Per-model answers
     with st.expander(f"Individual model answers ({n_models} models)"):
@@ -1713,6 +1838,8 @@ def _display_ensemble_result(
 
     details = {
         "elapsed": elapsed,
+        "energy_wh": energy_wh,
+        "energy_method": energy_method,
         "ensemble": True,
         "strategy": strategy,
         "models": list(model_results.keys()),
@@ -1735,20 +1862,27 @@ def _display_ensemble_result(
 
 def _render_details(details: dict, *, image_store=None):
     """Render expandable sections for a stored message (history replay)."""
+    energy_wh = details.get("energy_wh", 0.0)
+    energy_method = details.get("energy_method", "")
+    energy_label = "Energy" if energy_method in ("nvml", "power_sampling") else "Est. energy"
+    energy_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
+
     if details.get("ensemble"):
         # Minimal replay for ensemble messages
         total_cost = details.get("total_cost")
         if total_cost is not None:
-            cols = st.columns(4)
+            cols = st.columns(5)
             cols[0].metric("Models", len(details.get("models", [])))
             cols[1].metric("Aggregation", details.get("strategy", ""))
             cols[2].metric("Total", f"{details.get('elapsed', 0):.1f}s")
             cols[3].metric("Est. cost", f"${total_cost:.4f}")
+            cols[4].metric(energy_label, energy_str)
         else:
-            cols = st.columns(3)
+            cols = st.columns(4)
             cols[0].metric("Models", len(details.get("models", [])))
             cols[1].metric("Aggregation", details.get("strategy", ""))
             cols[2].metric("Total", f"{details.get('elapsed', 0):.1f}s")
+            cols[3].metric(energy_label, energy_str)
         image_details = details.get("image_nodes", [])
         if image_details:
             _display_retrieved_images(image_details[:5], image_store)
@@ -1757,10 +1891,11 @@ def _render_details(details: dict, *, image_store=None):
     timing = details.get("timing", {})
     elapsed = details.get("elapsed", 0)
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
     cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
     cols[2].metric("Total", f"{elapsed:.1f}s")
+    cols[3].metric(energy_label, energy_str)
 
     ref_ids = details.get("ref_id", [])
     ref_urls = details.get("ref_url", [])
