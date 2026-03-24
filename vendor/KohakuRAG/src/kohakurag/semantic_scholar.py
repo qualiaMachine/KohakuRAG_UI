@@ -150,16 +150,17 @@ class SemanticScholarRetriever:
             params["year"] = year_range
 
         last_exc: Exception | None = None
-        for attempt in range(3):
+        max_retries = 5
+        for attempt in range(max_retries):
             try:
                 resp = await self._client.get(_S2_SEARCH, params=params)
                 resp.raise_for_status()
                 break  # success
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
-                if status == 429 and attempt < 2:
-                    wait = (attempt + 1) * 2  # 2s, 4s
-                    print(f"[S2] Rate-limited (429), retrying in {wait}s...", flush=True)
+                if status == 429 and attempt < max_retries - 1:
+                    wait = min(2 ** (attempt + 1), 30)  # 2s, 4s, 8s, 16s, 30s
+                    print(f"[S2] Rate-limited (429), retrying in {wait}s (attempt {attempt + 1}/{max_retries})...", flush=True)
                     await asyncio.sleep(wait)
                     last_exc = exc
                     continue

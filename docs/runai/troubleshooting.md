@@ -5,7 +5,7 @@
 - **vLLM OOM:** Reduce `--max-model-len` (e.g., 4096) or use `--quantization awq`
 - **Embedding server 503:** Model still loading (~30s on first request). Check logs.
 - **Streamlit can't connect:** Verify service DNS names match your job names in the RunAI UI
-- **Vector DB not found:** Run [setup](setup-workspace.md) first — `wattbot_jinav4.db` must exist on the PPVC at `/wattbot-data/embeddings/`. Also verify the PPVC is mounted in your workload.
+- **Vector DB not found / vec_count=0:** The app found no vectors. This usually means the DB file wasn't copied from the PPVC to a writable location. The PPVC is often read-only, and KVaultNodeStore writes metadata on open, so it silently creates a new empty DB. **Fix:** Ensure your startup command copies the DB: `mkdir -p /tmp/vectordb && cp /wattbot-data/embeddings/wattbot_jinav4.db /tmp/vectordb/`. The app auto-discovers it at `/tmp/vectordb/`, or set `VECTOR_DB_PATH=/tmp/vectordb/wattbot_jinav4.db`. See [deploy-streamlit](deploy-streamlit.md) for the full command. Symlinks to read-only volumes **will not work**.
 - **Mismatch errors:** Ensure `EMBEDDING_DIM=1024` matches what was used during index build
 - **Job keeps crashing:** Check logs in RunAI UI (click job > Logs tab). Common causes: OOM, missing files, image pull failure
 

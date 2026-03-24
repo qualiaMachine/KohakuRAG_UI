@@ -119,6 +119,16 @@ Set confidence to "high" when the context clearly and directly answers the quest
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
 """.strip()
 
+SYSTEM_PROMPT_RESEARCH = """
+You are a scientific research assistant specializing in AI's environmental impact. \
+You synthesize information from multiple academic sources to provide comprehensive, \
+well-cited answers. Write in an academic but accessible style, similar to a literature \
+review or survey paper. Always cite your sources using the ref_id provided in square \
+brackets (e.g., [wu2021a]). When the context contains specific numbers, statistics, or \
+claims, include them with citations. If the provided context is limited, acknowledge \
+this explicitly rather than inventing information.
+""".strip()
+
 USER_TEMPLATE = """
 You will be given a question and context snippets taken from documents.
 You must follow these rules:
@@ -164,6 +174,41 @@ Return STRICT JSON with the following keys, in this order:
 - ref_id               (list of document ids from the context used as evidence; or "is_blank")
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
+
+JSON Answer:
+""".strip()
+
+USER_TEMPLATE_RESEARCH = """
+You will be given a question and context snippets taken from academic papers and reports.
+
+Your task is to write a comprehensive, multi-paragraph answer that synthesizes information \
+from the provided sources, similar to a literature review. Follow these rules:
+
+1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
+2. Cite every claim using the ref_id in square brackets, e.g. "Training GPT-3 consumed \
+approximately 1,287 MWh of energy [luccioni2025c]."
+3. Include specific numbers, statistics, and quantitative findings when available in context.
+4. Organize your answer logically: start with a direct answer, then expand with details, \
+comparisons, and implications.
+5. If multiple sources discuss the same topic, synthesize and compare their findings.
+6. End with a brief summary or outlook paragraph.
+7. If the context is insufficient to fully answer the question, state what IS known from \
+the context and note the gaps.
+
+Question: {question}
+
+Context:
+{context}
+
+After your detailed answer, provide a references section listing all cited sources.
+
+Return STRICT JSON with the following keys:
+- explanation          (your multi-paragraph answer with inline [ref_id] citations throughout)
+- answer               (one-sentence summary of the key finding)
+- answer_value         (the most important numeric or categorical value, or "is_blank")
+- ref_id               (list of ALL document ids cited in your answer)
+- ref_url              (list of URLs for cited documents, or "is_blank")
+- supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
 """.strip()
@@ -342,8 +387,8 @@ def _load_shared_resources(config: dict) -> tuple[JinaV4EmbeddingModel, KVaultNo
     """
     embedding_dim = config.get("embedding_dim", 1024)
     embedding_task = config.get("embedding_task", "retrieval")
-    db_raw = config.get("db", "data/embeddings/wattbot_jinav4.db")
-    db_path = _repo_root / db_raw.removeprefix("../").removeprefix("../")
+    db_path = _resolve_vector_db_path(config)
+    db_path = _ensure_writable_db(db_path)
     table_prefix = config.get("table_prefix", "wattbot_jv4")
 
     _debug(
@@ -478,6 +523,96 @@ def init_shared_only() -> tuple[JinaV4EmbeddingModel, KVaultNodeStore, ImageStor
 
 
 # ---------------------------------------------------------------------------
+# Vector DB path resolution
+# ---------------------------------------------------------------------------
+# Common PPVC / NFS mount paths where the pre-built vector DB may live.
+_PPVC_DB_CANDIDATES = [
+    "/tmp/vectordb/wattbot_jinav4.db",  # RunAI startup copies DB here
+    "/wattbot-data/embeddings/wattbot_jinav4.db",
+    "/home/jovyan/work/KohakuRAG_UI/data/embeddings/wattbot_jinav4.db",
+    "/home/jovyan/work/wattbot-data/embeddings/wattbot_jinav4.db",
+]
+
+
+def _resolve_vector_db_path(ref_config: dict) -> Path:
+    """Find the vector DB, checking VECTOR_DB_PATH env, then PPVC candidates, then config default."""
+    # 1. Explicit env var (highest priority)
+    db_env = os.environ.get("VECTOR_DB_PATH")
+    if db_env:
+        p = Path(db_env)
+        if p.exists():
+            _debug(f"Using VECTOR_DB_PATH from env: {p}")
+            return p
+        _debug(f"WARNING: VECTOR_DB_PATH={db_env} does not exist, trying fallbacks...")
+
+    # 2. Config-derived path (repo-relative)
+    db_raw = ref_config.get("db", "data/embeddings/wattbot_jinav4.db")
+    config_path = _repo_root / db_raw.removeprefix("../").removeprefix("../")
+    if config_path.exists():
+        _debug(f"Using config-derived DB path: {config_path}")
+        return config_path
+
+    # 3. Check if data/embeddings is a symlink to a PPVC
+    symlink_target = _repo_root / "data" / "embeddings" / "wattbot_jinav4.db"
+    if symlink_target.exists():
+        _debug(f"Using symlinked DB path: {symlink_target}")
+        return symlink_target
+
+    # 4. Auto-discover from common PPVC mount points
+    for candidate in _PPVC_DB_CANDIDATES:
+        p = Path(candidate)
+        if p.exists():
+            _debug(f"Auto-discovered DB at PPVC path: {p}")
+            return p
+
+    # 5. Fall through to config default (will create empty DB — warn loudly)
+    _debug(
+        f"WARNING: Vector DB not found! Checked:\n"
+        f"  - VECTOR_DB_PATH env var: {db_env or '(not set)'}\n"
+        f"  - Config path: {config_path}\n"
+        f"  - PPVC candidates: {_PPVC_DB_CANDIDATES}\n"
+        f"  The app will start with an EMPTY vector store (0 documents).\n"
+        f"  Set VECTOR_DB_PATH=/path/to/wattbot_jinav4.db to fix this."
+    )
+    return config_path
+
+
+def _ensure_writable_db(db_path: Path) -> Path:
+    """If the DB file is on a read-only filesystem, copy it to a writable temp dir.
+
+    KVaultNodeStore writes metadata on open (auto_pack, META_KEY), so the DB
+    must be writable. Read-only PPVCs will cause failures or silent empty DBs.
+    """
+    if not db_path.exists():
+        return db_path  # Nothing to copy; KVault will create a new empty DB
+
+    # Test if the directory is writable
+    try:
+        test_file = db_path.parent / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        return db_path  # Writable, use as-is
+    except OSError:
+        pass
+
+    # Read-only filesystem — copy to /tmp
+    import shutil
+    tmp_dir = Path("/tmp/wattbot_db_cache")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_db = tmp_dir / db_path.name
+
+    # Only copy if not already cached (or source is newer)
+    if not tmp_db.exists() or db_path.stat().st_mtime > tmp_db.stat().st_mtime:
+        _debug(f"Copying DB from read-only volume to {tmp_db} ...")
+        shutil.copy2(db_path, tmp_db)
+        _debug(f"DB copy complete ({tmp_db.stat().st_size / 1024 / 1024:.1f} MB)")
+    else:
+        _debug(f"Using cached writable DB copy at {tmp_db}")
+
+    return tmp_db
+
+
+# ---------------------------------------------------------------------------
 # Remote pipeline init (vLLM + embedding server)
 # ---------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Connecting to remote inference services...")
@@ -517,13 +652,12 @@ def init_remote_pipeline(
     ref_config = load_config(next(CONFIGS_DIR.glob("hf_*.py")))
     table_prefix = ref_config.get("table_prefix", "wattbot_jv4")
 
-    db_env = os.environ.get("VECTOR_DB_PATH")
-    if db_env:
-        db_path = Path(db_env)
-    else:
-        db_raw = ref_config.get("db", "data/embeddings/wattbot_jinav4.db")
-        db_path = _repo_root / db_raw.removeprefix("../").removeprefix("../")
+    db_path = _resolve_vector_db_path(ref_config)
     embedding_dim = embedder.dimension
+
+    # If the DB is on a read-only filesystem (e.g. PPVC), copy it to a
+    # writable temp location because KVaultNodeStore writes metadata on open.
+    db_path = _ensure_writable_db(db_path)
 
     _debug(
         f"Opening local vector store: {db_path} "
@@ -559,38 +693,60 @@ def _run_qa_sync(
     with_images: bool = False,
     top_k_images: int = 0,
     send_images_to_llm: bool = False,
+    research_mode: bool = False,
+    max_tokens_override: int = 0,
 ):
     """Run pipeline.run_qa synchronously, retrying on failures.
 
     Args:
         max_retries: Number of additional attempts after the first failure.
                      0 means no retries (single attempt).
+        research_mode: If True, use detailed multi-paragraph prompt and system prompt.
+        max_tokens_override: If > 0, temporarily override the chat model's max_tokens.
     """
-    sys_prompt = SYSTEM_PROMPT_BEST_GUESS if best_guess else SYSTEM_PROMPT
-    usr_template = USER_TEMPLATE_BEST_GUESS if best_guess else USER_TEMPLATE
+    if research_mode:
+        sys_prompt = SYSTEM_PROMPT_RESEARCH
+        usr_template = USER_TEMPLATE_RESEARCH
+    elif best_guess:
+        sys_prompt = SYSTEM_PROMPT_BEST_GUESS
+        usr_template = USER_TEMPLATE_BEST_GUESS
+    else:
+        sys_prompt = SYSTEM_PROMPT
+        usr_template = USER_TEMPLATE
+    # Temporarily override max_tokens on the chat model if requested
+    original_max_tokens = None
+    if max_tokens_override > 0 and hasattr(pipeline._chat, '_max_tokens'):
+        original_max_tokens = pipeline._chat._max_tokens
+        pipeline._chat._max_tokens = max_tokens_override
+
     last_exc: Exception | None = None
-    for attempt in range(max_retries + 1):
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(
-                pipeline.run_qa(
-                    question,
-                    system_prompt=sys_prompt,
-                    user_template=usr_template,
-                    top_k=top_k,
-                    with_images=with_images,
-                    top_k_images=top_k_images,
-                    send_images_to_llm=send_images_to_llm,
+    try:
+        for attempt in range(max_retries + 1):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(
+                    pipeline.run_qa(
+                        question,
+                        system_prompt=sys_prompt,
+                        user_template=usr_template,
+                        top_k=top_k,
+                        with_images=with_images,
+                        top_k_images=top_k_images,
+                        send_images_to_llm=send_images_to_llm,
+                    )
                 )
-            )
-        except Exception as exc:
-            last_exc = exc
-            _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
-            if attempt < max_retries:
-                time.sleep(1)  # brief pause before retry
-        finally:
-            loop.close()
-    raise last_exc  # type: ignore[misc]
+            except Exception as exc:
+                last_exc = exc
+                _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
+                if attempt < max_retries:
+                    time.sleep(1)  # brief pause before retry
+            finally:
+                loop.close()
+        raise last_exc  # type: ignore[misc]
+    finally:
+        # Restore original max_tokens
+        if original_max_tokens is not None:
+            pipeline._chat._max_tokens = original_max_tokens
 
 
 def run_single_query(
@@ -598,6 +754,7 @@ def run_single_query(
     best_guess: bool = False, max_retries: int = 0,
     with_images: bool = False, top_k_images: int = 0,
     send_images_to_llm: bool = False,
+    research_mode: bool = False, max_tokens_override: int = 0,
 ):
     """Run a single model query."""
     return _run_qa_sync(
@@ -605,6 +762,7 @@ def run_single_query(
         best_guess=best_guess, max_retries=max_retries,
         with_images=with_images, top_k_images=top_k_images,
         send_images_to_llm=send_images_to_llm,
+        research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
 
 
@@ -796,6 +954,22 @@ def main():
             top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
             best_guess = st.toggle("Allow best-guess answers", value=False,
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
+            research_mode = st.toggle(
+                "Research mode", value=False,
+                help=(
+                    "Generate detailed, multi-paragraph answers with comprehensive "
+                    "citations, similar to OpenScholar. Uses more tokens and takes "
+                    "longer but produces higher quality, synthesis-style answers."
+                ),
+            )
+            if research_mode:
+                max_tokens_override = st.slider(
+                    "Max generation tokens", min_value=512, max_value=4096,
+                    value=2048, step=256,
+                    help="Maximum tokens for the LLM response. Research mode needs more tokens for detailed answers.",
+                )
+            else:
+                max_tokens_override = 0  # 0 = use default
 
             st.divider()
             max_retries = st.number_input(
@@ -850,6 +1024,22 @@ def main():
             top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
             best_guess = st.toggle("Allow best-guess answers", value=False,
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
+            research_mode = st.toggle(
+                "Research mode", value=False,
+                help=(
+                    "Generate detailed, multi-paragraph answers with comprehensive "
+                    "citations, similar to OpenScholar. Uses more tokens and takes "
+                    "longer but produces higher quality, synthesis-style answers."
+                ),
+            )
+            if research_mode:
+                max_tokens_override = st.slider(
+                    "Max generation tokens", min_value=512, max_value=4096,
+                    value=2048, step=256,
+                    help="Maximum tokens for the LLM response. Research mode needs more tokens for detailed answers.",
+                )
+            else:
+                max_tokens_override = 0
 
             st.divider()
             max_retries = st.number_input(
@@ -1056,6 +1246,8 @@ def main():
                             best_guess=best_guess, max_retries=max_retries,
                             with_images=with_images, top_k_images=top_k_images,
                             send_images_to_llm=send_images_to_llm,
+                            research_mode=research_mode,
+                            max_tokens_override=max_tokens_override,
                         )
                     except Exception as e:
                         st.error(f"Pipeline error: {e}")
@@ -1276,7 +1468,12 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
     )
 
     if linked_explanation and linked_explanation != "is_blank":
-        st.markdown(f"**{linked_explanation}**")
+        # For long multi-paragraph answers (research mode), use regular markdown
+        # instead of wrapping everything in bold
+        if len(linked_explanation) > 500 or "\n\n" in linked_explanation:
+            st.markdown(linked_explanation)
+        else:
+            st.markdown(f"**{linked_explanation}**")
         if confidence == "low":
             st.warning("Best guess — the retrieved context only partially supports this answer.")
     elif answer.answer and answer.answer != "is_blank":
