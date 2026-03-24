@@ -185,3 +185,100 @@ class RemoteEmbeddingModel:
                 return resp.status_code == 200
         except Exception:
             return False
+
+
+class RemoteCrossEncoderReranker:
+    """Cross-encoder reranker client that calls a remote FastAPI reranker server.
+
+    The server exposes POST /rerank accepting {"query": "...", "texts": [...]}
+    and returning {"scores": [...], "count": N}.
+
+    Provides the same ``rerank`` and ``rerank_texts`` interface as the local
+    :class:`~kohakurag.reranker.CrossEncoderReranker` so the pipeline can use
+    either interchangeably.
+
+    Example:
+        reranker = RemoteCrossEncoderReranker(
+            base_url="http://my-reranker-service:8082",
+        )
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "http://localhost:8082",
+        timeout: float = 30.0,
+    ) -> None:
+        if not HTTPX_AVAILABLE:
+            raise ImportError(
+                "httpx is required for RemoteCrossEncoderReranker. "
+                "Install with: pip install httpx"
+            )
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+
+    def _rerank_sync(self, query: str, texts: list[str]) -> list[float]:
+        """Synchronous rerank call (used by rerank() which operates on matches)."""
+        import httpx as _httpx
+        resp = _httpx.post(
+            f"{self._base_url}/rerank",
+            json={"query": query, "texts": texts},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()["scores"]
+
+    def rerank(
+        self,
+        matches: list,
+        query: str,
+        *,
+        top_k: int | None = None,
+    ) -> list:
+        """Rescore and reorder RetrievalMatch objects by cross-encoder relevance."""
+        from .types import RetrievalMatch
+
+        if not matches:
+            return matches
+
+        texts = [m.node.text for m in matches]
+        scores = self._rerank_sync(query, texts)
+
+        scored = sorted(
+            zip(scores, matches),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+
+        result = []
+        for score, match in scored:
+            result.append(RetrievalMatch(node=match.node, score=float(score)))
+
+        if top_k is not None:
+            result = result[:top_k]
+        return result
+
+    def rerank_texts(
+        self,
+        texts: Sequence[str],
+        query: str,
+    ) -> list[tuple[int, float]]:
+        """Score raw text passages against a query.
+
+        Returns list of ``(original_index, score)`` sorted by score descending.
+        """
+        if not texts:
+            return []
+
+        scores = self._rerank_sync(query, list(texts))
+        indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
+        return [(i, float(s)) for i, s in indexed]
+
+    async def health(self) -> bool:
+        """Check if the remote reranker service is reachable."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self._base_url}/health")
+                return resp.status_code == 200
+        except Exception:
+            return False

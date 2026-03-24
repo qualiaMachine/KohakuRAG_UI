@@ -62,9 +62,9 @@ if _rag_mode == "local":
     from kohakurag.embeddings import JinaV4EmbeddingModel
     from kohakurag.llm import HuggingFaceLocalChatModel
 
-# Remote inference clients (vLLM + embedding server)
+# Remote inference clients (vLLM + embedding server + reranker)
 try:
-    from kohakurag.remote import RemoteEmbeddingModel, VLLMChatModel
+    from kohakurag.remote import RemoteEmbeddingModel, VLLMChatModel, RemoteCrossEncoderReranker
     REMOTE_AVAILABLE = True
 except ImportError:
     REMOTE_AVAILABLE = False
@@ -78,6 +78,7 @@ VLLM_MODEL = os.environ.get("VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 VLLM_MAX_TOKENS = int(os.environ.get("VLLM_MAX_TOKENS", "512"))
 VLLM_TEMPERATURE = float(os.environ.get("VLLM_TEMPERATURE", "0.2"))
 EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhost:8080")
+RERANKER_SERVICE_URL = os.environ.get("RERANKER_SERVICE_URL", "")
 
 # ---------------------------------------------------------------------------
 # Prompts (shared with run_experiment.py)
@@ -392,9 +393,16 @@ def _apply_retrieval_enhancements(
     s2_top_k: int = 5,
 ) -> None:
     """Configure cross-encoder reranker and Semantic Scholar on an existing pipeline."""
-    # Cross-encoder reranker
-    if enable_cross_encoder and RERANKER_AVAILABLE:
-        pipeline._cross_encoder = _load_cross_encoder(cross_encoder_model)
+    # Cross-encoder reranker — use remote service if URL is set, else local
+    if enable_cross_encoder:
+        if RERANKER_SERVICE_URL and REMOTE_AVAILABLE:
+            pipeline._cross_encoder = RemoteCrossEncoderReranker(
+                base_url=RERANKER_SERVICE_URL,
+            )
+        elif RERANKER_AVAILABLE:
+            pipeline._cross_encoder = _load_cross_encoder(cross_encoder_model)
+        else:
+            pipeline._cross_encoder = None
     else:
         pipeline._cross_encoder = None
 
@@ -806,7 +814,17 @@ def main():
                     "S2 papers to include", min_value=1, max_value=20, value=5,
                     help="Number of external paper abstracts to append to context.",
                 )
-            enable_cross_encoder = False
+            if RERANKER_SERVICE_URL:
+                enable_cross_encoder = st.toggle(
+                    "Cross-encoder reranker", value=True,
+                    help=(
+                        "Use a cross-encoder model to rescore passages after "
+                        "retrieval. Improves relevance ranking. Calls remote "
+                        "reranker service."
+                    ),
+                )
+            else:
+                enable_cross_encoder = False
             cross_encoder_model = "BAAI/bge-reranker-v2-m3"
 
     # ---- Local mode: full sidebar with model selection ----
