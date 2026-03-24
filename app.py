@@ -1320,7 +1320,7 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
         "ref_url": answer.ref_url,
         "supporting_materials": answer.supporting_materials,
         "snippets": [
-            {"rank": s.rank, "score": s.score, "title": s.document_title, "text": s.text}
+            {"rank": s.rank, "score": s.score, "title": s.document_title, "text": s.text, "node_id": s.node_id}
             for s in result.retrieval.snippets
         ],
         "raw_response": result.raw_response,
@@ -1403,7 +1403,8 @@ def _display_ensemble_result(
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
         with st.expander(label):
             for s in display_snippets:
-                st.markdown(f"**#{s.rank}** _{s.document_title}_ (score: {s.score:.3f})")
+                tag = " **[S2]**" if s.node_id.startswith("s2:") else ""
+                st.markdown(f"**#{s.rank}** _{s.document_title}_ (score: {s.score:.3f}){tag}")
                 st.text(s.text[:500] + ("..." if len(s.text) > 500 else ""))
                 st.divider()
 
@@ -1503,7 +1504,8 @@ def _render_details(details: dict):
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
         with st.expander(label):
             for s in display_snippets:
-                st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f})")
+                tag = " **[S2]**" if s.get("node_id", "").startswith("s2:") else ""
+                st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f}){tag}")
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
                 st.divider()
 
