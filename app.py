@@ -848,7 +848,7 @@ def main():
             cross_encoder_model = "BAAI/bge-reranker-v2-m3"
             if RERANKER_AVAILABLE:
                 enable_cross_encoder = st.toggle(
-                    "Cross-encoder reranker", value=False,
+                    "Cross-encoder reranker", value=True,
                     help=(
                         "Use a cross-encoder model to rescore passages after "
                         "retrieval. Improves relevance ranking but adds ~1-2s latency. "
