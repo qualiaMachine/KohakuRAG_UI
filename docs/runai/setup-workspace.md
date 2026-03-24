@@ -420,21 +420,57 @@ picks up the new database.
 
 **Optional: Enable image retrieval (figures and charts from PDFs):**
 
-After building the text index, you can extract and store PDF images so
-the app can display relevant figures alongside text answers:
+After building the text index, you can render PDF pages as images and
+build a cross-modal image index so the app can retrieve and display
+relevant figures alongside text answers. JinaV4 embeds images directly
+into the same vector space as text — no vision LLM or API key required.
 
 ```bash
-# Extract and store compressed images from PDFs into the DB
 cd vendor/KohakuRAG
+
+# Step 1: Render PDF pages as images, store in DB, and add
+#         page_image nodes (with image_storage_key) to corpus JSONs
 kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
 
-# Optional: build dedicated image search index (for image-specific queries)
-kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/index.py
+# Step 2: Re-index so the new page_image nodes (with image_storage_key
+#         metadata) are embedded into the vector store
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+
+# Step 3: Build dedicated image vector index — JinaV4 embeds the actual
+#         page images directly (not captions) for cross-modal retrieval
+kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
+
 cd ../..
 ```
 
-Then enable **Image retrieval** in the Streamlit sidebar to see figures
-in answers. No vision LLM API key is required for basic image display.
+**Why 3 steps?** `store_images` renders pages and updates the corpus
+JSONs with `page_image` paragraphs containing `image_storage_key`
+metadata. The re-index picks up those new nodes. Then the image index
+builder reads the image bytes via `image_storage_key` and embeds them
+with JinaV4's `encode_image()` into a separate `_images_vec` table.
+
+**Verify the image index was built:**
+
+```bash
+python -c "
+import sqlite3
+conn = sqlite3.connect('/wattbot-data/embeddings/wattbot_jinav4.db')
+cur = conn.cursor()
+cur.execute('SELECT COUNT(*) FROM image_blobs')
+print(f'ImageStore entries: {cur.fetchone()[0]}')
+cur.execute(\"SELECT COUNT(*) FROM wattbot_jv4_kv WHERE value LIKE '%page_image%'\")
+print(f'page_image nodes:  {cur.fetchone()[0]}')
+try:
+    cur.execute('SELECT COUNT(*) FROM wattbot_jv4_images_vec')
+    print(f'Image vectors:     {cur.fetchone()[0]}')
+except:
+    print('Image vectors:     MISSING')
+conn.close()
+"
+```
+
+All three counts should be > 0. Then restart `wattbot-app` and enable
+**Image retrieval** in the Streamlit sidebar to see figures in answers.
 
 ### 0j. Stop the Workspace
 
