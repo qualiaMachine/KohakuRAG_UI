@@ -14,6 +14,8 @@ from .datastore import HierarchicalNodeStore, InMemoryNodeStore, matches_to_snip
 if TYPE_CHECKING:
     from .datastore import ImageStore
 from .embeddings import EmbeddingModel, JinaEmbeddingModel
+from .reranker import CrossEncoderReranker
+from .semantic_scholar import SemanticScholarRetriever
 from .types import ContextSnippet, NodeKind, RetrievalMatch, StoredNode
 
 
@@ -355,6 +357,9 @@ class RAGPipeline:
         image_store: ImageStore | None = None,
         no_overlap: bool = False,
         bm25_top_k: int = 0,
+        cross_encoder: CrossEncoderReranker | None = None,
+        semantic_scholar: SemanticScholarRetriever | None = None,
+        semantic_scholar_top_k: int = 5,
     ) -> None:
         """Initialize RAG pipeline with pluggable components.
 
@@ -379,6 +384,11 @@ class RAGPipeline:
             bm25_top_k: Number of additional results from BM25 sparse search (0 = disabled).
                        These results are added to dense retrieval results for context expansion,
                        NOT used for score fusion. This adds complementary keyword-matched content.
+            cross_encoder: Optional cross-encoder reranker for improved passage scoring.
+                          Applied after heuristic reranking, before top_k_final truncation.
+            semantic_scholar: Optional Semantic Scholar retriever for external paper search.
+                             When enabled, S2 abstracts are appended to local retrieval context.
+            semantic_scholar_top_k: Max external papers to include from Semantic Scholar.
         """
         self._store = store or InMemoryNodeStore()
         self._embedder = embedder or JinaEmbeddingModel()
@@ -391,6 +401,9 @@ class RAGPipeline:
         self._image_store = image_store
         self._no_overlap = no_overlap
         self._bm25_top_k = bm25_top_k
+        self._cross_encoder = cross_encoder
+        self._semantic_scholar = semantic_scholar
+        self._semantic_scholar_top_k = semantic_scholar_top_k
 
     @property
     def store(self) -> HierarchicalNodeStore:
@@ -592,6 +605,12 @@ class RAGPipeline:
         if self._rerank_strategy:
             all_matches = self._rerank_matches(all_matches, len(queries))
 
+        # Apply cross-encoder reranking if configured (after heuristic rerank)
+        if self._cross_encoder is not None:
+            all_matches = self._cross_encoder.rerank(
+                all_matches, question,
+            )
+
         # Apply top_k_final truncation if configured
         if self._top_k_final is not None and self._top_k_final > 0:
             all_matches = all_matches[: self._top_k_final]
@@ -630,6 +649,24 @@ class RAGPipeline:
             child_depth=1,  # Include child sentences
             no_overlap=self._no_overlap,
         )
+
+        # Append Semantic Scholar results as additional context snippets
+        s2_snippets: list[ContextSnippet] = []
+        if self._semantic_scholar is not None:
+            s2_papers = await self._semantic_scholar.search_multi(
+                queries, top_k=self._semantic_scholar_top_k,
+            )
+            if s2_papers:
+                # If cross-encoder is available, rerank S2 results too
+                if self._cross_encoder is not None:
+                    ranked = self._cross_encoder.rerank_texts(
+                        [p.abstract for p in s2_papers], question,
+                    )
+                    s2_papers = [s2_papers[i] for i, _ in ranked[: self._semantic_scholar_top_k]]
+                s2_snippets = SemanticScholarRetriever.papers_to_snippets(
+                    s2_papers, rank_offset=len(snippets),
+                )
+                snippets = list(snippets) + s2_snippets
 
         return RetrievalResult(
             question=question,
