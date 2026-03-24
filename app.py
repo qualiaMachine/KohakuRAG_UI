@@ -985,6 +985,7 @@ def main():
                 st.markdown(f"- *{t}*")
             if s["count"] > 5:
                 st.markdown(f"- ...and {s['count'] - 5} more")
+            st.page_link("pages/1_Corpus.py", label="\U0001F4DA Browse full corpus")
 
             st.caption(
                 "Tip: Enable **Semantic Scholar search** in the sidebar to "
