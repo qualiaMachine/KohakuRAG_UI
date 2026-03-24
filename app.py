@@ -992,10 +992,31 @@ def main():
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
             )
 
-            # Image retrieval sidebar hidden while debugging
-            with_images = False
+            with_images = st.toggle(
+                "Image retrieval", value=False,
+                help=(
+                    "Extract figures and charts from retrieved PDF sections. "
+                    "Shows relevant images alongside text answers."
+                ),
+            )
             top_k_images = 0
             send_images_to_llm = False
+            if with_images:
+                top_k_images = st.slider(
+                    "Additional image results", min_value=0, max_value=10, value=3,
+                    help=(
+                        "Images to retrieve from dedicated image index "
+                        "(on top of images found in text sections). "
+                        "Requires the image index to be built."
+                    ),
+                )
+                send_images_to_llm = st.toggle(
+                    "Send images to LLM", value=False,
+                    help=(
+                        "Send retrieved images directly to a vision-capable LLM. "
+                        "Requires a multimodal model (e.g. Qwen-VL)."
+                    ),
+                )
 
             st.divider()
             st.subheader("Retrieval enhancements")
@@ -1096,10 +1117,31 @@ def main():
                 help="Maximum retry attempts when the LLM response cannot be parsed.",
             )
 
-            # Image retrieval sidebar hidden while debugging
-            with_images = False
+            with_images = st.toggle(
+                "Image retrieval", value=False,
+                help=(
+                    "Extract figures and charts from retrieved PDF sections. "
+                    "Shows relevant images alongside text answers."
+                ),
+            )
             top_k_images = 0
             send_images_to_llm = False
+            if with_images:
+                top_k_images = st.slider(
+                    "Additional image results", min_value=0, max_value=10, value=3,
+                    help=(
+                        "Images to retrieve from dedicated image index "
+                        "(on top of images found in text sections). "
+                        "Requires the image index to be built."
+                    ),
+                )
+                send_images_to_llm = st.toggle(
+                    "Send images to LLM", value=False,
+                    help=(
+                        "Send retrieved images directly to a vision-capable LLM. "
+                        "Requires a multimodal model (e.g. Qwen-VL)."
+                    ),
+                )
 
             st.divider()
             st.subheader("Retrieval enhancements")
@@ -1585,11 +1627,20 @@ def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | No
                 links.append(label)
         st.markdown("Sources: " + " · ".join(links))
 
-    # Image display disabled while debugging
-    # image_store = getattr(pipeline, "_image_store", None) if pipeline else None
-    # _display_retrieved_images(result.retrieval.image_nodes, image_store)
+    # Show retrieved figures if image retrieval is enabled
+    image_store = getattr(pipeline, "_image_store", None) if pipeline else None
+    _display_retrieved_images(result.retrieval.image_nodes, image_store)
 
+    # Serialize image nodes for history replay
     image_details = []
+    if result.retrieval.image_nodes:
+        for node in result.retrieval.image_nodes:
+            image_details.append({
+                "storage_key": node.metadata.get("image_storage_key"),
+                "caption": node.text or "",
+                "page": node.metadata.get("page", "?"),
+                "doc_id": node.metadata.get("document_id", "unknown"),
+            })
 
     # Count S2 snippets for debug visibility
     s2_snippet_count = sum(
@@ -1697,15 +1748,11 @@ def _display_ensemble_result(
                 st.text(s.text[:500] + ("..." if len(s.text) > 500 else ""))
                 st.divider()
 
-    # Image display disabled while debugging
-    # image_nodes = first_result.retrieval.image_nodes
-    # _display_retrieved_images(image_nodes)
+    # Show retrieved figures from first model's retrieval
+    image_nodes = first_result.retrieval.image_nodes
+    _display_retrieved_images(image_nodes)
 
-    # Raw responses per model
-    with st.expander("Raw LLM responses"):
-        for name, info in agg["individual"].items():
-            st.markdown(f"**{name}**")
-            st.code(info["raw_response"], language="json")
+    # Raw responses available via debug logging (removed from UI for cleanliness)
 
     image_details = []
 
@@ -1747,10 +1794,9 @@ def _render_details(details: dict):
             cols[0].metric("Models", len(details.get("models", [])))
             cols[1].metric("Aggregation", details.get("strategy", ""))
             cols[2].metric("Total", f"{details.get('elapsed', 0):.1f}s")
-        # Image display disabled while debugging
-        # image_details = details.get("image_nodes", [])
-        # if image_details:
-        #     _display_retrieved_images(image_details)
+        image_details = details.get("image_nodes", [])
+        if image_details:
+            _display_retrieved_images(image_details)
         return
 
     timing = details.get("timing", {})
@@ -1790,15 +1836,11 @@ def _render_details(details: dict):
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
                 st.divider()
 
-    # Image display disabled while debugging
-    # image_details = details.get("image_nodes", [])
-    # if image_details:
-    #     _display_retrieved_images(image_details)
+    image_details = details.get("image_nodes", [])
+    if image_details:
+        _display_retrieved_images(image_details)
 
-    raw = details.get("raw_response", "")
-    if raw:
-        with st.expander("Raw LLM response"):
-            st.code(raw, language="json")
+    # Raw LLM response available in debug logs (removed from UI for cleanliness)
 
 
 if __name__ == "__main__":

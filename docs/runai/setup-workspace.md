@@ -418,6 +418,24 @@ picks up the new database.
 > `/wattbot-data/pdfs/` — the indexer skips re-downloading cached PDFs.
 > Only delete `corpus/*.json` and the `.db` file to force a full rebuild.
 
+**Optional: Enable image retrieval (figures and charts from PDFs):**
+
+After building the text index, you can extract and store PDF images so
+the app can display relevant figures alongside text answers:
+
+```bash
+# Extract and store compressed images from PDFs into the DB
+cd vendor/KohakuRAG
+kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
+
+# Optional: build dedicated image search index (for image-specific queries)
+kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/index.py
+cd ../..
+```
+
+Then enable **Image retrieval** in the Streamlit sidebar to see figures
+in answers. No vision LLM API key is required for basic image display.
+
 ### 0j. Stop the Workspace
 
 Once the pipeline test passes, you can **stop the Workspace** from the RunAI UI
