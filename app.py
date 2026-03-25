@@ -227,11 +227,22 @@ class EnergyTracker:
         return (_GPU_TDP_WATTS * _GPU_UTIL * elapsed_s) / 3600.0
 
 
-def _format_energy(wh: float) -> str:
-    """Human-friendly energy string (auto-scale Wh / mWh)."""
-    if wh >= 1.0:
-        return f"{wh:.2f} Wh"
-    return f"{wh * 1000:.1f} mWh"
+def _format_energy(wh: float, *, split: bool = False) -> str | tuple[str, str]:
+    """Human-friendly energy string (auto-scale kWh / Wh).
+
+    Args:
+        wh: Energy in watt-hours.
+        split: If True, return (value, unit) tuple for st.metric display.
+    """
+    if wh >= 1000.0:
+        val, unit = f"{wh / 1000:.2f}", "kWh"
+    elif wh >= 1.0:
+        val, unit = f"{wh:.2f}", "Wh"
+    else:
+        val, unit = f"{wh * 1000:.1f}", "mWh"
+    if split:
+        return val, unit
+    return f"{val} {unit}"
 
 
 # ---------------------------------------------------------------------------
@@ -1456,8 +1467,9 @@ def main():
         _total_e = st.session_state.get("total_energy_wh", 0.0)
         _n_queries = st.session_state.get("query_count", 0)
         if _n_queries > 0:
+            _e_val, _e_unit = _format_energy(_total_e, split=True)
             e_col1, e_col2 = st.columns(2)
-            e_col1.metric("Total", _format_energy(_total_e))
+            e_col1.metric(f"Total ({_e_unit})", _e_val)
             e_col2.metric("Queries", _n_queries)
             st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
         else:
@@ -1817,18 +1829,31 @@ def _display_retrieved_images(image_nodes, image_store=None):
             })
 
         # Render as a thumbnail grid (3 columns)
-        n_cols = min(3, len(images))
-        cols = st.columns(n_cols)
-        for idx, img in enumerate(images):
-            col = cols[idx % n_cols]
-            with col:
-                if img["bytes"]:
+        has_images = [img for img in images if img["bytes"]]
+        text_only = [img for img in images if not img["bytes"] and img["caption"]]
+
+        if has_images:
+            n_cols = min(3, len(has_images))
+            cols = st.columns(n_cols)
+            for idx, img in enumerate(has_images):
+                col = cols[idx % n_cols]
+                with col:
                     st.image(img["bytes"], caption=img["short_label"], width=200)
-                    # Expandable full-size view on click
                     with st.popover(f"Expand: {img['short_label']}"):
                         st.image(img["bytes"], caption=img["full_label"])
-                elif img["caption"]:
-                    st.markdown(f"**{img['short_label']}:** {img['caption'][:200]}")
+
+        # Show text-only fallbacks for images not found in store
+        if text_only:
+            for img in text_only:
+                # Clean up raw metadata from caption (e.g. "[Image page=3 idx=1...]")
+                clean_caption = re.sub(
+                    r"\[Image page=\d+ idx=\d+ name=\S+\]\s*Size:\s*\d+x\d+,?\s*Data:\s*\d+ bytes\s*",
+                    "", img["caption"],
+                ).strip()
+                if clean_caption:
+                    st.caption(f"{img['short_label']}: {clean_caption[:200]}")
+                else:
+                    st.caption(f"{img['short_label']}: (image not available)")
 
 
 def _display_single_result(
@@ -1861,21 +1886,7 @@ def _display_single_result(
     if answer.answer_value and answer.answer_value != "is_blank":
         st.markdown(f"Value: `{answer.answer_value}`")
 
-    # Clickable reference links (shown directly, not inside an expander)
-    ref_ids = answer.ref_id
-    ref_urls = answer.ref_url
-    if ref_ids and ref_ids != "is_blank":
-        links = []
-        for i, rid in enumerate(ref_ids if isinstance(ref_ids, list) else [ref_ids]):
-            url = METADATA_URLS.get(rid)
-            if not url:
-                url = ref_urls[i] if isinstance(ref_urls, list) and i < len(ref_urls) else None
-            label = _humanize_ref_id(rid)
-            if url and url != "is_blank":
-                links.append(f"[{label}]({url})")
-            else:
-                links.append(label)
-        st.markdown("Sources: " + " · ".join(links))
+    # Sources are rendered by _render_details() below (avoids duplication)
 
     # Serialize image nodes for history replay (displayed via _render_details below)
     image_details = []

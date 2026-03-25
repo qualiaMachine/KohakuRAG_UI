@@ -1024,8 +1024,14 @@ class RAGPipeline:
         t_retrieval = initial_result.timing.get("retrieval_s", 0)
         t_generation = initial_result.timing.get("generation_s", 0)
 
-        # Format the initial context for feedback/refinement prompts
-        initial_context = format_snippets(initial_result.retrieval.snippets)
+        # Format the initial context for feedback/refinement prompts.
+        # Truncate to top snippets to avoid context overflow — the feedback
+        # and refinement prompts include the context PLUS the response PLUS
+        # instructions, so we need headroom.  OpenScholar uses top 10 passages
+        # for multi-paper tasks (Section 4.1).
+        _max_feedback_snippets = 20
+        feedback_snippets = initial_result.retrieval.snippets[:_max_feedback_snippets]
+        initial_context = format_snippets(feedback_snippets)
         current_response = initial_result.raw_response
 
         # Extract the explanation text for feedback (cleaner than raw JSON)
@@ -1093,9 +1099,9 @@ class RAGPipeline:
                         top_k=top_k,
                         bm25_top_k=bm25_top_k,
                     )
-                    # Deduplicate against existing snippets
+                    # Deduplicate against existing snippets, limit to 10 new ones
                     existing_ids = {s.node_id for s in all_snippets}
-                    new_snippets = [s for s in supplemental.snippets if s.node_id not in existing_ids]
+                    new_snippets = [s for s in supplemental.snippets if s.node_id not in existing_ids][:10]
                     if new_snippets:
                         all_snippets.extend(new_snippets)
                         new_context = format_snippets(new_snippets)
