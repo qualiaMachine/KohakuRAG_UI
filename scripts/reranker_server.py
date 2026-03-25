@@ -89,6 +89,10 @@ from sentence_transformers import CrossEncoder
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+# Energy measurement — runs on a GPU node so NVML should be available
+sys.path.insert(0, str(os.path.dirname(os.path.abspath(__file__))))
+from hardware_metrics import NVMLEnergyCounter
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -104,6 +108,7 @@ BATCH_SIZE = int(os.environ.get("RERANKER_BATCH", "32"))
 app = FastAPI(title="KohakuRAG Reranker Server", version="1.0.0")
 
 _model: CrossEncoder | None = None
+_energy_counter: NVMLEnergyCounter | None = None
 
 
 class RerankRequest(BaseModel):
@@ -115,6 +120,7 @@ class RerankResponse(BaseModel):
     scores: list[float]
     count: int
     elapsed_ms: float
+    energy_wh: float = 0.0  # GPU energy consumed by this request
 
 
 class InfoResponse(BaseModel):
@@ -124,12 +130,17 @@ class InfoResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    global _model
+    global _model, _energy_counter
     print(f"[reranker_server] Loading {MODEL_NAME} (device={DEVICE})...", flush=True)
     t0 = time.time()
     _model = CrossEncoder(MODEL_NAME, device=DEVICE)
     elapsed = time.time() - t0
     print(f"[reranker_server] Model loaded in {elapsed:.1f}s. Serving on {HOST}:{PORT}", flush=True)
+    _energy_counter = NVMLEnergyCounter()
+    if _energy_counter.available:
+        print("[reranker_server] NVML energy counter available", flush=True)
+    else:
+        print("[reranker_server] NVML energy counter not available", flush=True)
 
 
 @app.get("/health")
@@ -156,14 +167,23 @@ async def rerank(request: RerankRequest):
 
     pairs = [(request.query, t) for t in request.texts]
 
+    if _energy_counter and _energy_counter.available:
+        _energy_counter.start()
+
     t0 = time.time()
     scores = _model.predict(pairs, batch_size=BATCH_SIZE, show_progress_bar=False)
     elapsed_ms = (time.time() - t0) * 1000
+
+    energy_wh = 0.0
+    if _energy_counter and _energy_counter.available:
+        per_gpu = _energy_counter.stop()
+        energy_wh = sum(per_gpu.values()) if per_gpu else 0.0
 
     return RerankResponse(
         scores=[float(s) for s in scores],
         count=len(request.texts),
         elapsed_ms=round(elapsed_ms, 2),
+        energy_wh=round(energy_wh, 8),
     )
 
 

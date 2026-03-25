@@ -175,6 +175,10 @@ JinaV4EmbeddingModel = _mod.JinaV4EmbeddingModel
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+# Energy measurement — runs on a GPU node so NVML should be available
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hardware_metrics import NVMLEnergyCounter
+
 # ---------------------------------------------------------------------------
 # Configuration from environment
 # ---------------------------------------------------------------------------
@@ -212,6 +216,7 @@ app = FastAPI(title="KohakuRAG Embedding Server", version="1.0.0")
 
 # Global embedder — initialized on startup
 _embedder: JinaV4EmbeddingModel | None = None
+_energy_counter: NVMLEnergyCounter | None = None
 
 
 class EmbedRequest(BaseModel):
@@ -223,6 +228,7 @@ class EmbedResponse(BaseModel):
     dimension: int
     count: int
     elapsed_ms: float
+    energy_wh: float = 0.0  # GPU energy consumed by this request
 
 
 class InfoResponse(BaseModel):
@@ -234,7 +240,7 @@ class InfoResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    global _embedder
+    global _embedder, _energy_counter
     print(f"[embedding_server] Loading {MODEL_NAME} (task={TASK}, dim={DIM})...", flush=True)
     t0 = time.time()
     _embedder = JinaV4EmbeddingModel(
@@ -246,6 +252,12 @@ async def startup():
     _embedder._ensure_model()
     elapsed = time.time() - t0
     print(f"[embedding_server] Model loaded in {elapsed:.1f}s. Serving on {HOST}:{PORT}", flush=True)
+    # Initialize NVML energy counter for per-request measurement
+    _energy_counter = NVMLEnergyCounter()
+    if _energy_counter.available:
+        print("[embedding_server] NVML energy counter available — per-request energy will be reported", flush=True)
+    else:
+        print("[embedding_server] NVML energy counter not available — energy_wh will be 0", flush=True)
 
 
 @app.get("/health")
@@ -282,15 +294,25 @@ async def embed(request: EmbedRequest):
             embeddings=[], dimension=_embedder.dimension, count=0, elapsed_ms=0.0
         )
 
+    # Measure GPU energy around the inference call
+    if _energy_counter and _energy_counter.available:
+        _energy_counter.start()
+
     t0 = time.time()
     vectors = await _embedder.embed(request.texts)
     elapsed_ms = (time.time() - t0) * 1000
+
+    energy_wh = 0.0
+    if _energy_counter and _energy_counter.available:
+        per_gpu = _energy_counter.stop()
+        energy_wh = sum(per_gpu.values()) if per_gpu else 0.0
 
     return EmbedResponse(
         embeddings=vectors.tolist(),
         dimension=_embedder.dimension,
         count=len(request.texts),
         elapsed_ms=round(elapsed_ms, 2),
+        energy_wh=round(energy_wh, 8),
     )
 
 
