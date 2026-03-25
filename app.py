@@ -81,6 +81,20 @@ VLLM_TEMPERATURE = float(os.environ.get("VLLM_TEMPERATURE", "0.2"))
 EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhost:8080")
 RERANKER_SERVICE_URL = os.environ.get("RERANKER_SERVICE_URL", "")
 
+# ---------------------------------------------------------------------------
+# Print RunAI access URL at startup (if running inside a RunAI workspace)
+# ---------------------------------------------------------------------------
+_runai_project = os.environ.get("RUNAI_PROJECT", "")
+_runai_job_name = os.environ.get("RUNAI_JOB_NAME", "")
+_runai_cluster_host = os.environ.get("RUNAI_CLUSTER_HOST", "deepthought.doit.wisc.edu")
+if _runai_project and _runai_job_name:
+    _app_url = f"https://{_runai_cluster_host}/{_runai_project}/{_runai_job_name}/proxy/8501/"
+    print(f"\n{'='*60}")
+    print(f"  WattBot RAG is available at:")
+    print(f"  {_app_url}")
+    print(f"{'='*60}\n")
+
+
 
 def _detect_vllm_model(base_url: str) -> str:
     """Query the vLLM /v1/models endpoint to discover the served model.
