@@ -1040,6 +1040,13 @@ class RAGPipeline:
         # Track all snippets across iterations
         all_snippets = list(initial_result.retrieval.snippets)
 
+        # Check if initial retrieval already included Semantic Scholar results.
+        # If so, skip re-retrieval in feedback rounds — we already have broad
+        # external coverage and re-retrieval is the main latency bottleneck.
+        _has_s2 = any(
+            s.node_id.startswith("s2:") for s in initial_result.retrieval.snippets
+        )
+
         # --- Step 2: Self-feedback loop ---
         feedback_log: list[dict] = []
         for round_num in range(max_feedback_rounds):
@@ -1089,8 +1096,10 @@ class RAGPipeline:
             _log.debug(f"Feedback round {round_num + 1}: {len(feedback_items)} items, query={retrieval_query}")
 
             # --- Step 3: Optional re-retrieval based on feedback ---
+            # Skip if initial retrieval already has S2 results (broad coverage
+            # already present — re-retrieval is the main latency bottleneck).
             new_context = ""
-            if retrieval_query:
+            if retrieval_query and not _has_s2:
                 _status(f"Re-retrieving for: {retrieval_query[:80]}...")
                 t_retr_start = _time.time()
                 try:
@@ -1109,6 +1118,8 @@ class RAGPipeline:
                 except Exception as e:
                     _log.warning(f"Re-retrieval failed: {e}")
                 t_retrieval += _time.time() - t_retr_start
+            elif retrieval_query and _has_s2:
+                _log.debug("Skipping re-retrieval: initial retrieval already includes S2 papers")
 
             # --- Step 4: Refine response incorporating feedback ---
             _status(f"Refining response (round {round_num + 1})...")

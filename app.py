@@ -337,26 +337,32 @@ Your task is to write a comprehensive, multi-paragraph answer that synthesizes i
 from the provided sources, similar to a literature review. Follow these rules:
 
 1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
-2. Cite every claim using the ref_id in square brackets, e.g. "Training GPT-3 consumed \
-approximately 1,287 MWh of energy [luccioni2025c]."
+2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
+square brackets immediately after, e.g. "Training GPT-3 consumed approximately 1,287 MWh \
+of energy [luccioni2025c]." Do NOT write any factual claim without a citation.
 3. Include specific numbers, statistics, and quantitative findings when available in context.
 4. Organize your answer logically: start with a direct answer, then expand with details, \
 comparisons, and implications.
-5. If multiple sources discuss the same topic, synthesize and compare their findings.
+5. If multiple sources discuss the same topic, synthesize and compare their findings, \
+citing each: "While [wu2021a] reports X, [luccioni2025c] found Y."
 6. End with a brief summary or outlook paragraph.
 7. If the context is insufficient to fully answer the question, state what IS known from \
 the context and note the gaps. You MUST still provide an answer — never use "is_blank" for \
 the answer or explanation fields.
+
+Example of properly cited text:
+"The energy required to train GPT-3 was approximately 1,287 MWh [luccioni2025c], while \
+GPT-4 training consumed an estimated 50 GWh [islam2025]. Fine-tuning typically requires \
+substantially less computation [samsi2024], but its cumulative impact across organizations \
+can be significant [dodge2022]."
 
 Question: {question}
 
 Context:
 {context}
 
-After your detailed answer, provide a references section listing all cited sources.
-
 Return STRICT JSON with the following keys:
-- explanation          (your multi-paragraph answer with inline [ref_id] citations throughout)
+- explanation          (your multi-paragraph answer with inline [ref_id] citations on EVERY factual sentence)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
 - ref_id               (list of ALL document ids cited in your answer)
@@ -974,7 +980,7 @@ def _run_qa_sync(
                             user_template=usr_template,
                             feedback_prompt=FEEDBACK_PROMPT_RESEARCH,
                             refinement_prompt=REFINEMENT_PROMPT_RESEARCH,
-                            max_feedback_rounds=3,
+                            max_feedback_rounds=2,
                             top_k=top_k,
                             with_images=with_images,
                             top_k_images=top_k_images,
@@ -1570,6 +1576,7 @@ def main():
                     msg["content"],
                     ref_ids=details.get("ref_id"),
                     ref_urls=details.get("ref_url"),
+                    snippet_urls=details.get("snippet_urls"),
                 )
                 # Use regular markdown for long research-mode answers
                 if len(linked) > 500 or "\n\n" in linked:
@@ -1726,6 +1733,7 @@ def _linkify_citations(
     text: str,
     ref_ids=None,
     ref_urls=None,
+    snippet_urls: dict[str, str] | None = None,
 ) -> str:
     """Replace citation references in *text* with clickable markdown links.
 
@@ -1740,12 +1748,14 @@ def _linkify_citations(
     if not text:
         return text
 
-    # Build fallback url map from the answer's own ref data
+    # Build fallback url map from the answer's own ref data + snippet URLs
     answer_urls: dict[str, str] = {}
+    if snippet_urls:
+        answer_urls.update(snippet_urls)
     clean_ids = _clean_ref_ids(ref_ids)
     urls = ref_urls if isinstance(ref_urls, list) else ([ref_urls] if ref_urls else [])
     for i, rid in enumerate(clean_ids):
-        if not METADATA_URLS.get(rid) and i < len(urls):
+        if not METADATA_URLS.get(rid) and not answer_urls.get(rid) and i < len(urls):
             u = urls[i]
             if u and u != "is_blank":
                 answer_urls[rid] = u
@@ -1878,9 +1888,19 @@ def _display_single_result(
     timing = result.timing
     confidence = _extract_confidence(result.raw_response)
 
+    # Build URL map from retrieved snippets (especially S2 papers which have URLs)
+    _snippet_urls: dict[str, str] = {}
+    for s in result.retrieval.snippets:
+        meta = s.metadata or {}
+        doc_id = meta.get("document_id", "")
+        url = meta.get("url", "")
+        if doc_id and url and doc_id not in _snippet_urls:
+            _snippet_urls[doc_id] = url
+
     # Linkify inline [ref_id] citations so they match the Sources section
     linked_explanation = _linkify_citations(
         answer.explanation, ref_ids=answer.ref_id, ref_urls=answer.ref_url,
+        snippet_urls=_snippet_urls,
     )
 
     if linked_explanation and linked_explanation != "is_blank":
@@ -1943,6 +1963,7 @@ def _display_single_result(
         "energy_method": energy_method,
         "ref_id": effective_ref_ids,
         "ref_url": answer.ref_url,
+        "snippet_urls": _snippet_urls,
         "supporting_materials": answer.supporting_materials,
         "snippets": [
             {"rank": s.rank, "score": s.score, "title": s.document_title, "text": s.text, "node_id": s.node_id}
@@ -2119,10 +2140,13 @@ def _render_details(details: dict, *, image_store=None):
 
     ref_ids = _clean_ref_ids(details.get("ref_id", []))
     ref_urls = details.get("ref_url", [])
+    snippet_urls = details.get("snippet_urls", {})  # URLs from S2 and other retrieved snippets
     if ref_ids:
         links = []
         for i, rid in enumerate(ref_ids if isinstance(ref_ids, list) else [ref_ids]):
             url = METADATA_URLS.get(rid)
+            if not url:
+                url = snippet_urls.get(rid)  # Try S2/snippet URLs
             if not url:
                 url = ref_urls[i] if isinstance(ref_urls, list) and i < len(ref_urls) else None
             label = _humanize_ref_id(rid)
@@ -2137,10 +2161,32 @@ def _render_details(details: dict, *, image_store=None):
 
     snippets = details.get("snippets", [])
     if snippets:
-        display_snippets = snippets[:5]
-        label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
+        # Diversify: pick best chunk per unique source first, then fill remaining
+        # slots with next-best chunks (regardless of source).
+        max_display = 5
+        seen_sources: set[str] = set()
+        diverse_snippets: list[dict] = []
+        remaining: list[dict] = []
+        for s in snippets:
+            source = s.get("title", "")
+            if source not in seen_sources:
+                seen_sources.add(source)
+                diverse_snippets.append(s)
+            else:
+                remaining.append(s)
+            if len(diverse_snippets) >= max_display:
+                break
+        # If we have fewer than max_display unique sources, fill with top remaining
+        if len(diverse_snippets) < max_display:
+            for s in remaining:
+                diverse_snippets.append(s)
+                if len(diverse_snippets) >= max_display:
+                    break
+
+        n_sources = len({s.get("title", "") for s in diverse_snippets})
+        label = f"Retrieved context ({len(diverse_snippets)} chunks from {n_sources} sources, {len(snippets)} total)"
         with st.expander(label):
-            for s in display_snippets:
+            for s in diverse_snippets:
                 tag = " **[S2]**" if s.get("node_id", "").startswith("s2:") else ""
                 st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f}){tag}")
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
