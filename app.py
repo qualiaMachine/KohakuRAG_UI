@@ -1470,19 +1470,27 @@ def main():
                     st.warning(plan["reason"])
 
     # ---- Session energy accumulator (sidebar) ----
+    # Use a placeholder so we can update it immediately after each query
     with st.sidebar:
         st.divider()
         st.subheader("Session energy")
-        _total_e = st.session_state.get("total_energy_wh", 0.0)
-        _n_queries = st.session_state.get("query_count", 0)
-        if _n_queries > 0:
-            _e_val, _e_unit = _format_energy(_total_e, split=True)
-            e_col1, e_col2 = st.columns(2)
-            e_col1.metric(f"Total ({_e_unit})", _e_val)
-            e_col2.metric("Queries", _n_queries)
-            st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
-        else:
-            st.caption("No queries yet — energy will be tracked as you ask questions.")
+        _energy_placeholder = st.empty()
+
+    def _refresh_energy_display():
+        """Re-render the session energy metrics into the sidebar placeholder."""
+        with _energy_placeholder.container():
+            _total_e = st.session_state.get("total_energy_wh", 0.0)
+            _n_queries = st.session_state.get("query_count", 0)
+            if _n_queries > 0:
+                _e_val, _e_unit = _format_energy(_total_e, split=True)
+                e_col1, e_col2 = st.columns(2)
+                e_col1.metric(f"Total ({_e_unit})", _e_val)
+                e_col2.metric("Queries", _n_queries)
+                st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
+            else:
+                st.caption("No queries yet — energy will be tracked as you ask questions.")
+
+    _refresh_energy_display()
 
     # ---- Validate ensemble selection ----
     if not is_remote and mode == "Ensemble" and len(selected_configs) < 2:
@@ -1623,6 +1631,7 @@ def main():
                 query_energy_wh = energy_tracker.stop(elapsed, timing=result.timing)
                 st.session_state.total_energy_wh += query_energy_wh
                 st.session_state.query_count += 1
+                _refresh_energy_display()
                 _display_single_result(
                     result, elapsed, pipeline=pipeline,
                     energy_wh=query_energy_wh, energy_method=energy_tracker.method,
@@ -1672,6 +1681,7 @@ def main():
                 query_energy_wh = energy_tracker.stop(elapsed)
                 st.session_state.total_energy_wh += query_energy_wh
                 st.session_state.query_count += 1
+                _refresh_energy_display()
                 agg = build_ensemble_answer(model_results, ensemble_strategy)
                 _display_ensemble_result(
                     agg, model_results, elapsed, ensemble_strategy,
