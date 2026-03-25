@@ -56,17 +56,16 @@ tarball and installs dependencies at startup.
 | Field | Value |
 |-------|-------|
 | **Command** | `bash` |
-| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/HEAD.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-HEAD /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate huggingface_hub peft && python3 scripts/embedding_server.py"` |
+| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate huggingface_hub peft && python3 scripts/embedding_server.py"` |
 | **Working directory** | *(leave empty)* |
 
-> **Using a different branch?** Replace `HEAD` in the URL with
-> `refs/heads/<branch-name>`, and update the `mv` target accordingly.
-> GitHub converts `/` → `-` in tarball directory names:
+> **Using a different branch?** Replace `claude/rag-poweredge-setup-wM2Fz`
+> in the URL and the `mv` target with your branch name. GitHub converts
+> `/` → `-` in tarball directory names:
 > ```
-> # URL:  .../archive/refs/heads/claude/my-feature.tar.gz
-> # mv:   KohakuRAG_UI-claude-my-feature
+> # URL:  .../refs/heads/claude/my-feature.tar.gz   (slashes OK)
+> # mv:   KohakuRAG_UI-claude-my-feature            (slashes become dashes)
 > ```
-> Using `HEAD` (the default branch) avoids hardcoding branch names.
 >
 > **Why `curl` tarball instead of `git clone`?** The vLLM image
 > doesn't include `git`. Downloading a tarball via `curl` (which is
@@ -208,9 +207,9 @@ runai submit wattbot-embedding \
   --port 8080 \
   --command -- /bin/bash -c \
     "pip install uv && \
-     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/HEAD.tar.gz \
+     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz \
        | tar xz -C /tmp && \
-     mv /tmp/KohakuRAG_UI-HEAD /tmp/KohakuRAG_UI && \
+     mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && \
      cd /tmp/KohakuRAG_UI && \
      uv pip install --system fastapi uvicorn httpx numpy \
        sentence-transformers 'transformers>=4.42,<5' accelerate && \
