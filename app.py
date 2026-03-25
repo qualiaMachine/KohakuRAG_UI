@@ -1886,21 +1886,7 @@ def _display_single_result(
     if answer.answer_value and answer.answer_value != "is_blank":
         st.markdown(f"Value: `{answer.answer_value}`")
 
-    # Clickable reference links (shown directly, not inside an expander)
-    ref_ids = answer.ref_id
-    ref_urls = answer.ref_url
-    if ref_ids and ref_ids != "is_blank":
-        links = []
-        for i, rid in enumerate(ref_ids if isinstance(ref_ids, list) else [ref_ids]):
-            url = METADATA_URLS.get(rid)
-            if not url:
-                url = ref_urls[i] if isinstance(ref_urls, list) and i < len(ref_urls) else None
-            label = _humanize_ref_id(rid)
-            if url and url != "is_blank":
-                links.append(f"[{label}]({url})")
-            else:
-                links.append(label)
-        st.markdown("Sources: " + " · ".join(links))
+    # Sources are rendered by _render_details() below (avoids duplication)
 
     # Serialize image nodes for history replay (displayed via _render_details below)
     image_details = []
