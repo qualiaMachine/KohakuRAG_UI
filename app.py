@@ -132,6 +132,11 @@ _VLLM_GPU_FRACTION = float(os.environ.get("ENERGY_VLLM_GPU_FRACTION", "0.80"))
 # Typical GPU utilisation during active inference (used for estimation).
 _GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.70"))
 
+# Fractional GPU allocation for the embedding/reranker servers
+# (used to estimate retrieval energy when the servers don't report it).
+# Lower than vLLM because embedding/reranking is less GPU-intensive.
+_EMBED_GPU_FRACTION = float(os.environ.get("ENERGY_EMBED_GPU_FRACTION", "0.25"))
+
 
 class EnergyTracker:
     """Track energy consumed by a RAG query across distributed services.
@@ -213,9 +218,14 @@ class EnergyTracker:
             embed_wh = timing.get("embed_energy_wh", 0.0)
             reranker_wh = timing.get("reranker_energy_wh", 0.0)
             gen_s = timing.get("generation_s", 0.0)
+            retrieval_s = timing.get("retrieval_s", 0.0)
             # vLLM energy estimate: TDP × fractional allocation × utilisation × time
             vllm_wh = (_GPU_TDP_WATTS * _VLLM_GPU_FRACTION * _GPU_UTIL * gen_s) / 3600.0
             total = embed_wh + reranker_wh + vllm_wh
+            # When servers don't report energy, estimate retrieval energy from
+            # retrieval time (embedding + reranking use GPU too).
+            if embed_wh == 0 and reranker_wh == 0 and retrieval_s > 0:
+                total += (_GPU_TDP_WATTS * _EMBED_GPU_FRACTION * _GPU_UTIL * retrieval_s) / 3600.0
             if embed_wh > 0 or reranker_wh > 0:
                 self._method = "server_reported"
             else:
