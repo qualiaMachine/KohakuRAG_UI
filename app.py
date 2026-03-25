@@ -260,6 +260,11 @@ review or survey paper. Always cite your sources using the ref_id provided in sq
 brackets (e.g., [wu2021a]). When the context contains specific numbers, statistics, or \
 claims, include them with citations. If the provided context is limited, acknowledge \
 this explicitly rather than inventing information.
+
+IMPORTANT: You must ALWAYS provide an answer. Never output "is_blank" for the answer \
+or explanation fields. Even when the context only partially covers the question, \
+synthesize whatever relevant information IS available and note any gaps. The user \
+has opted into research mode specifically to get comprehensive answers.
 """.strip()
 
 USER_TEMPLATE = """
@@ -326,7 +331,8 @@ comparisons, and implications.
 5. If multiple sources discuss the same topic, synthesize and compare their findings.
 6. End with a brief summary or outlook paragraph.
 7. If the context is insufficient to fully answer the question, state what IS known from \
-the context and note the gaps.
+the context and note the gaps. You MUST still provide an answer — never use "is_blank" for \
+the answer or explanation fields.
 
 Question: {question}
 
@@ -337,6 +343,71 @@ After your detailed answer, provide a references section listing all cited sourc
 
 Return STRICT JSON with the following keys:
 - explanation          (your multi-paragraph answer with inline [ref_id] citations throughout)
+- answer               (one-sentence summary of the key finding)
+- answer_value         (the most important numeric or categorical value, or "is_blank")
+- ref_id               (list of ALL document ids cited in your answer)
+- ref_url              (list of URLs for cited documents, or "is_blank")
+- supporting_materials (key quotes or data points that support the answer, or "is_blank")
+
+JSON Answer:
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# OpenScholar-style self-feedback prompts (Asai et al., 2024 Section 2.2)
+# ---------------------------------------------------------------------------
+
+FEEDBACK_PROMPT_RESEARCH = """
+You are reviewing your own response to a scientific question. Your task is to \
+identify specific ways the response can be improved.
+
+Question: {question}
+
+Your current response:
+{response}
+
+Context used:
+{context}
+
+Analyze your response and generate feedback. For each issue, provide a specific, \
+actionable improvement suggestion. If the response references missing information \
+that might be found in additional papers, generate a retrieval query to find them.
+
+Return STRICT JSON with the following keys:
+- feedback      (list of 1-3 specific improvement suggestions, e.g. \
+["Add quantitative energy figures for GPT-4 training", "Compare water usage across different model sizes"])
+- retrieval_query  (a search query to find additional papers addressing the gaps, or "" if no retrieval needed)
+- done          (true if the response is already comprehensive and needs no improvement, false otherwise)
+
+JSON:
+""".strip()
+
+REFINEMENT_PROMPT_RESEARCH = """
+You are refining your scientific response based on self-feedback. Incorporate the \
+feedback to produce an improved, more comprehensive answer.
+
+Question: {question}
+
+Your previous response:
+{response}
+
+Feedback to address:
+{feedback}
+
+Original context:
+{context}
+
+Additional context from re-retrieval:
+{new_context}
+
+Instructions:
+1. Address each feedback item by incorporating relevant information.
+2. Maintain all existing correct citations and add new ones from the additional context.
+3. Keep the same academic style and structure, but improve coverage and accuracy.
+4. Do NOT remove correct information from the previous response — only add or refine.
+
+Return STRICT JSON with the following keys:
+- explanation          (your improved multi-paragraph answer with inline [ref_id] citations)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
 - ref_id               (list of ALL document ids cited in your answer)
@@ -861,6 +932,14 @@ def _run_qa_sync(
     else:
         sys_prompt = SYSTEM_PROMPT
         usr_template = USER_TEMPLATE
+    # When both research_mode and best_guess are on, reinforce that the LLM
+    # must always provide an answer (research prompt already says this, but
+    # best_guess adds the explicit low-confidence fallback instruction).
+    if research_mode and best_guess:
+        sys_prompt += (
+            "\nIf the context only partially or weakly supports an answer, "
+            "still provide your best-effort synthesis but set confidence to \"low\"."
+        )
     # Temporarily override max_tokens on the chat model if requested
     original_max_tokens = None
     if max_tokens_override > 0 and hasattr(pipeline._chat, '_max_tokens'):
@@ -872,17 +951,34 @@ def _run_qa_sync(
         for attempt in range(max_retries + 1):
             loop = asyncio.new_event_loop()
             try:
-                return loop.run_until_complete(
-                    pipeline.run_qa(
-                        question,
-                        system_prompt=sys_prompt,
-                        user_template=usr_template,
-                        top_k=top_k,
-                        with_images=with_images,
-                        top_k_images=top_k_images,
-                        send_images_to_llm=send_images_to_llm,
+                # Use self-feedback loop for research mode (OpenScholar-style)
+                if research_mode:
+                    return loop.run_until_complete(
+                        pipeline.run_qa_with_feedback(
+                            question,
+                            system_prompt=sys_prompt,
+                            user_template=usr_template,
+                            feedback_prompt=FEEDBACK_PROMPT_RESEARCH,
+                            refinement_prompt=REFINEMENT_PROMPT_RESEARCH,
+                            max_feedback_rounds=3,
+                            top_k=top_k,
+                            with_images=with_images,
+                            top_k_images=top_k_images,
+                            send_images_to_llm=send_images_to_llm,
+                        )
                     )
-                )
+                else:
+                    return loop.run_until_complete(
+                        pipeline.run_qa(
+                            question,
+                            system_prompt=sys_prompt,
+                            user_template=usr_template,
+                            top_k=top_k,
+                            with_images=with_images,
+                            top_k_images=top_k_images,
+                            send_images_to_llm=send_images_to_llm,
+                        )
+                    )
             except Exception as exc:
                 last_exc = exc
                 _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
@@ -1449,6 +1545,8 @@ def main():
             )
 
     # Render history
+    # Resolve image_store for figure display during history replay
+    _hist_image_store = getattr(pipeline, "_image_store", None) if pipeline else None
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "assistant":
@@ -1458,11 +1556,15 @@ def main():
                     ref_ids=details.get("ref_id"),
                     ref_urls=details.get("ref_url"),
                 )
-                st.markdown(f"**{linked}**")
+                # Use regular markdown for long research-mode answers
+                if len(linked) > 500 or "\n\n" in linked:
+                    st.markdown(linked)
+                else:
+                    st.markdown(f"**{linked}**")
             else:
                 st.markdown(msg["content"])
             if msg["role"] == "assistant" and "details" in msg:
-                _render_details(msg["details"])
+                _render_details(msg["details"], image_store=_hist_image_store)
 
     # User input
     if question := st.chat_input("Ask a question about the WattBot documents..."):
@@ -1673,16 +1775,18 @@ def _linkify_citations(
 
 
 def _display_retrieved_images(image_nodes, image_store=None):
-    """Show retrieved PDF figures in an expander.
+    """Show retrieved PDF figures as a compact thumbnail grid.
 
+    Each thumbnail is clickable — selecting it expands to full size.
     Works both for live results (StoredNode objects) and history replay
     (serialized dicts with storage_key/caption/page/doc_id).
     """
     if not image_nodes:
         return
     with st.expander(f"Retrieved figures ({len(image_nodes)})", expanded=False):
+        # Collect image data first
+        images = []
         for node in image_nodes:
-            # Support both StoredNode objects and plain dicts (history replay)
             if hasattr(node, "metadata"):
                 storage_key = node.metadata.get("image_storage_key")
                 caption = node.text or ""
@@ -1694,19 +1798,37 @@ def _display_retrieved_images(image_nodes, image_store=None):
                 page = node.get("page", "?")
                 doc_id = node.get("doc_id", "unknown")
 
-            label = f"{doc_id} p.{page}"
+            short_label = f"{doc_id} p.{page}"
+            full_label = short_label
             if caption:
-                label += f": {caption[:120]}"
+                full_label += f": {caption[:120]}"
 
-            # Try to display actual image if available
+            img_bytes = None
             if storage_key and image_store:
                 img_bytes = image_store._sync_get(storage_key)
-                if img_bytes:
-                    st.image(img_bytes, caption=label, use_container_width=True)
-                    continue
-            # Fallback: show caption text
-            if caption:
-                st.markdown(f"**{doc_id} p.{page}:** {caption}")
+
+            images.append({
+                "bytes": img_bytes,
+                "short_label": short_label,
+                "full_label": full_label,
+                "caption": caption,
+                "doc_id": doc_id,
+                "page": page,
+            })
+
+        # Render as a thumbnail grid (3 columns)
+        n_cols = min(3, len(images))
+        cols = st.columns(n_cols)
+        for idx, img in enumerate(images):
+            col = cols[idx % n_cols]
+            with col:
+                if img["bytes"]:
+                    st.image(img["bytes"], caption=img["short_label"], width=200)
+                    # Expandable full-size view on click
+                    with st.popover(f"Expand: {img['short_label']}"):
+                        st.image(img["bytes"], caption=img["full_label"])
+                elif img["caption"]:
+                    st.markdown(f"**{img['short_label']}:** {img['caption'][:200]}")
 
 
 def _display_single_result(
@@ -1942,12 +2064,21 @@ def _render_details(details: dict, *, image_store=None):
 
     timing = details.get("timing", {})
     elapsed = details.get("elapsed", 0)
+    feedback_rounds = timing.get("feedback_rounds", 0)
 
-    cols = st.columns(4)
-    cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
-    cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
-    cols[2].metric("Total", f"{elapsed:.1f}s")
-    cols[3].metric(energy_label, energy_str)
+    if feedback_rounds:
+        cols = st.columns(5)
+        cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
+        cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
+        cols[2].metric("Feedback rounds", feedback_rounds)
+        cols[3].metric("Total", f"{elapsed:.1f}s")
+        cols[4].metric(energy_label, energy_str)
+    else:
+        cols = st.columns(4)
+        cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
+        cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
+        cols[2].metric("Total", f"{elapsed:.1f}s")
+        cols[3].metric(energy_label, energy_str)
 
     ref_ids = details.get("ref_id", [])
     ref_urls = details.get("ref_url", [])

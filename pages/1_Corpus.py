@@ -41,7 +41,7 @@ st.dataframe(
         "URL": st.column_config.LinkColumn("URL", display_text="Open"),
         "Year": st.column_config.NumberColumn("Year", format="%d"),
     },
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     height=(len(display_df) + 1) * 35 + 3,
 )

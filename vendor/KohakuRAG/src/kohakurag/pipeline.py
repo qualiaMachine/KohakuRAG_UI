@@ -956,6 +956,203 @@ class RAGPipeline:
             },
         )
 
+    async def run_qa_with_feedback(
+        self,
+        question: str,
+        *,
+        system_prompt: str,
+        user_template: str,
+        feedback_prompt: str,
+        refinement_prompt: str,
+        max_feedback_rounds: int = 3,
+        additional_info: Mapping[str, object] | None = None,
+        top_k: int | None = None,
+        with_images: bool = False,
+        top_k_images: int = 0,
+        send_images_to_llm: bool = False,
+        bm25_top_k: int | None = None,
+        on_status: object | None = None,
+    ) -> StructuredAnswerResult:
+        """OpenScholar-style self-feedback loop: generate → critique → re-retrieve → refine.
+
+        Based on Asai et al. (2024) Section 2.2: Iterative Generation with
+        Retrieval-Augmented Self-Feedback.
+
+        Steps:
+          1. Retrieve context and generate initial response y0
+          2. Generate self-feedback F on y0 (up to max_feedback_rounds items)
+          3. For each feedback fi:
+             - If it suggests missing info, generate a retrieval query
+             - Re-retrieve and append new passages to context
+             - Refine the response: yk = LLM(yk-1, fi, context)
+          4. Return final refined response
+
+        Args:
+            question: User question
+            system_prompt: System prompt for initial generation
+            user_template: User template for initial generation
+            feedback_prompt: Template for generating self-feedback on the response.
+                           Must contain {question}, {response}, {context} placeholders.
+            refinement_prompt: Template for refining response with feedback.
+                             Must contain {question}, {response}, {feedback},
+                             {context}, {new_context} placeholders.
+            max_feedback_rounds: Maximum number of feedback iterations (default 3)
+            on_status: Optional callable(str) to report status updates
+            Other args: Same as run_qa
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
+        def _status(msg: str) -> None:
+            _log.debug(msg)
+            if callable(on_status):
+                on_status(msg)
+
+        # --- Step 1: Initial retrieval + generation (y0) ---
+        _status("Generating initial response...")
+        initial_result = await self.run_qa(
+            question,
+            system_prompt=system_prompt,
+            user_template=user_template,
+            additional_info=additional_info,
+            top_k=top_k,
+            with_images=with_images,
+            top_k_images=top_k_images,
+            send_images_to_llm=send_images_to_llm,
+            bm25_top_k=bm25_top_k,
+        )
+        t_retrieval = initial_result.timing.get("retrieval_s", 0)
+        t_generation = initial_result.timing.get("generation_s", 0)
+
+        # Format the initial context for feedback/refinement prompts
+        initial_context = format_snippets(initial_result.retrieval.snippets)
+        current_response = initial_result.raw_response
+
+        # Extract the explanation text for feedback (cleaner than raw JSON)
+        current_explanation = initial_result.answer.explanation or initial_result.answer.answer or ""
+
+        # Track all snippets across iterations
+        all_snippets = list(initial_result.retrieval.snippets)
+
+        # --- Step 2: Self-feedback loop ---
+        feedback_log: list[dict] = []
+        for round_num in range(max_feedback_rounds):
+            _status(f"Generating self-feedback (round {round_num + 1}/{max_feedback_rounds})...")
+
+            # Generate feedback on current response
+            t_fb_start = _time.time()
+            feedback_input = feedback_prompt.format(
+                question=question,
+                response=current_explanation,
+                context=initial_context,
+            )
+            feedback_raw = await self._chat.complete(
+                feedback_input, system_prompt=system_prompt,
+            )
+            t_generation += _time.time() - t_fb_start
+
+            # Parse feedback — expect JSON with "feedback" list and optional "retrieval_query"
+            feedback_items: list[str] = []
+            retrieval_query: str | None = None
+            try:
+                fb_start = feedback_raw.index("{")
+                fb_end = feedback_raw.rindex("}") + 1
+                fb_data = json.loads(feedback_raw[fb_start:fb_end])
+                raw_fb = fb_data.get("feedback", [])
+                if isinstance(raw_fb, str):
+                    feedback_items = [raw_fb]
+                elif isinstance(raw_fb, list):
+                    feedback_items = [str(f) for f in raw_fb if f]
+                retrieval_query = fb_data.get("retrieval_query", "").strip() or None
+                # Check for "no improvements needed" signal
+                if fb_data.get("done", False) or not feedback_items:
+                    _status(f"Feedback round {round_num + 1}: no further improvements needed.")
+                    break
+            except Exception:
+                # If we can't parse feedback, treat the raw text as a single feedback item
+                feedback_text = feedback_raw.strip()
+                if not feedback_text or "no improvement" in feedback_text.lower():
+                    break
+                feedback_items = [feedback_text]
+
+            feedback_log.append({
+                "round": round_num + 1,
+                "feedback": feedback_items,
+                "retrieval_query": retrieval_query,
+            })
+            _log.debug(f"Feedback round {round_num + 1}: {len(feedback_items)} items, query={retrieval_query}")
+
+            # --- Step 3: Optional re-retrieval based on feedback ---
+            new_context = ""
+            if retrieval_query:
+                _status(f"Re-retrieving for: {retrieval_query[:80]}...")
+                t_retr_start = _time.time()
+                try:
+                    supplemental = await self.retrieve(
+                        retrieval_query,
+                        top_k=top_k,
+                        bm25_top_k=bm25_top_k,
+                    )
+                    # Deduplicate against existing snippets
+                    existing_ids = {s.node_id for s in all_snippets}
+                    new_snippets = [s for s in supplemental.snippets if s.node_id not in existing_ids]
+                    if new_snippets:
+                        all_snippets.extend(new_snippets)
+                        new_context = format_snippets(new_snippets)
+                        _log.debug(f"Re-retrieval added {len(new_snippets)} new snippets")
+                except Exception as e:
+                    _log.warning(f"Re-retrieval failed: {e}")
+                t_retrieval += _time.time() - t_retr_start
+
+            # --- Step 4: Refine response incorporating feedback ---
+            _status(f"Refining response (round {round_num + 1})...")
+            t_ref_start = _time.time()
+            combined_feedback = "\n".join(f"- {fb}" for fb in feedback_items)
+            refinement_input = refinement_prompt.format(
+                question=question,
+                response=current_explanation,
+                feedback=combined_feedback,
+                context=initial_context,
+                new_context=new_context if new_context else "(no additional context)",
+            )
+            refined_raw = await self._chat.complete(
+                refinement_input, system_prompt=system_prompt,
+            )
+            t_generation += _time.time() - t_ref_start
+
+            # Parse the refined response
+            refined_parsed = self._parse_structured_response(refined_raw)
+
+            # Update current state for next iteration
+            current_response = refined_raw
+            current_explanation = refined_parsed.explanation or refined_parsed.answer or current_explanation
+
+        # --- Final result assembly ---
+        final_parsed = self._parse_structured_response(current_response)
+
+        # Rebuild retrieval result with all accumulated snippets
+        final_retrieval = RetrievalResult(
+            question=question,
+            matches=initial_result.retrieval.matches,
+            snippets=all_snippets,
+            image_nodes=initial_result.retrieval.image_nodes,
+            images_from_text=initial_result.retrieval.images_from_text,
+            images_from_vision=initial_result.retrieval.images_from_vision,
+        )
+
+        return StructuredAnswerResult(
+            answer=final_parsed,
+            retrieval=final_retrieval,
+            raw_response=current_response,
+            prompt=initial_result.prompt,
+            timing={
+                "retrieval_s": t_retrieval,
+                "generation_s": t_generation,
+                "total_s": t_retrieval + t_generation,
+                "feedback_rounds": len(feedback_log),
+            },
+        )
+
     async def run_qa(
         self,
         question: str,
