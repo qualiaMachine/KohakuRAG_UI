@@ -253,6 +253,7 @@ You must answer strictly based on the provided context snippets.
 Do NOT use external knowledge or assumptions.
 If the context does not clearly support an answer, you must output the literal string "is_blank" for both answer_value and ref_id.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
+IMPORTANT: When you use information from a context snippet, you MUST cite its ref_id in your explanation AND include it in the ref_id list. Never give an answer without citing the source.
 """.strip()
 
 SYSTEM_PROMPT_BEST_GUESS = """
@@ -1708,6 +1709,19 @@ def _humanize_ref_id(rid: str) -> str:
     return rid
 
 
+def _clean_ref_ids(ref_ids) -> list[str]:
+    """Normalize ref_ids: always return a clean list, filtering out 'is_blank'."""
+    if not ref_ids:
+        return []
+    if isinstance(ref_ids, str):
+        if ref_ids == "is_blank":
+            return []
+        return [ref_ids]
+    if isinstance(ref_ids, list):
+        return [r for r in ref_ids if r and str(r) != "is_blank"]
+    return []
+
+
 def _linkify_citations(
     text: str,
     ref_ids=None,
@@ -1728,24 +1742,21 @@ def _linkify_citations(
 
     # Build fallback url map from the answer's own ref data
     answer_urls: dict[str, str] = {}
-    if ref_ids and ref_ids != "is_blank":
-        ids = ref_ids if isinstance(ref_ids, list) else [ref_ids]
-        urls = ref_urls if isinstance(ref_urls, list) else ([ref_urls] if ref_urls else [])
-        for i, rid in enumerate(ids):
-            if not METADATA_URLS.get(rid) and i < len(urls):
-                u = urls[i]
-                if u and u != "is_blank":
-                    answer_urls[rid] = u
+    clean_ids = _clean_ref_ids(ref_ids)
+    urls = ref_urls if isinstance(ref_urls, list) else ([ref_urls] if ref_urls else [])
+    for i, rid in enumerate(clean_ids):
+        if not METADATA_URLS.get(rid) and i < len(urls):
+            u = urls[i]
+            if u and u != "is_blank":
+                answer_urls[rid] = u
 
     # Build reverse map: "Luccioni et al., 2025" → first matching ref_id
     # so we can resolve parenthetical citations like (Luccioni et al., 2025)
     humanized_to_rid: dict[str, str] = {}
     all_rids = list(METADATA_URLS.keys()) + list(answer_urls.keys())
-    if ref_ids and ref_ids != "is_blank":
-        rids = ref_ids if isinstance(ref_ids, list) else [ref_ids]
-        for rid in rids:
-            if rid not in all_rids:
-                all_rids.append(rid)
+    for rid in clean_ids:
+        if rid not in all_rids:
+            all_rids.append(rid)
     for rid in all_rids:
         label = _humanize_ref_id(rid)
         if label != rid and label not in humanized_to_rid:
@@ -1912,12 +1923,25 @@ def _display_single_result(
     else:
         _debug(f"Retrieval: {total_snippet_count} snippets (no Semantic Scholar results)")
 
+    # Fallback: if the LLM answered but didn't cite sources, infer from top snippets
+    effective_ref_ids = _clean_ref_ids(answer.ref_id)
+    if not effective_ref_ids and answer.explanation and answer.explanation != "is_blank":
+        # Extract unique doc_ids from the top retrieved snippets
+        seen = set()
+        for s in result.retrieval.snippets[:5]:
+            doc_id = (s.metadata or {}).get("document_id", "")
+            if doc_id and doc_id not in seen:
+                seen.add(doc_id)
+                effective_ref_ids.append(doc_id)
+        if effective_ref_ids:
+            _debug(f"No ref_ids from LLM; inferred {len(effective_ref_ids)} from top snippets: {effective_ref_ids}")
+
     details = {
         "timing": timing,
         "elapsed": elapsed,
         "energy_wh": energy_wh,
         "energy_method": energy_method,
-        "ref_id": answer.ref_id,
+        "ref_id": effective_ref_ids,
         "ref_url": answer.ref_url,
         "supporting_materials": answer.supporting_materials,
         "snippets": [
@@ -2093,9 +2117,9 @@ def _render_details(details: dict, *, image_store=None):
         cols[2].metric("Total", f"{elapsed:.1f}s")
         cols[3].metric(energy_label, energy_str)
 
-    ref_ids = details.get("ref_id", [])
+    ref_ids = _clean_ref_ids(details.get("ref_id", []))
     ref_urls = details.get("ref_url", [])
-    if ref_ids and ref_ids != "is_blank":
+    if ref_ids:
         links = []
         for i, rid in enumerate(ref_ids if isinstance(ref_ids, list) else [ref_ids]):
             url = METADATA_URLS.get(rid)
