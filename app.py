@@ -285,6 +285,7 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
+- Cite ALL relevant sources, not just one. If multiple context snippets support the answer, include all their ref_ids.
 
 Question: {question}
 
@@ -292,10 +293,10 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite sources by ref_id, e.g. "According to [wu2021a], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources by ref_id, e.g. "According to [wu2021a] and [luccioni2025c], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
-- ref_id               (list of document ids from the context used as evidence; or "is_blank")
+- ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
@@ -309,6 +310,7 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
+- Cite ALL relevant sources, not just one. If multiple context snippets support the answer, include all their ref_ids.
 
 Question: {question}
 
@@ -316,11 +318,11 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite sources by ref_id, e.g. "According to [wu2021a], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources by ref_id, e.g. "According to [wu2021a] and [luccioni2025c], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
-- ref_id               (list of document ids from the context used as evidence; or "is_blank")
+- ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
