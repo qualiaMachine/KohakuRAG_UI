@@ -146,6 +146,7 @@ class RemoteEmbeddingModel:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._dimension: int | None = None
+        self.last_energy_wh: float = 0.0  # energy reported by last embed() call
 
     @property
     def dimension(self) -> int:
@@ -175,6 +176,7 @@ class RemoteEmbeddingModel:
             data = resp.json()
 
         self._dimension = data["dimension"]
+        self.last_energy_wh = data.get("energy_wh", 0.0)
         return np.array(data["embeddings"], dtype=np.float32)
 
     async def health(self) -> bool:
@@ -216,6 +218,7 @@ class RemoteCrossEncoderReranker:
             )
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self.last_energy_wh: float = 0.0  # energy reported by last rerank call
 
     def _rerank_sync(self, query: str, texts: list[str]) -> list[float]:
         """Synchronous rerank call (used by rerank() which operates on matches)."""
@@ -226,7 +229,9 @@ class RemoteCrossEncoderReranker:
             timeout=self._timeout,
         )
         resp.raise_for_status()
-        return resp.json()["scores"]
+        data = resp.json()
+        self.last_energy_wh = data.get("energy_wh", 0.0)
+        return data["scores"]
 
     def rerank(
         self,
