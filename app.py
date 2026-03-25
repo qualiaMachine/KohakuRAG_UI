@@ -228,13 +228,15 @@ class EnergyTracker:
 
 
 def _format_energy(wh: float, *, split: bool = False) -> str | tuple[str, str]:
-    """Human-friendly energy string (auto-scale Wh / mWh).
+    """Human-friendly energy string (auto-scale kWh / Wh).
 
     Args:
         wh: Energy in watt-hours.
         split: If True, return (value, unit) tuple for st.metric display.
     """
-    if wh >= 1.0:
+    if wh >= 1000.0:
+        val, unit = f"{wh / 1000:.2f}", "kWh"
+    elif wh >= 1.0:
         val, unit = f"{wh:.2f}", "Wh"
     else:
         val, unit = f"{wh * 1000:.1f}", "mWh"
