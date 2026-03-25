@@ -221,6 +221,71 @@ JSON Answer:
 
 
 # ---------------------------------------------------------------------------
+# OpenScholar-style self-feedback prompts (Asai et al., 2024 Section 2.2)
+# ---------------------------------------------------------------------------
+
+FEEDBACK_PROMPT_RESEARCH = """
+You are reviewing your own response to a scientific question. Your task is to \
+identify specific ways the response can be improved.
+
+Question: {question}
+
+Your current response:
+{response}
+
+Context used:
+{context}
+
+Analyze your response and generate feedback. For each issue, provide a specific, \
+actionable improvement suggestion. If the response references missing information \
+that might be found in additional papers, generate a retrieval query to find them.
+
+Return STRICT JSON with the following keys:
+- feedback      (list of 1-3 specific improvement suggestions, e.g. \
+["Add quantitative energy figures for GPT-4 training", "Compare water usage across different model sizes"])
+- retrieval_query  (a search query to find additional papers addressing the gaps, or "" if no retrieval needed)
+- done          (true if the response is already comprehensive and needs no improvement, false otherwise)
+
+JSON:
+""".strip()
+
+REFINEMENT_PROMPT_RESEARCH = """
+You are refining your scientific response based on self-feedback. Incorporate the \
+feedback to produce an improved, more comprehensive answer.
+
+Question: {question}
+
+Your previous response:
+{response}
+
+Feedback to address:
+{feedback}
+
+Original context:
+{context}
+
+Additional context from re-retrieval:
+{new_context}
+
+Instructions:
+1. Address each feedback item by incorporating relevant information.
+2. Maintain all existing correct citations and add new ones from the additional context.
+3. Keep the same academic style and structure, but improve coverage and accuracy.
+4. Do NOT remove correct information from the previous response — only add or refine.
+
+Return STRICT JSON with the following keys:
+- explanation          (your improved multi-paragraph answer with inline [ref_id] citations)
+- answer               (one-sentence summary of the key finding)
+- answer_value         (the most important numeric or categorical value, or "is_blank")
+- ref_id               (list of ALL document ids cited in your answer)
+- ref_url              (list of URLs for cited documents, or "is_blank")
+- supporting_materials (key quotes or data points that support the answer, or "is_blank")
+
+JSON Answer:
+""".strip()
+
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 CONFIGS_DIR = _repo_root / "vendor" / "KohakuRAG" / "configs"
@@ -753,17 +818,34 @@ def _run_qa_sync(
         for attempt in range(max_retries + 1):
             loop = asyncio.new_event_loop()
             try:
-                return loop.run_until_complete(
-                    pipeline.run_qa(
-                        question,
-                        system_prompt=sys_prompt,
-                        user_template=usr_template,
-                        top_k=top_k,
-                        with_images=with_images,
-                        top_k_images=top_k_images,
-                        send_images_to_llm=send_images_to_llm,
+                # Use self-feedback loop for research mode (OpenScholar-style)
+                if research_mode:
+                    return loop.run_until_complete(
+                        pipeline.run_qa_with_feedback(
+                            question,
+                            system_prompt=sys_prompt,
+                            user_template=usr_template,
+                            feedback_prompt=FEEDBACK_PROMPT_RESEARCH,
+                            refinement_prompt=REFINEMENT_PROMPT_RESEARCH,
+                            max_feedback_rounds=3,
+                            top_k=top_k,
+                            with_images=with_images,
+                            top_k_images=top_k_images,
+                            send_images_to_llm=send_images_to_llm,
+                        )
                     )
-                )
+                else:
+                    return loop.run_until_complete(
+                        pipeline.run_qa(
+                            question,
+                            system_prompt=sys_prompt,
+                            user_template=usr_template,
+                            top_k=top_k,
+                            with_images=with_images,
+                            top_k_images=top_k_images,
+                            send_images_to_llm=send_images_to_llm,
+                        )
+                    )
             except Exception as exc:
                 last_exc = exc
                 _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
@@ -1796,11 +1878,19 @@ def _render_details(details: dict, *, image_store=None):
 
     timing = details.get("timing", {})
     elapsed = details.get("elapsed", 0)
+    feedback_rounds = timing.get("feedback_rounds", 0)
 
-    cols = st.columns(3)
-    cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
-    cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
-    cols[2].metric("Total", f"{elapsed:.1f}s")
+    if feedback_rounds:
+        cols = st.columns(4)
+        cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
+        cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
+        cols[2].metric("Feedback rounds", feedback_rounds)
+        cols[3].metric("Total", f"{elapsed:.1f}s")
+    else:
+        cols = st.columns(3)
+        cols[0].metric("Retrieval", f"{timing.get('retrieval_s', 0):.1f}s")
+        cols[1].metric("Generation", f"{timing.get('generation_s', 0):.1f}s")
+        cols[2].metric("Total", f"{elapsed:.1f}s")
 
     ref_ids = details.get("ref_id", [])
     ref_urls = details.get("ref_url", [])
