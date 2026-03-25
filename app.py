@@ -253,6 +253,7 @@ You must answer strictly based on the provided context snippets.
 Do NOT use external knowledge or assumptions.
 If the context does not clearly support an answer, you must output the literal string "is_blank" for both answer_value and ref_id.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
+IMPORTANT: When you use information from a context snippet, you MUST cite its ref_id in your explanation AND include it in the ref_id list. Never give an answer without citing the source.
 """.strip()
 
 SYSTEM_PROMPT_BEST_GUESS = """
@@ -285,6 +286,7 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
+- Cite ALL relevant sources, not just one. If multiple context snippets support the answer, include all their ref_ids.
 
 Question: {question}
 
@@ -292,10 +294,10 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite sources by ref_id, e.g. "According to [wu2021a], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources by ref_id, e.g. "According to [wu2021a] and [luccioni2025c], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
-- ref_id               (list of document ids from the context used as evidence; or "is_blank")
+- ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
@@ -309,6 +311,7 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
+- Cite ALL relevant sources, not just one. If multiple context snippets support the answer, include all their ref_ids.
 
 Question: {question}
 
@@ -316,11 +319,11 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite sources by ref_id, e.g. "According to [wu2021a], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources by ref_id, e.g. "According to [wu2021a] and [luccioni2025c], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
-- ref_id               (list of document ids from the context used as evidence; or "is_blank")
+- ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
@@ -334,26 +337,32 @@ Your task is to write a comprehensive, multi-paragraph answer that synthesizes i
 from the provided sources, similar to a literature review. Follow these rules:
 
 1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
-2. Cite every claim using the ref_id in square brackets, e.g. "Training GPT-3 consumed \
-approximately 1,287 MWh of energy [luccioni2025c]."
+2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
+square brackets immediately after, e.g. "Training GPT-3 consumed approximately 1,287 MWh \
+of energy [luccioni2025c]." Do NOT write any factual claim without a citation.
 3. Include specific numbers, statistics, and quantitative findings when available in context.
 4. Organize your answer logically: start with a direct answer, then expand with details, \
 comparisons, and implications.
-5. If multiple sources discuss the same topic, synthesize and compare their findings.
+5. If multiple sources discuss the same topic, synthesize and compare their findings, \
+citing each: "While [wu2021a] reports X, [luccioni2025c] found Y."
 6. End with a brief summary or outlook paragraph.
 7. If the context is insufficient to fully answer the question, state what IS known from \
 the context and note the gaps. You MUST still provide an answer — never use "is_blank" for \
 the answer or explanation fields.
+
+Example of properly cited text:
+"The energy required to train GPT-3 was approximately 1,287 MWh [luccioni2025c], while \
+GPT-4 training consumed an estimated 50 GWh [islam2025]. Fine-tuning typically requires \
+substantially less computation [samsi2024], but its cumulative impact across organizations \
+can be significant [dodge2022]."
 
 Question: {question}
 
 Context:
 {context}
 
-After your detailed answer, provide a references section listing all cited sources.
-
 Return STRICT JSON with the following keys:
-- explanation          (your multi-paragraph answer with inline [ref_id] citations throughout)
+- explanation          (your multi-paragraph answer with inline [ref_id] citations on EVERY factual sentence)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
 - ref_id               (list of ALL document ids cited in your answer)
@@ -426,6 +435,29 @@ Return STRICT JSON with the following keys:
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
+""".strip()
+
+# ---------------------------------------------------------------------------
+# Citation verification prompt (lightweight post-hoc pass)
+# Only triggered when the LLM answer lacks inline [ref_id] citations.
+# Based on OpenScholar Section 2.2 step 3: Citation Verification.
+# ---------------------------------------------------------------------------
+CITATION_VERIFY_PROMPT = """
+The following explanation answers a user's question but is missing inline citations. \
+Every factual claim must be attributed to a source using [ref_id] notation.
+
+Rewrite the explanation below, inserting [ref_id] citations from the source list \
+after each factual sentence. Do NOT change the meaning or add new information — \
+only insert citations where they belong.
+
+Explanation to fix:
+{explanation}
+
+Available sources (use these ref_ids for citations):
+{sources}
+
+Return ONLY the rewritten explanation with [ref_id] citations inserted inline. \
+Do not wrap in JSON or add any other text.
 """.strip()
 
 
@@ -971,7 +1003,7 @@ def _run_qa_sync(
                             user_template=usr_template,
                             feedback_prompt=FEEDBACK_PROMPT_RESEARCH,
                             refinement_prompt=REFINEMENT_PROMPT_RESEARCH,
-                            max_feedback_rounds=3,
+                            max_feedback_rounds=2,
                             top_k=top_k,
                             with_images=with_images,
                             top_k_images=top_k_images,
@@ -997,6 +1029,7 @@ def _run_qa_sync(
                     time.sleep(1)  # brief pause before retry
             finally:
                 loop.close()
+
         raise last_exc  # type: ignore[misc]
     finally:
         # Restore original max_tokens
@@ -1011,14 +1044,30 @@ def run_single_query(
     send_images_to_llm: bool = False,
     research_mode: bool = False, max_tokens_override: int = 0,
 ):
-    """Run a single model query."""
-    return _run_qa_sync(
+    """Run a single model query with post-hoc citation verification."""
+    result = _run_qa_sync(
         pipeline, question, top_k,
         best_guess=best_guess, max_retries=max_retries,
         with_images=with_images, top_k_images=top_k_images,
         send_images_to_llm=send_images_to_llm,
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
+
+    # Post-hoc citation verification: if the explanation lacks inline
+    # [ref_id] citations, run a lightweight LLM pass to insert them.
+    # Conditional — skips the LLM call if citations are already present.
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                pipeline.verify_citations(result, CITATION_VERIFY_PROMPT)
+            )
+        finally:
+            loop.close()
+    except Exception as e:
+        _debug(f"Citation verification skipped: {e}")
+
+    return result
 
 
 def run_ensemble_parallel_query(
@@ -1461,19 +1510,27 @@ def main():
                     st.warning(plan["reason"])
 
     # ---- Session energy accumulator (sidebar) ----
+    # Use a placeholder so we can update it immediately after each query
     with st.sidebar:
         st.divider()
         st.subheader("Session energy")
-        _total_e = st.session_state.get("total_energy_wh", 0.0)
-        _n_queries = st.session_state.get("query_count", 0)
-        if _n_queries > 0:
-            _e_val, _e_unit = _format_energy(_total_e, split=True)
-            e_col1, e_col2 = st.columns(2)
-            e_col1.metric(f"Total ({_e_unit})", _e_val)
-            e_col2.metric("Queries", _n_queries)
-            st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
-        else:
-            st.caption("No queries yet — energy will be tracked as you ask questions.")
+        _energy_placeholder = st.empty()
+
+    def _refresh_energy_display():
+        """Re-render the session energy metrics into the sidebar placeholder."""
+        with _energy_placeholder.container():
+            _total_e = st.session_state.get("total_energy_wh", 0.0)
+            _n_queries = st.session_state.get("query_count", 0)
+            if _n_queries > 0:
+                _e_val, _e_unit = _format_energy(_total_e, split=True)
+                e_col1, e_col2 = st.columns(2)
+                e_col1.metric(f"Total ({_e_unit})", _e_val)
+                e_col2.metric("Queries", _n_queries)
+                st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
+            else:
+                st.caption("No queries yet — energy will be tracked as you ask questions.")
+
+    _refresh_energy_display()
 
     # ---- Validate ensemble selection ----
     if not is_remote and mode == "Ensemble" and len(selected_configs) < 2:
@@ -1567,6 +1624,7 @@ def main():
                     msg["content"],
                     ref_ids=details.get("ref_id"),
                     ref_urls=details.get("ref_url"),
+                    snippet_urls=details.get("snippet_urls"),
                 )
                 # Use regular markdown for long research-mode answers
                 if len(linked) > 500 or "\n\n" in linked:
@@ -1613,6 +1671,7 @@ def main():
                 query_energy_wh = energy_tracker.stop(elapsed, timing=result.timing)
                 st.session_state.total_energy_wh += query_energy_wh
                 st.session_state.query_count += 1
+                _refresh_energy_display()
                 _display_single_result(
                     result, elapsed, pipeline=pipeline,
                     energy_wh=query_energy_wh, energy_method=energy_tracker.method,
@@ -1662,6 +1721,7 @@ def main():
                 query_energy_wh = energy_tracker.stop(elapsed)
                 st.session_state.total_energy_wh += query_energy_wh
                 st.session_state.query_count += 1
+                _refresh_energy_display()
                 agg = build_ensemble_answer(model_results, ensemble_strategy)
                 _display_ensemble_result(
                     agg, model_results, elapsed, ensemble_strategy,
@@ -1706,10 +1766,24 @@ def _humanize_ref_id(rid: str) -> str:
     return rid
 
 
+def _clean_ref_ids(ref_ids) -> list[str]:
+    """Normalize ref_ids: always return a clean list, filtering out 'is_blank'."""
+    if not ref_ids:
+        return []
+    if isinstance(ref_ids, str):
+        if ref_ids == "is_blank":
+            return []
+        return [ref_ids]
+    if isinstance(ref_ids, list):
+        return [r for r in ref_ids if r and str(r) != "is_blank"]
+    return []
+
+
 def _linkify_citations(
     text: str,
     ref_ids=None,
     ref_urls=None,
+    snippet_urls: dict[str, str] | None = None,
 ) -> str:
     """Replace citation references in *text* with clickable markdown links.
 
@@ -1724,26 +1798,25 @@ def _linkify_citations(
     if not text:
         return text
 
-    # Build fallback url map from the answer's own ref data
+    # Build fallback url map from the answer's own ref data + snippet URLs
     answer_urls: dict[str, str] = {}
-    if ref_ids and ref_ids != "is_blank":
-        ids = ref_ids if isinstance(ref_ids, list) else [ref_ids]
-        urls = ref_urls if isinstance(ref_urls, list) else ([ref_urls] if ref_urls else [])
-        for i, rid in enumerate(ids):
-            if not METADATA_URLS.get(rid) and i < len(urls):
-                u = urls[i]
-                if u and u != "is_blank":
-                    answer_urls[rid] = u
+    if snippet_urls:
+        answer_urls.update(snippet_urls)
+    clean_ids = _clean_ref_ids(ref_ids)
+    urls = ref_urls if isinstance(ref_urls, list) else ([ref_urls] if ref_urls else [])
+    for i, rid in enumerate(clean_ids):
+        if not METADATA_URLS.get(rid) and not answer_urls.get(rid) and i < len(urls):
+            u = urls[i]
+            if u and u != "is_blank":
+                answer_urls[rid] = u
 
     # Build reverse map: "Luccioni et al., 2025" → first matching ref_id
     # so we can resolve parenthetical citations like (Luccioni et al., 2025)
     humanized_to_rid: dict[str, str] = {}
     all_rids = list(METADATA_URLS.keys()) + list(answer_urls.keys())
-    if ref_ids and ref_ids != "is_blank":
-        rids = ref_ids if isinstance(ref_ids, list) else [ref_ids]
-        for rid in rids:
-            if rid not in all_rids:
-                all_rids.append(rid)
+    for rid in clean_ids:
+        if rid not in all_rids:
+            all_rids.append(rid)
     for rid in all_rids:
         label = _humanize_ref_id(rid)
         if label != rid and label not in humanized_to_rid:
@@ -1865,9 +1938,19 @@ def _display_single_result(
     timing = result.timing
     confidence = _extract_confidence(result.raw_response)
 
+    # Build URL map from retrieved snippets (especially S2 papers which have URLs)
+    _snippet_urls: dict[str, str] = {}
+    for s in result.retrieval.snippets:
+        meta = s.metadata or {}
+        doc_id = meta.get("document_id", "")
+        url = meta.get("url", "")
+        if doc_id and url and doc_id not in _snippet_urls:
+            _snippet_urls[doc_id] = url
+
     # Linkify inline [ref_id] citations so they match the Sources section
     linked_explanation = _linkify_citations(
         answer.explanation, ref_ids=answer.ref_id, ref_urls=answer.ref_url,
+        snippet_urls=_snippet_urls,
     )
 
     if linked_explanation and linked_explanation != "is_blank":
@@ -1910,13 +1993,27 @@ def _display_single_result(
     else:
         _debug(f"Retrieval: {total_snippet_count} snippets (no Semantic Scholar results)")
 
+    # Fallback: if the LLM answered but didn't cite sources, infer from top snippets
+    effective_ref_ids = _clean_ref_ids(answer.ref_id)
+    if not effective_ref_ids and answer.explanation and answer.explanation != "is_blank":
+        # Extract unique doc_ids from the top retrieved snippets
+        seen = set()
+        for s in result.retrieval.snippets[:5]:
+            doc_id = (s.metadata or {}).get("document_id", "")
+            if doc_id and doc_id not in seen:
+                seen.add(doc_id)
+                effective_ref_ids.append(doc_id)
+        if effective_ref_ids:
+            _debug(f"No ref_ids from LLM; inferred {len(effective_ref_ids)} from top snippets: {effective_ref_ids}")
+
     details = {
         "timing": timing,
         "elapsed": elapsed,
         "energy_wh": energy_wh,
         "energy_method": energy_method,
-        "ref_id": answer.ref_id,
+        "ref_id": effective_ref_ids,
         "ref_url": answer.ref_url,
+        "snippet_urls": _snippet_urls,
         "supporting_materials": answer.supporting_materials,
         "snippets": [
             {"rank": s.rank, "score": s.score, "title": s.document_title, "text": s.text, "node_id": s.node_id}
@@ -2091,12 +2188,15 @@ def _render_details(details: dict, *, image_store=None):
         cols[2].metric("Total", f"{elapsed:.1f}s")
         cols[3].metric(energy_label, energy_str)
 
-    ref_ids = details.get("ref_id", [])
+    ref_ids = _clean_ref_ids(details.get("ref_id", []))
     ref_urls = details.get("ref_url", [])
-    if ref_ids and ref_ids != "is_blank":
+    snippet_urls = details.get("snippet_urls", {})  # URLs from S2 and other retrieved snippets
+    if ref_ids:
         links = []
         for i, rid in enumerate(ref_ids if isinstance(ref_ids, list) else [ref_ids]):
             url = METADATA_URLS.get(rid)
+            if not url:
+                url = snippet_urls.get(rid)  # Try S2/snippet URLs
             if not url:
                 url = ref_urls[i] if isinstance(ref_urls, list) and i < len(ref_urls) else None
             label = _humanize_ref_id(rid)
@@ -2111,10 +2211,32 @@ def _render_details(details: dict, *, image_store=None):
 
     snippets = details.get("snippets", [])
     if snippets:
-        display_snippets = snippets[:5]
-        label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
+        # Diversify: pick best chunk per unique source first, then fill remaining
+        # slots with next-best chunks (regardless of source).
+        max_display = 5
+        seen_sources: set[str] = set()
+        diverse_snippets: list[dict] = []
+        remaining: list[dict] = []
+        for s in snippets:
+            source = s.get("title", "")
+            if source not in seen_sources:
+                seen_sources.add(source)
+                diverse_snippets.append(s)
+            else:
+                remaining.append(s)
+            if len(diverse_snippets) >= max_display:
+                break
+        # If we have fewer than max_display unique sources, fill with top remaining
+        if len(diverse_snippets) < max_display:
+            for s in remaining:
+                diverse_snippets.append(s)
+                if len(diverse_snippets) >= max_display:
+                    break
+
+        n_sources = len({s.get("title", "") for s in diverse_snippets})
+        label = f"Retrieved context ({len(diverse_snippets)} chunks from {n_sources} sources, {len(snippets)} total)"
         with st.expander(label):
-            for s in display_snippets:
+            for s in diverse_snippets:
                 tag = " **[S2]**" if s.get("node_id", "").startswith("s2:") else ""
                 st.markdown(f"**#{s['rank']}** _{s['title']}_ (score: {s['score']:.3f}){tag}")
                 st.text(s["text"][:500] + ("..." if len(s["text"]) > 500 else ""))
