@@ -1234,6 +1234,12 @@ def _detect_gpu_available() -> bool:
 
 def main():
     st.set_page_config(page_title="WattBot RAG", page_icon="lightning", layout="wide")
+    # Capitalize "app" in the sidebar navigation (filename-derived label is lowercase)
+    st.markdown(
+        "<style>[data-testid='stSidebarNav'] li:first-child span"
+        " { text-transform: capitalize; }</style>",
+        unsafe_allow_html=True,
+    )
     st.title("WattBot RAG Pipeline")
 
     is_remote = RAG_MODE == "remote"
