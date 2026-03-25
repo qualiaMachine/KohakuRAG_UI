@@ -1170,6 +1170,89 @@ class RAGPipeline:
             },
         )
 
+    async def verify_citations(
+        self,
+        result: StructuredAnswerResult,
+        citation_prompt: str,
+    ) -> StructuredAnswerResult:
+        """Lightweight post-hoc citation verification (OpenScholar Section 2.2 step 3).
+
+        Only rewrites the explanation if it lacks inline [ref_id] citations.
+        Skips the LLM call entirely if citations are already present.
+
+        Args:
+            result: The original answer result to verify.
+            citation_prompt: Prompt template with {explanation} and {sources} placeholders.
+
+        Returns:
+            Updated result with citations inserted, or original if already cited.
+        """
+        explanation = result.answer.explanation or ""
+
+        # Quick check: does the explanation already contain [ref_id] citations?
+        if re.search(r"\[[a-z][a-z0-9_]+\d{4}", explanation):
+            return result  # Already has inline citations, skip
+
+        # Build a compact source list from top snippets
+        sources = []
+        for s in result.retrieval.snippets[:10]:
+            doc_id = (s.metadata or {}).get("document_id", "unknown")
+            sources.append(f"[ref_id={doc_id}] {s.text[:200]}")
+        if not sources:
+            return result
+
+        source_text = "\n---\n".join(sources)
+        prompt = citation_prompt.format(
+            explanation=explanation,
+            sources=source_text,
+        )
+
+        t0 = _time.time()
+        raw = await self._chat.complete(prompt)
+        t_verify = _time.time() - t0
+
+        # Try to extract just the rewritten explanation
+        # The LLM should return the explanation with citations inserted
+        rewritten = raw.strip()
+
+        # If the LLM wrapped it in JSON, extract the explanation field
+        try:
+            start = rewritten.index("{")
+            end = rewritten.rindex("}") + 1
+            data = json.loads(rewritten[start:end])
+            if "explanation" in data:
+                rewritten = str(data["explanation"]).strip()
+        except Exception:
+            pass
+
+        # Validate: only use if it actually has citations now
+        if not re.search(r"\[[a-z][a-z0-9_]+\d{4}", rewritten):
+            return result  # Rewrite didn't help, keep original
+
+        # Update the answer with the citation-enhanced explanation
+        updated_answer = StructuredAnswer(
+            answer=result.answer.answer,
+            answer_value=result.answer.answer_value,
+            ref_id=result.answer.ref_id,
+            explanation=rewritten,
+            ref_url=result.answer.ref_url,
+            supporting_materials=result.answer.supporting_materials,
+        )
+
+        # Update timing
+        updated_timing = dict(result.timing)
+        updated_timing["generation_s"] = updated_timing.get("generation_s", 0) + t_verify
+        updated_timing["total_s"] = updated_timing.get("total_s", 0) + t_verify
+        updated_timing["citation_verify_s"] = t_verify
+
+        return StructuredAnswerResult(
+            answer=updated_answer,
+            retrieval=result.retrieval,
+            raw_response=result.raw_response,
+            prompt=result.prompt,
+            timing=updated_timing,
+        )
+
     async def run_qa(
         self,
         question: str,

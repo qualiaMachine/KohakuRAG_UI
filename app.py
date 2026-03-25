@@ -437,6 +437,29 @@ Return STRICT JSON with the following keys:
 JSON Answer:
 """.strip()
 
+# ---------------------------------------------------------------------------
+# Citation verification prompt (lightweight post-hoc pass)
+# Only triggered when the LLM answer lacks inline [ref_id] citations.
+# Based on OpenScholar Section 2.2 step 3: Citation Verification.
+# ---------------------------------------------------------------------------
+CITATION_VERIFY_PROMPT = """
+The following explanation answers a user's question but is missing inline citations. \
+Every factual claim must be attributed to a source using [ref_id] notation.
+
+Rewrite the explanation below, inserting [ref_id] citations from the source list \
+after each factual sentence. Do NOT change the meaning or add new information — \
+only insert citations where they belong.
+
+Explanation to fix:
+{explanation}
+
+Available sources (use these ref_ids for citations):
+{sources}
+
+Return ONLY the rewritten explanation with [ref_id] citations inserted inline. \
+Do not wrap in JSON or add any other text.
+""".strip()
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1006,6 +1029,7 @@ def _run_qa_sync(
                     time.sleep(1)  # brief pause before retry
             finally:
                 loop.close()
+
         raise last_exc  # type: ignore[misc]
     finally:
         # Restore original max_tokens
@@ -1020,14 +1044,30 @@ def run_single_query(
     send_images_to_llm: bool = False,
     research_mode: bool = False, max_tokens_override: int = 0,
 ):
-    """Run a single model query."""
-    return _run_qa_sync(
+    """Run a single model query with post-hoc citation verification."""
+    result = _run_qa_sync(
         pipeline, question, top_k,
         best_guess=best_guess, max_retries=max_retries,
         with_images=with_images, top_k_images=top_k_images,
         send_images_to_llm=send_images_to_llm,
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
+
+    # Post-hoc citation verification: if the explanation lacks inline
+    # [ref_id] citations, run a lightweight LLM pass to insert them.
+    # Conditional — skips the LLM call if citations are already present.
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                pipeline.verify_citations(result, CITATION_VERIFY_PROMPT)
+            )
+        finally:
+            loop.close()
+    except Exception as e:
+        _debug(f"Citation verification skipped: {e}")
+
+    return result
 
 
 def run_ensemble_parallel_query(
