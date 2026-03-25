@@ -127,6 +127,11 @@ review or survey paper. Always cite your sources using the ref_id provided in sq
 brackets (e.g., [wu2021a]). When the context contains specific numbers, statistics, or \
 claims, include them with citations. If the provided context is limited, acknowledge \
 this explicitly rather than inventing information.
+
+IMPORTANT: You must ALWAYS provide an answer. Never output "is_blank" for the answer \
+or explanation fields. Even when the context only partially covers the question, \
+synthesize whatever relevant information IS available and note any gaps. The user \
+has opted into research mode specifically to get comprehensive answers.
 """.strip()
 
 USER_TEMPLATE = """
@@ -193,7 +198,8 @@ comparisons, and implications.
 5. If multiple sources discuss the same topic, synthesize and compare their findings.
 6. End with a brief summary or outlook paragraph.
 7. If the context is insufficient to fully answer the question, state what IS known from \
-the context and note the gaps.
+the context and note the gaps. You MUST still provide an answer — never use "is_blank" for \
+the answer or explanation fields.
 
 Question: {question}
 
@@ -728,6 +734,14 @@ def _run_qa_sync(
     else:
         sys_prompt = SYSTEM_PROMPT
         usr_template = USER_TEMPLATE
+    # When both research_mode and best_guess are on, reinforce that the LLM
+    # must always provide an answer (research prompt already says this, but
+    # best_guess adds the explicit low-confidence fallback instruction).
+    if research_mode and best_guess:
+        sys_prompt += (
+            "\nIf the context only partially or weakly supports an answer, "
+            "still provide your best-effort synthesis but set confidence to \"low\"."
+        )
     # Temporarily override max_tokens on the chat model if requested
     original_max_tokens = None
     if max_tokens_override > 0 and hasattr(pipeline._chat, '_max_tokens'):
@@ -1298,6 +1312,8 @@ def main():
             )
 
     # Render history
+    # Resolve image_store for figure display during history replay
+    _hist_image_store = getattr(pipeline, "_image_store", None) if pipeline else None
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "assistant":
@@ -1307,11 +1323,15 @@ def main():
                     ref_ids=details.get("ref_id"),
                     ref_urls=details.get("ref_url"),
                 )
-                st.markdown(f"**{linked}**")
+                # Use regular markdown for long research-mode answers
+                if len(linked) > 500 or "\n\n" in linked:
+                    st.markdown(linked)
+                else:
+                    st.markdown(f"**{linked}**")
             else:
                 st.markdown(msg["content"])
             if msg["role"] == "assistant" and "details" in msg:
-                _render_details(msg["details"])
+                _render_details(msg["details"], image_store=_hist_image_store)
 
     # User input
     if question := st.chat_input("Ask a question about the WattBot documents..."):
@@ -1506,16 +1526,18 @@ def _linkify_citations(
 
 
 def _display_retrieved_images(image_nodes, image_store=None):
-    """Show retrieved PDF figures in an expander.
+    """Show retrieved PDF figures as a compact thumbnail grid.
 
+    Each thumbnail is clickable — selecting it expands to full size.
     Works both for live results (StoredNode objects) and history replay
     (serialized dicts with storage_key/caption/page/doc_id).
     """
     if not image_nodes:
         return
     with st.expander(f"Retrieved figures ({len(image_nodes)})", expanded=False):
+        # Collect image data first
+        images = []
         for node in image_nodes:
-            # Support both StoredNode objects and plain dicts (history replay)
             if hasattr(node, "metadata"):
                 storage_key = node.metadata.get("image_storage_key")
                 caption = node.text or ""
@@ -1527,19 +1549,37 @@ def _display_retrieved_images(image_nodes, image_store=None):
                 page = node.get("page", "?")
                 doc_id = node.get("doc_id", "unknown")
 
-            label = f"{doc_id} p.{page}"
+            short_label = f"{doc_id} p.{page}"
+            full_label = short_label
             if caption:
-                label += f": {caption[:120]}"
+                full_label += f": {caption[:120]}"
 
-            # Try to display actual image if available
+            img_bytes = None
             if storage_key and image_store:
                 img_bytes = image_store._sync_get(storage_key)
-                if img_bytes:
-                    st.image(img_bytes, caption=label, use_container_width=True)
-                    continue
-            # Fallback: show caption text
-            if caption:
-                st.markdown(f"**{doc_id} p.{page}:** {caption}")
+
+            images.append({
+                "bytes": img_bytes,
+                "short_label": short_label,
+                "full_label": full_label,
+                "caption": caption,
+                "doc_id": doc_id,
+                "page": page,
+            })
+
+        # Render as a thumbnail grid (3 columns)
+        n_cols = min(3, len(images))
+        cols = st.columns(n_cols)
+        for idx, img in enumerate(images):
+            col = cols[idx % n_cols]
+            with col:
+                if img["bytes"]:
+                    st.image(img["bytes"], caption=img["short_label"], width=200)
+                    # Expandable full-size view on click
+                    with st.popover(f"Expand: {img['short_label']}"):
+                        st.image(img["bytes"], caption=img["full_label"])
+                elif img["caption"]:
+                    st.markdown(f"**{img['short_label']}:** {img['caption'][:200]}")
 
 
 def _display_single_result(result, elapsed: float, *, pipeline: RAGPipeline | None = None):
