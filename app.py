@@ -303,9 +303,9 @@ the trusted comparisons below — do not invent your own:
 
 Energy:
 - 1 MWh ≈ monthly electricity for ~1 average US home
-- 1 GWh (1,000 MWh) ≈ annual electricity for ~85 US homes
+- 1 GWh (1,000 MWh) ≈ annual electricity for ~100 US homes
 - 1 kWh ≈ running a window AC unit for ~1 hour
-- 1 TWh (1,000,000 MWh) ≈ annual electricity for ~85,000 US homes
+- 1 TWh (1,000,000 MWh) ≈ annual electricity for ~100,000 US homes
 
 Water:
 - 1,000 liters ≈ filling ~6 standard bathtubs
@@ -514,7 +514,7 @@ Instructions:
 5. For key numeric metrics (energy, water, emissions), add a brief real-world comparison \
 in parentheses so non-expert readers can grasp the scale. Use only these trusted benchmarks:
    - 1 MWh ≈ monthly electricity for ~1 average US home
-   - 1 GWh ≈ annual electricity for ~85 US homes
+   - 1 GWh ≈ annual electricity for ~100 US homes
    - 1,000 liters of water ≈ ~6 standard bathtubs
    - 1 million liters ≈ ~0.4 Olympic swimming pools
    - 1 metric ton CO2 ≈ one passenger's round-trip flight NYC–London
