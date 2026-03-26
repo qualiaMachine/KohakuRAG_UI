@@ -537,21 +537,30 @@ JSON Answer:
 # Based on OpenScholar Section 2.2 step 3: Citation Verification.
 # ---------------------------------------------------------------------------
 CITATION_VERIFY_PROMPT = """
-The following explanation answers a user's question but is missing inline citations. \
-Every factual claim must be attributed to a source using [ref_id] notation.
+You are a citation verification assistant. The explanation below answers a scientific \
+question but is missing inline citations or has incorrect numeric citations like [1], [5]. \
+You MUST attribute every factual claim to a source using [ref_id] notation.
 
-Rewrite the explanation below, inserting [ref_id] citations from the source list \
-after each factual sentence. Do NOT change the meaning or add new information — \
-only insert citations where they belong.
+IMPORTANT RULES:
+1. Use ONLY the ref_ids from the source list below (e.g. [{example_ref_ids}]).
+2. Do NOT use numeric citations like [1], [2], [5] — these are WRONG. Use the actual \
+ref_id strings from the sources.
+3. EVERY sentence that states a fact, statistic, or claim MUST end with at least one \
+[ref_id] citation. Sentences without citations are NOT acceptable.
+4. Do NOT change the meaning, remove sentences, or add new information — only insert citations.
+5. If a sentence is supported by multiple sources, cite all of them: [ref_id1][ref_id2].
+
+Example of correct citations:
+"Training GPT-3 consumed approximately 1,287 MWh [{example_ref_ids}]."
 
 Explanation to fix:
 {explanation}
 
-Available sources (use these ref_ids for citations):
+Available sources — use these ref_ids for citations:
 {sources}
 
-Return ONLY the rewritten explanation with [ref_id] citations inserted inline. \
-Do not wrap in JSON or add any other text.
+Return ONLY the rewritten explanation with [ref_id] citations inserted inline after \
+every factual sentence. Do not wrap in JSON or add any other text.
 """.strip()
 
 
