@@ -130,7 +130,15 @@ _GPU_TDP_WATTS = float(os.environ.get("ENERGY_GPU_TDP_WATTS", "300"))
 _GPU_VRAM_GB = float(os.environ.get("ENERGY_GPU_VRAM_GB", "80"))
 
 # Typical GPU utilisation during active inference (used for estimation).
-_GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.70"))
+# 0.50 is a conservative default — real utilisation varies by batch size and
+# model; override via env var if you have empirical measurements.
+_GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.50"))
+
+# In remote mode, retrieval_s includes network round-trips, CPU-based vector
+# search, BM25 scoring, and Semantic Scholar API calls — only a small fraction
+# is actual GPU compute (embedding + reranking).  This factor estimates the
+# GPU-active share of total retrieval wall-clock time.
+_REMOTE_RETRIEVAL_GPU_FRAC = float(os.environ.get("ENERGY_RETRIEVAL_GPU_FRAC", "0.10"))
 
 
 def _parse_param_billions(model_name: str) -> float:
@@ -261,9 +269,11 @@ class EnergyTracker:
             vllm_wh = (_GPU_TDP_WATTS * self._llm_power_frac * _GPU_UTIL * gen_s) / 3600.0
             total = embed_wh + reranker_wh + vllm_wh
             # When servers don't report energy, estimate retrieval energy from
-            # retrieval time (embedding + reranking use GPU too).
+            # retrieval time.  Only a fraction of wall-clock retrieval time is
+            # actual GPU compute (the rest is network, CPU search, API calls).
             if embed_wh == 0 and reranker_wh == 0 and retrieval_s > 0:
-                total += (_GPU_TDP_WATTS * self._embed_power_frac * _GPU_UTIL * retrieval_s) / 3600.0
+                gpu_retrieval_s = retrieval_s * _REMOTE_RETRIEVAL_GPU_FRAC
+                total += (_GPU_TDP_WATTS * self._embed_power_frac * _GPU_UTIL * gpu_retrieval_s) / 3600.0
             if embed_wh > 0 or reranker_wh > 0:
                 self._method = "server_reported"
             else:
@@ -287,7 +297,8 @@ def _format_energy(wh: float, *, split: bool = False) -> str | tuple[str, str]:
     elif wh >= 1.0:
         val, unit = f"{wh:.2f}", "Wh"
     else:
-        val, unit = f"{wh * 1000:.1f}", "mWh"
+        # Sub-1 Wh: show enough decimal places to be meaningful
+        val, unit = f"{wh:.4f}", "Wh"
     if split:
         return val, unit
     return f"{val} {unit}"
@@ -1875,11 +1886,12 @@ def _humanize_ref_id(rid: str) -> str:
     """
     # Strip Semantic Scholar prefix for display
     display_rid = rid.removeprefix("s2_")
-    m = re.match(r"([a-zA-Z]+)(\d{4})", display_rid)
+    m = re.match(r"([a-zA-Z]+)(\d{4})([a-z]?)", display_rid)
     if m:
         author = m.group(1).capitalize()
         year = m.group(2)
-        label = f"{author} et al., {year}"
+        suffix = m.group(3)  # e.g. "b" in luccioni2024b
+        label = f"{author} et al., {year}{suffix}"
         if rid.startswith("s2_"):
             label += " [S2]"
         return label
@@ -1964,6 +1976,14 @@ def _linkify_citations(
 
         return match.group(0)
 
+    # Normalise bold-wrapped citations: __Author et al., Year__ → [Author et al., Year]
+    # Some LLMs emit markdown bold instead of brackets for inline citations.
+    text = re.sub(
+        r"__([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4}[a-z]?))__",
+        r"[\1]",
+        text,
+    )
+
     # Match [something] NOT already followed by '(' (avoids double-linking)
     text = re.sub(r"\[([^\]]+)\](?!\()", _replace_bracket, text)
 
@@ -1983,7 +2003,7 @@ def _linkify_citations(
         return full
 
     text = re.sub(
-        r"\(([A-Z][a-z]+ et al\., \d{4})\)",
+        r"\(([A-Z][a-z]+ et al\., \d{4}[a-z]?)\)",
         _replace_paren,
         text,
     )
