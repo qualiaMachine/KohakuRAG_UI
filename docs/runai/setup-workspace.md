@@ -400,9 +400,14 @@ ln -s /wattbot-data/embeddings data/embeddings
 ln -s /wattbot-data/corpus     data/corpus
 ln -s /wattbot-data/pdfs       data/pdfs
 
-# Build index (downloads PDFs, parses to JSON, creates embeddings)
+# Build text index (downloads PDFs, parses to JSON, creates embeddings)
 cd vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+
+# Build multimodal image index (renders PDF pages, embeds with JinaV4)
+kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
+kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
+kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
 cd ../..
 
 # Verify
