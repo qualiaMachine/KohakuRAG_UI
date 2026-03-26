@@ -8,6 +8,13 @@ with their captions — instead of storing full pages. Uses two strategies:
   2. Vector figures: Finds "Figure N" / "Fig. N" caption text and crops
      the non-text region above it (for plots drawn as vector graphics).
 
+Optionally runs a VLM verification pass on each extracted crop to:
+  - Confirm it's actually a figure/table (not a logo, equation, etc.)
+  - Generate a rich description for better retrieval
+  - Classify the figure type (chart, diagram, table, photo, etc.)
+
+Set vlm_verify=True and provide an OPENAI_API_KEY (for OpenRouter) to enable.
+
 JinaV4's multimodal embeddings handle the rest — text queries find
 relevant figures via cross-modal search in the shared vector space.
 
@@ -64,11 +71,110 @@ min_image_area_ratio = 0.03  # Embedded images must cover > 3% of page to count 
 caption_expand_pt = 60  # Points to expand below image rect to capture caption
 margin_pt = 10  # Points of padding around the crop region
 
+# VLM verification settings
+vlm_verify = False  # Set True to enable VLM-based verification of extracted crops
+vlm_model = "qwen/qwen3-vl-235b-a22b-instruct"
+vlm_max_concurrent = 5
+
 # Caption pattern for "Figure N" / "Fig. N" / "Table N" labels
 _CAPTION_RE = re.compile(
     r"^(Fig(?:ure|\.)\s*\d+|Table\s*\d+)",
     re.IGNORECASE,
 )
+
+# VLM verification prompt — returns structured JSON
+_VLM_VERIFY_PROMPT = """\
+Analyze this cropped region from a scientific PDF. Respond ONLY with valid JSON matching this schema:
+
+{
+  "is_figure": true/false,
+  "figure_type": "chart"|"diagram"|"table"|"photo"|"screenshot"|"other"|"not_a_figure",
+  "caption": "the original caption text visible in the image, if any",
+  "description": "2-3 sentence description of what this figure shows, focusing on data/content"
+}
+
+Rules:
+- is_figure=true for charts, plots, tables, diagrams, architecture diagrams, photos, screenshots
+- is_figure=false for logos, icons, decorative elements, page headers/footers, equations, author photos, watermarks
+- For "caption": extract the exact caption text (e.g. "Figure 3: Comparison of...") if visible
+- For "description": describe the actual content, data, trends, labels, axes — not the visual style
+- If it's a table, list the column headers and key data points
+"""
+
+
+async def _vlm_verify_figure(
+    image_bytes: bytes,
+    vision_model,
+) -> dict | None:
+    """Use a VLM to verify if a crop is a real figure and generate a description.
+
+    Returns a dict with {is_figure, figure_type, caption, description} or None on failure.
+    """
+    try:
+        raw = await vision_model.caption(
+            image_bytes,
+            prompt=_VLM_VERIFY_PROMPT,
+            max_tokens=400,
+        )
+        # Strip markdown code fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+
+        result = json.loads(raw)
+        # Validate required fields
+        if "is_figure" not in result:
+            return None
+        return result
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"    VLM verify failed: {e}")
+        return None
+
+
+async def _vlm_verify_batch(
+    figures: list[dict],
+    vision_model,
+) -> list[dict]:
+    """Verify a batch of figure crops via VLM, filtering out non-figures.
+
+    Returns only the figures that pass verification, with enriched metadata.
+    """
+    tasks = [_vlm_verify_figure(fig["image_bytes"], vision_model) for fig in figures]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    verified = []
+    for fig, result in zip(figures, results):
+        if isinstance(result, Exception):
+            print(f"    VLM error for p{fig['page_num']}:fig{fig['fig_idx']}: {result}")
+            # Keep figure on VLM failure (fail-open)
+            verified.append(fig)
+            continue
+
+        if result is None:
+            # VLM returned unparseable response — keep figure (fail-open)
+            verified.append(fig)
+            continue
+
+        if not result.get("is_figure", True):
+            fig_label = fig.get("fig_label", f"p{fig['page_num']}:fig{fig['fig_idx']}")
+            print(f"    VLM rejected: {fig_label} ({result.get('figure_type', '?')})")
+            continue
+
+        # Enrich figure metadata with VLM results
+        fig["vlm_verified"] = True
+        fig["figure_type"] = result.get("figure_type", "")
+        fig["vlm_description"] = result.get("description", "")
+        # Use VLM-extracted caption if we didn't have one from regex
+        if result.get("caption") and not fig.get("caption"):
+            fig["caption"] = result["caption"]
+        # If VLM found a caption and ours was just a placeholder, prefer VLM's
+        if result.get("caption") and fig.get("caption", "").startswith("Image on page"):
+            fig["caption"] = result["caption"]
+
+        verified.append(fig)
+
+    return verified
 
 
 def _find_figure_regions(page) -> list[dict]:
@@ -257,13 +363,28 @@ def extract_figures(pdf_path: Path, doc_id: str) -> list[dict]:
     return all_figures
 
 
-def process_document(
-    json_path: Path, pdf_dir_path: Path, db_path: Path, idx: int, total: int
+async def process_document(
+    json_path: Path,
+    pdf_dir_path: Path,
+    db_path: Path,
+    idx: int,
+    total: int,
+    vision_model=None,
 ) -> dict:
-    """Extract figures from a PDF and store them."""
+    """Extract figures from a PDF and store them.
+
+    If vision_model is provided (vlm_verify=True), each crop is sent to the VLM
+    for verification and captioning before storage.
+    """
     doc_id = json_path.stem
     pdf_path = pdf_dir_path / f"{doc_id}.pdf"
-    stats = {"doc_id": doc_id, "figures_found": 0, "figures_stored": 0, "errors": 0}
+    stats = {
+        "doc_id": doc_id,
+        "figures_found": 0,
+        "figures_stored": 0,
+        "vlm_rejected": 0,
+        "errors": 0,
+    }
 
     print(f"[{idx}/{total}] {doc_id}... ", end="", flush=True)
 
@@ -279,12 +400,27 @@ def process_document(
             print("no figures found")
             return stats
 
+        # VLM verification pass — filter out non-figures, enrich captions
+        if vision_model is not None:
+            before_count = len(figures)
+            figures = await _vlm_verify_batch(figures, vision_model)
+            stats["vlm_rejected"] = before_count - len(figures)
+
+        if not figures:
+            print(f"0 figures after VLM verification ({stats['vlm_rejected']} rejected)")
+            return stats
+
         # Open image store
         image_store = ImageStore(db_path, table="image_blobs")
 
         # Load existing JSON payload to update metadata
         payload = dict_to_payload(json.loads(json_path.read_text(encoding="utf-8")))
         updated = False
+
+        # Extract document-level metadata for source links
+        doc_meta = payload.metadata or {}
+        source_url = doc_meta.get("url", "")
+        source_title = payload.title or doc_id
 
         for fig in figures:
             page_num = fig["page_num"]
@@ -320,11 +456,14 @@ def process_document(
                 if has_this_fig:
                     break
 
-                # Build descriptive caption for embedding
+                # Build descriptive caption for embedding — prefer VLM description
+                vlm_desc = fig.get("vlm_description", "")
                 if fig_label:
                     embed_caption = f"[{fig_label}] {caption}"
                 else:
                     embed_caption = f"[figure:{doc_id} p{page_num}] {caption}"
+                if vlm_desc:
+                    embed_caption += f" — {vlm_desc}"
 
                 section.paragraphs.append(
                     ParagraphPayload(
@@ -338,6 +477,15 @@ def process_document(
                             "image_height": h,
                             "attachment_type": "page_image",
                             "image_storage_key": storage_key,
+                            # Structured caption metadata
+                            "caption_text": caption,
+                            "vlm_description": vlm_desc,
+                            "figure_type": fig.get("figure_type", ""),
+                            "vlm_verified": fig.get("vlm_verified", False),
+                            # Source link metadata
+                            "source_url": source_url,
+                            "source_title": source_title,
+                            "document_id": doc_id,
                         },
                     )
                 )
@@ -354,8 +502,10 @@ def process_document(
 
         found = stats["figures_found"]
         stored = stats["figures_stored"]
+        rejected = stats["vlm_rejected"]
         size_mb = sum(len(f["image_bytes"]) for f in figures) / 1024 / 1024
-        print(f"{stored}/{found} figures ({size_mb:.1f} MB)")
+        vlm_info = f", {rejected} VLM-rejected" if rejected else ""
+        print(f"{stored}/{found} figures ({size_mb:.1f} MB{vlm_info})")
 
     except Exception as e:
         print(f"ERROR: {e}")
@@ -382,6 +532,20 @@ async def main() -> None:
     if limit > 0:
         json_files = json_files[:limit]
 
+    # Initialize VLM for verification if enabled
+    vision_model = None
+    if vlm_verify:
+        try:
+            from kohakurag.vision import OpenAIVisionModel
+            vision_model = OpenAIVisionModel(
+                model=vlm_model,
+                max_concurrent=vlm_max_concurrent,
+            )
+            print("VLM verification: ENABLED")
+        except (ImportError, ValueError) as e:
+            print(f"WARNING: VLM verification requested but unavailable: {e}")
+            print("Falling back to heuristic-only extraction.")
+
     print("=" * 60)
     print("KohakuRAG — Extract & Store PDF Figures")
     print("=" * 60)
@@ -390,6 +554,7 @@ async def main() -> None:
     print(f"Database:   {db_path}")
     print(f"Resolution: {dpi} DPI (max {max_figure_dim}px)")
     print(f"Format:     {image_format} (quality={jpeg_quality})")
+    print(f"VLM verify: {'ON (' + vlm_model + ')' if vision_model else 'OFF'}")
     print("=" * 60)
 
     t0 = time.time()
@@ -397,19 +562,25 @@ async def main() -> None:
     # Process sequentially (PyMuPDF isn't thread-safe for writes to same DB)
     results = []
     for i, jp in enumerate(json_files):
-        result = process_document(jp, pdf_dir_path, db_path, i + 1, len(json_files))
+        result = await process_document(
+            jp, pdf_dir_path, db_path, i + 1, len(json_files),
+            vision_model=vision_model,
+        )
         results.append(result)
 
     total_found = sum(r["figures_found"] for r in results)
     total_stored = sum(r["figures_stored"] for r in results)
+    total_rejected = sum(r["vlm_rejected"] for r in results)
     total_errors = sum(r["errors"] for r in results)
     elapsed = time.time() - t0
 
     print(f"\n{'=' * 60}")
     print(f"Done in {elapsed:.1f}s")
-    print(f"Figures found:  {total_found}")
-    print(f"Figures stored: {total_stored}")
-    print(f"Errors:         {total_errors}")
+    print(f"Figures found:   {total_found}")
+    print(f"Figures stored:  {total_stored}")
+    if total_rejected:
+        print(f"VLM rejected:    {total_rejected}")
+    print(f"Errors:          {total_errors}")
     print(f"{'=' * 60}")
 
     if total_stored > 0:
