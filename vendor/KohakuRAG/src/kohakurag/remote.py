@@ -220,51 +220,18 @@ class RemoteCrossEncoderReranker:
         self._timeout = timeout
         self.last_energy_wh: float = 0.0  # energy reported by last rerank call
 
-    # Maximum number of texts per rerank request.  Sending too many long
-    # passages in one batch can cause the reranker service to OOM / 500.
-    _BATCH_SIZE: int = 16
-
     def _rerank_sync(self, query: str, texts: list[str]) -> list[float]:
-        """Synchronous rerank call (used by rerank() which operates on matches).
-
-        When the number of texts exceeds ``_BATCH_SIZE``, the request is split
-        into smaller batches to avoid overloading the reranker service.
-        """
+        """Synchronous rerank call (used by rerank() which operates on matches)."""
         import httpx as _httpx
-
-        # Sanitize None values
-        clean_texts = [(t or "") for t in texts]
-
-        # Small enough to send in one shot
-        if len(clean_texts) <= self._BATCH_SIZE:
-            resp = _httpx.post(
-                f"{self._base_url}/rerank",
-                json={"query": query, "texts": clean_texts},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            self.last_energy_wh = data.get("energy_wh", 0.0)
-            return data["scores"]
-
-        # Batch: split texts into chunks and stitch scores back together
-        all_scores: list[float] = [0.0] * len(clean_texts)
-        total_energy = 0.0
-        for start in range(0, len(clean_texts), self._BATCH_SIZE):
-            batch = clean_texts[start : start + self._BATCH_SIZE]
-            resp = _httpx.post(
-                f"{self._base_url}/rerank",
-                json={"query": query, "texts": batch},
-                timeout=self._timeout,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            total_energy += data.get("energy_wh", 0.0)
-            for j, score in enumerate(data["scores"]):
-                all_scores[start + j] = score
-
-        self.last_energy_wh = total_energy
-        return all_scores
+        resp = _httpx.post(
+            f"{self._base_url}/rerank",
+            json={"query": query, "texts": texts},
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self.last_energy_wh = data.get("energy_wh", 0.0)
+        return data["scores"]
 
     def rerank(
         self,
