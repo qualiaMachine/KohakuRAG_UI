@@ -45,13 +45,13 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 ## Runtime settings
 
 The `vllm/vllm-openai` image has a built-in entrypoint that launches the
-API server — you only need to pass `--model` as an argument. No command
-is required.
+API server — you only need to pass the model as a positional argument. No
+command is required.
 
 | Field | Value |
 |-------|-------|
 | **Command** | *(leave empty — image default launches the API server)* |
-| **Arguments** | `--model OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto` |
+| **Arguments** | `Qwen/Qwen3-30B-A3B-GPTQ-Int4 --quantization gptq_marlin --dtype half` |
 | **Working directory** | *(leave empty)* |
 
 **Environment variables:**
@@ -161,38 +161,40 @@ Copy-paste the **Arguments** field for each model. Remember to also update
 the Streamlit job's `VLLM_MODEL` env var to match, and download the model
 to the shared PVC first (see [Managing Models](managing-models.md)).
 
+### Qwen3-30B-A3B (GPTQ 4-bit — official pre-quantized, MoE)
+
+```
+Qwen/Qwen3-30B-A3B-GPTQ-Int4 --quantization gptq_marlin --dtype half
+```
+
+> Mixture-of-Experts: 30B total params, ~3B active per token. Faster
+> inference than the dense 32B at similar VRAM cost (~18 GB at 4-bit).
+> Uses `gptq_marlin` for faster inference (vLLM warns the plain `gptq`
+> kernel is buggy).
+
+### Qwen3-32B (AWQ 4-bit — official pre-quantized)
+
+```
+Qwen/Qwen3-32B-AWQ --quantization awq --dtype half
+```
+
+> Dense 32B model. Needs a full GPU (~20 GB VRAM at 4-bit). Strong
+> reasoning; rivals Llama 3.1 70B on many benchmarks at half the memory.
+
 ### OpenScholar 8B (BitsAndBytes — no pre-quantized version available)
 
 ```
---model OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype half
+OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype half
 ```
 
 > OpenScholar has no official AWQ/GPTQ release, so we fall back to
 > BitsAndBytes for 4-bit quantization. This requires `--load-format
 > bitsandbytes` in addition to `--quantization`.
 
-### Qwen3-32B (AWQ 4-bit — official pre-quantized)
+### Qwen 2.5 7B (BitsAndBytes)
 
 ```
---model Qwen/Qwen3-32B-AWQ --quantization awq --dtype half
-```
-
-> Dense 32B model. Needs a full GPU (~20 GB VRAM at 4-bit). Strong
-> reasoning; rivals Llama 3.1 70B on many benchmarks at half the memory.
-
-### Qwen3-30B-A3B (GPTQ 4-bit — official pre-quantized, MoE)
-
-```
---model Qwen/Qwen3-30B-A3B-GPTQ-Int4 --quantization gptq --dtype half
-```
-
-> Mixture-of-Experts: 30B total params, ~3B active per token. Faster
-> inference than the dense 32B at similar VRAM cost (~18 GB at 4-bit).
-
-### Qwen 2.5 7B (default, BitsAndBytes)
-
-```
---model Qwen/Qwen2.5-7B-Instruct --quantization bitsandbytes --load-format bitsandbytes --dtype auto
+Qwen/Qwen2.5-7B-Instruct --quantization bitsandbytes --load-format bitsandbytes --dtype auto
 ```
 
 > Original default model. Smallest footprint (~6 GB at 4-bit), fits
@@ -216,8 +218,7 @@ runai submit wattbot-chat \
   --env HF_HUB_CACHE=/models/.cache/huggingface \
   --env HF_HUB_OFFLINE=1 \
   --port 8000 \
-  -- --model OpenSciLM/Llama-3.1_OpenScholar-8B \
-    --quantization bitsandbytes \
-    --load-format bitsandbytes \
-    --dtype auto
+  -- Qwen/Qwen3-30B-A3B-GPTQ-Int4 \
+    --quantization gptq_marlin \
+    --dtype half
 ```
