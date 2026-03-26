@@ -309,7 +309,7 @@ Energy:
 
 Water:
 - 1,000 liters ≈ filling ~6 standard bathtubs
-- 1 million liters ≈ about 0.4 Olympic swimming pools
+- 1 million liters ≈ about half an Olympic swimming pool
 - 1 gallon ≈ 3.8 liters
 
 Carbon emissions:
@@ -516,7 +516,7 @@ in parentheses so non-expert readers can grasp the scale. Use only these trusted
    - 1 MWh ≈ monthly electricity for ~1 average US home
    - 1 GWh ≈ annual electricity for ~100 US homes
    - 1,000 liters of water ≈ ~6 standard bathtubs
-   - 1 million liters ≈ ~0.4 Olympic swimming pools
+   - 1 million liters ≈ about half an Olympic swimming pool
    - 1 metric ton CO2 ≈ one passenger's round-trip flight NYC–London
    - 1 kg CO2 ≈ driving ~2.5 miles in an average gasoline car
 
