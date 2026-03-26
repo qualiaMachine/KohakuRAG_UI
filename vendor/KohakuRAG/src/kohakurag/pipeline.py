@@ -139,10 +139,40 @@ class PromptTemplate:
 # ============================================================================
 
 
+def humanize_ref_id(rid: str) -> str:
+    """Convert ``luccioni2025c`` → ``Luccioni et al., 2025``.
+
+    Handles ``s2_`` prefix for Semantic Scholar references.
+    Falls back to the raw id if the pattern doesn't match.
+    """
+    display_rid = rid.removeprefix("s2_")
+    m = re.match(r"([a-zA-Z]+)(\d{4})", display_rid)
+    if m:
+        author = m.group(1).capitalize()
+        year = m.group(2)
+        label = f"{author} et al., {year}"
+        if rid.startswith("s2_"):
+            label += " [S2]"
+        return label
+    return rid
+
+
+# Regex matching either format of inline citation:
+#   [luccioni2025c]          — raw ref_id
+#   [Luccioni et al., 2025]  — humanized author-year
+_RE_ANY_CITATION = re.compile(
+    r"(?:"
+    r"\[[a-z][a-z0-9_]+\d{4}"          # raw ref_id
+    r"|"
+    r"\[[A-Z][a-z]+ et al\., \d{4}"    # humanized Author et al., Year
+    r")"
+)
+
+
 def format_snippets(snippets: Sequence[ContextSnippet]) -> str:
     """Render snippets as formatted context string for LLM prompt.
 
-    Format: [ref_id=doc node=sec1:p2 score=0.95] snippet text
+    Format: [cite_as="Author et al., Year" ref_id=doc] snippet text
     Snippets separated by --- lines for readability.
     """
     blocks: list[str] = []
@@ -150,19 +180,14 @@ def format_snippets(snippets: Sequence[ContextSnippet]) -> str:
     for snippet in snippets:
         meta = snippet.metadata or {}
         doc_id = str(meta.get("document_id", "unknown"))
-        full_node_id = snippet.node_id
 
-        # Compact node ID: amazon2023:sec1:p2 → sec1:p2
-        node_label = (
-            full_node_id.split(":", 1)[1] if ":" in full_node_id else full_node_id
-        )
-
-        # header = f"[ref_id={doc_id} node={node_label} score={snippet.score:.3f}] "
-        header = f"[ref_id={doc_id}] "  # only necessary info to avoid LLM hallucination and waste tokens
+        cite_label = humanize_ref_id(doc_id)
+        header = f'[cite_as="{cite_label}" ref_id={doc_id}] '
         text = snippet.text.strip()
-        # Strip numeric bibliography citations (e.g. [6], [12, 45]) from source
-        # text so the LLM doesn't copy them instead of using [ref_id] format.
-        text = re.sub(r"\[(\d+(?:\s*,\s*\d+)*)\]", "", text)
+        # Strip numeric bibliography citations from source text so the LLM
+        # doesn't copy them instead of using [Author et al., Year] format.
+        # Handles: [6], [12, 45], [1,2,5], [3-7], [1–5], [1; 2; 3]
+        text = re.sub(r"\[(\d+(?:\s*[,;\-–]\s*\d+)*)\]", "", text)
         blocks.append(header + text)
 
     return "\n---\n".join(blocks)
@@ -1211,59 +1236,91 @@ class RAGPipeline:
         result: StructuredAnswerResult,
         citation_prompt: str,
     ) -> StructuredAnswerResult:
-        """Lightweight post-hoc citation verification (OpenScholar Section 2.2 step 3).
+        """Post-hoc citation verification (OpenScholar Section 2.2 step 3).
 
-        Only rewrites the explanation if it lacks inline [ref_id] citations.
-        Skips the LLM call entirely if citations are already present.
+        Ensures every factual sentence in the explanation has an inline
+        [ref_id] citation.  Three-tier approach:
+          1. If proper citations already exist and no stray numeric ones, skip.
+          2. LLM rewrite pass to insert citations (with retry).
+          3. Heuristic sentence-level fallback: map uncited sentences to their
+             best-matching source chunk via word overlap.
 
         Args:
             result: The original answer result to verify.
-            citation_prompt: Prompt template with {explanation} and {sources} placeholders.
+            citation_prompt: Prompt template with {explanation}, {sources},
+                            and {example_ref_ids} placeholders.
 
         Returns:
             Updated result with citations inserted, or original if already cited.
         """
         explanation = result.answer.explanation or ""
 
-        # Quick check: does the explanation already contain [ref_id] citations?
-        has_ref_citations = bool(re.search(r"\[[a-z][a-z0-9_]+\d{4}", explanation))
+        # Quick check: does the explanation already contain proper citations?
+        # Matches both [luccioni2025c] and [Luccioni et al., 2025] formats.
+        has_ref_citations = bool(_RE_ANY_CITATION.search(explanation))
         has_numeric_citations = bool(re.search(r"\[\d+\]", explanation))
 
         if has_ref_citations and not has_numeric_citations:
-            return result  # Already has proper inline citations, skip
+            # Check citation density — if fewer than 30% of factual sentences
+            # have citations, still run the verification pass.
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', explanation) if len(s.strip()) > 40]
+            cited = sum(1 for s in sentences if _RE_ANY_CITATION.search(s))
+            if sentences and cited / len(sentences) >= 0.3:
+                return result  # Sufficient inline citations, skip
 
         # If we have proper ref citations but also stray numeric ones, just
         # strip the numeric citations and return without an LLM call.
         if has_ref_citations and has_numeric_citations:
             cleaned = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", explanation)
-            cleaned_answer = StructuredAnswer(
-                answer=result.answer.answer,
-                answer_value=result.answer.answer_value,
-                ref_id=result.answer.ref_id,
-                explanation=cleaned,
-                ref_url=result.answer.ref_url,
-                supporting_materials=result.answer.supporting_materials,
-            )
-            return StructuredAnswerResult(
-                answer=cleaned_answer,
-                retrieval=result.retrieval,
-                raw_response=result.raw_response,
-                prompt=result.prompt,
-                timing=result.timing,
-            )
+            # Check citation density after stripping — if still adequate, return
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned) if len(s.strip()) > 40]
+            cited = sum(1 for s in sentences if _RE_ANY_CITATION.search(s))
+            if sentences and cited / len(sentences) >= 0.3:
+                cleaned_answer = StructuredAnswer(
+                    answer=result.answer.answer,
+                    answer_value=result.answer.answer_value,
+                    ref_id=result.answer.ref_id,
+                    explanation=cleaned,
+                    ref_url=result.answer.ref_url,
+                    supporting_materials=result.answer.supporting_materials,
+                )
+                return StructuredAnswerResult(
+                    answer=cleaned_answer,
+                    retrieval=result.retrieval,
+                    raw_response=result.raw_response,
+                    prompt=result.prompt,
+                    timing=result.timing,
+                )
+            # Otherwise fall through to LLM rewrite (density too low)
+            explanation = cleaned
 
         # Build a compact source list from top snippets
-        sources = []
+        source_doc_ids: list[str] = []
+        source_labels: list[str] = []
+        sources: list[str] = []
         for s in result.retrieval.snippets[:10]:
             doc_id = (s.metadata or {}).get("document_id", "unknown")
-            sources.append(f"[ref_id={doc_id}] {s.text[:200]}")
+            label = humanize_ref_id(doc_id)
+            if doc_id not in source_doc_ids:
+                source_doc_ids.append(doc_id)
+                source_labels.append(label)
+            sources.append(f'[cite_as="{label}" ref_id={doc_id}] {s.text[:200]}')
         if not sources:
             return result
 
         source_text = "\n---\n".join(sources)
+        # Provide example citation labels so the prompt can show what valid
+        # citations look like — avoids the LLM falling back to numeric style.
+        example_ref_ids = ", ".join(source_labels[:3])
+
+        # Strip any numeric citations from the explanation before sending to
+        # the rewrite LLM so it doesn't copy them.
+        clean_explanation = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", explanation)
+
         prompt = citation_prompt.format(
-            explanation=explanation,
+            explanation=clean_explanation,
             sources=source_text,
+            example_ref_ids=example_ref_ids,
         )
 
         t0 = _time.time()
@@ -1284,40 +1341,47 @@ class RAGPipeline:
         except Exception:
             pass
 
-        # Validate: only use if it actually has citations now
-        if not re.search(r"\[[a-z][a-z0-9_]+\d{4}", rewritten):
-            # Rewrite didn't help — strip any stray numeric citations from
-            # the original and return it as-is.
-            cleaned = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", explanation)
-            if cleaned != explanation:
-                cleaned_answer = StructuredAnswer(
-                    answer=result.answer.answer,
-                    answer_value=result.answer.answer_value,
-                    ref_id=result.answer.ref_id,
-                    explanation=cleaned,
-                    ref_url=result.answer.ref_url,
-                    supporting_materials=result.answer.supporting_materials,
-                )
-                return StructuredAnswerResult(
-                    answer=cleaned_answer,
-                    retrieval=result.retrieval,
-                    raw_response=result.raw_response,
-                    prompt=result.prompt,
-                    timing=dict(result.timing,
-                                generation_s=result.timing.get("generation_s", 0) + t_verify,
-                                total_s=result.timing.get("total_s", 0) + t_verify,
-                                citation_verify_s=t_verify),
-                )
-            return result  # Rewrite didn't help, keep original
-
-        # Strip any stray numeric citations from the rewritten text too
+        # Strip any stray numeric citations from the rewritten text
         rewritten = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", rewritten)
+
+        # Validate: only use if it actually has citations now
+        if not _RE_ANY_CITATION.search(rewritten):
+            # LLM rewrite didn't produce proper citations.
+            # Fall through to heuristic sentence-level injection below.
+            rewritten = clean_explanation
+
+        # --- Sentence-level citation injection fallback ---
+        # For any sentence that still lacks a [ref_id] citation, find the
+        # best-matching source chunk via word overlap and inject its ref_id.
+        rewritten = self._inject_missing_citations(rewritten, result.retrieval.snippets[:10])
+
+        # Extract all citations from the final text and merge with the
+        # original ref_id list so the Sources footer stays in sync.
+        # Handle both raw [luccioni2025c] and humanized [Luccioni et al., 2025].
+        raw_cited = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", rewritten)
+        humanized_cited = re.findall(r"\[([A-Z][a-z]+ et al\., \d{4}(?:\s*\[S2\])?)\]", rewritten)
+        # Build reverse map from humanized → raw ref_id
+        label_to_rid: dict[str, str] = {}
+        for s in result.retrieval.snippets[:10]:
+            doc_id = (s.metadata or {}).get("document_id", "unknown")
+            label_to_rid[humanize_ref_id(doc_id)] = doc_id
+        original_ids = result.answer.ref_id if isinstance(result.answer.ref_id, list) else (
+            [result.answer.ref_id] if result.answer.ref_id else []
+        )
+        merged_ids: list[str] = list(original_ids)
+        for rid in raw_cited:
+            if rid not in merged_ids:
+                merged_ids.append(rid)
+        for label in humanized_cited:
+            rid = label_to_rid.get(label, "")
+            if rid and rid not in merged_ids:
+                merged_ids.append(rid)
 
         # Update the answer with the citation-enhanced explanation
         updated_answer = StructuredAnswer(
             answer=result.answer.answer,
             answer_value=result.answer.answer_value,
-            ref_id=result.answer.ref_id,
+            ref_id=merged_ids,
             explanation=rewritten,
             ref_url=result.answer.ref_url,
             supporting_materials=result.answer.supporting_materials,
@@ -1336,6 +1400,102 @@ class RAGPipeline:
             prompt=result.prompt,
             timing=updated_timing,
         )
+
+    @staticmethod
+    def _inject_missing_citations(
+        text: str,
+        snippets: Sequence[ContextSnippet],
+    ) -> str:
+        """Inject [Author et al., Year] citations into uncited factual sentences.
+
+        Uses word-overlap scoring to match each uncited sentence to its
+        best-matching source chunk.  Only injects if the overlap is above
+        a minimum threshold to avoid spurious attributions.
+
+        This is the heuristic fallback for OpenScholar Section 2.2 step 3
+        when the LLM rewrite doesn't produce sufficient citations.
+        """
+        if not snippets:
+            return text
+
+        # Build per-snippet word sets and doc_ids
+        _stop = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "shall", "can",
+            "to", "of", "in", "for", "on", "with", "at", "by", "from",
+            "as", "into", "through", "during", "before", "after", "and",
+            "but", "or", "nor", "not", "so", "yet", "both", "either",
+            "neither", "each", "every", "all", "any", "few", "more",
+            "most", "other", "some", "such", "no", "only", "own", "same",
+            "than", "too", "very", "just", "because", "if", "when",
+            "while", "that", "this", "these", "those", "it", "its",
+            "also", "which", "who", "how", "what", "where", "there",
+            "their", "they", "them", "he", "she", "we", "our", "about",
+        }
+
+        def _words(s: str) -> set[str]:
+            return {w.lower() for w in re.findall(r"[a-zA-Z0-9]+", s) if len(w) > 2} - _stop
+
+        snippet_data: list[tuple[str, str, set[str]]] = []
+        for s in snippets:
+            doc_id = (s.metadata or {}).get("document_id", "unknown")
+            label = humanize_ref_id(doc_id)
+            words = _words(s.text)
+            snippet_data.append((doc_id, label, words))
+
+        # Split text into sentences, preserving paragraph structure
+        parts = re.split(r'(\n\n+)', text)
+        result_parts: list[str] = []
+
+        for part in parts:
+            # Preserve paragraph separators as-is
+            if re.match(r'\n\n+', part):
+                result_parts.append(part)
+                continue
+
+            # Split paragraph into sentences
+            sentences = re.split(r'(?<=[.!?])\s+', part)
+            new_sentences: list[str] = []
+
+            for sentence in sentences:
+                stripped = sentence.strip()
+                # Skip short sentences (headers, fragments) and already-cited ones
+                if len(stripped) < 40 or _RE_ANY_CITATION.search(stripped):
+                    new_sentences.append(sentence)
+                    continue
+
+                # Find best matching source chunk via word overlap
+                sent_words = _words(stripped)
+                if not sent_words:
+                    new_sentences.append(sentence)
+                    continue
+
+                best_label = ""
+                best_score = 0.0
+                for doc_id, label, chunk_words in snippet_data:
+                    if not chunk_words:
+                        continue
+                    overlap = len(sent_words & chunk_words)
+                    # Jaccard-like: overlap / min(|sent|, |chunk|)
+                    score = overlap / min(len(sent_words), len(chunk_words))
+                    if score > best_score:
+                        best_score = score
+                        best_label = label
+
+                # Only inject if overlap is meaningful (>= 20% of sentence words)
+                if best_score >= 0.2 and best_label:
+                    # Insert citation before the period (or at end)
+                    if stripped.endswith(('.', '!', '?')):
+                        sentence = stripped[:-1] + f" [{best_label}]" + stripped[-1]
+                    else:
+                        sentence = stripped + f" [{best_label}]"
+
+                new_sentences.append(sentence)
+
+            result_parts.append(" ".join(new_sentences))
+
+        return "".join(result_parts)
 
     async def run_qa(
         self,
