@@ -373,9 +373,22 @@ To add new papers and rebuild the index, restart the `wattbot-setup`
 workspace and run the following:
 
 ```bash
-cd /home/jovyan/work/KohakuRAG_UI
-source .venv/bin/activate
-git pull
+cd /home/jovyan/work
+
+# Remove old clone (symlinks in data/ point to PPVC, so PDFs are safe)
+rm -rf KohakuRAG_UI
+git clone https://github.com/qualiaMachine/KohakuRAG_UI.git
+cd KohakuRAG_UI
+
+# Switch to a specific branch if needed (default is master)
+# git checkout <branch-name>
+
+source .venv/bin/activate 2>/dev/null || true
+
+# Reinstall vendored packages (venv may already exist from prior setup)
+uv pip install -e vendor/KohakuVault
+uv pip install -e vendor/KohakuRAG
+uv pip install -r local_requirements.txt
 
 # Clear old corpus and index so the indexer re-downloads all PDFs
 rm -f /wattbot-data/corpus/*.json
