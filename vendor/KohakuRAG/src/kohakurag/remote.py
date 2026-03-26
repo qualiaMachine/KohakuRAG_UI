@@ -220,29 +220,51 @@ class RemoteCrossEncoderReranker:
         self._timeout = timeout
         self.last_energy_wh: float = 0.0  # energy reported by last rerank call
 
-    # Cross-encoder models typically accept up to 512 tokens; truncating long
-    # passages prevents the reranker service from running out of memory or
-    # exceeding its input limits (which surfaces as a 500 error).
-    _MAX_TEXT_CHARS: int = 2048
+    # Maximum number of texts per rerank request.  Sending too many long
+    # passages in one batch can cause the reranker service to OOM / 500.
+    _BATCH_SIZE: int = 16
 
     def _rerank_sync(self, query: str, texts: list[str]) -> list[float]:
-        """Synchronous rerank call (used by rerank() which operates on matches)."""
+        """Synchronous rerank call (used by rerank() which operates on matches).
+
+        When the number of texts exceeds ``_BATCH_SIZE``, the request is split
+        into smaller batches to avoid overloading the reranker service.
+        """
         import httpx as _httpx
 
-        # Sanitize: ensure no None values and truncate excessively long texts
-        clean_texts = [
-            (t or "")[:self._MAX_TEXT_CHARS] for t in texts
-        ]
+        # Sanitize None values
+        clean_texts = [(t or "") for t in texts]
 
-        resp = _httpx.post(
-            f"{self._base_url}/rerank",
-            json={"query": query, "texts": clean_texts},
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        self.last_energy_wh = data.get("energy_wh", 0.0)
-        return data["scores"]
+        # Small enough to send in one shot
+        if len(clean_texts) <= self._BATCH_SIZE:
+            resp = _httpx.post(
+                f"{self._base_url}/rerank",
+                json={"query": query, "texts": clean_texts},
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self.last_energy_wh = data.get("energy_wh", 0.0)
+            return data["scores"]
+
+        # Batch: split texts into chunks and stitch scores back together
+        all_scores: list[float] = [0.0] * len(clean_texts)
+        total_energy = 0.0
+        for start in range(0, len(clean_texts), self._BATCH_SIZE):
+            batch = clean_texts[start : start + self._BATCH_SIZE]
+            resp = _httpx.post(
+                f"{self._base_url}/rerank",
+                json={"query": query, "texts": batch},
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            total_energy += data.get("energy_wh", 0.0)
+            for j, score in enumerate(data["scores"]):
+                all_scores[start + j] = score
+
+        self.last_energy_wh = total_energy
+        return all_scores
 
     def rerank(
         self,
