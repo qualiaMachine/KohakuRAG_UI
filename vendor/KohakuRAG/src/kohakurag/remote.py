@@ -220,12 +220,23 @@ class RemoteCrossEncoderReranker:
         self._timeout = timeout
         self.last_energy_wh: float = 0.0  # energy reported by last rerank call
 
+    # Cross-encoder models typically accept up to 512 tokens; truncating long
+    # passages prevents the reranker service from running out of memory or
+    # exceeding its input limits (which surfaces as a 500 error).
+    _MAX_TEXT_CHARS: int = 2048
+
     def _rerank_sync(self, query: str, texts: list[str]) -> list[float]:
         """Synchronous rerank call (used by rerank() which operates on matches)."""
         import httpx as _httpx
+
+        # Sanitize: ensure no None values and truncate excessively long texts
+        clean_texts = [
+            (t or "")[:self._MAX_TEXT_CHARS] for t in texts
+        ]
+
         resp = _httpx.post(
             f"{self._base_url}/rerank",
-            json={"query": query, "texts": texts},
+            json={"query": query, "texts": clean_texts},
             timeout=self._timeout,
         )
         resp.raise_for_status()

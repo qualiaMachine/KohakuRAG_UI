@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import time as _time
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from .reranker import CrossEncoderReranker
 from .semantic_scholar import SemanticScholarRetriever
 from .types import ContextSnippet, NodeKind, RetrievalMatch, StoredNode
 
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # PROTOCOLS
@@ -672,20 +674,27 @@ class RAGPipeline:
         # together so local and S2 compete fairly on relevance.  When S2 is
         # off, local matches are already cross-encoder-ranked at match level.
         if self._cross_encoder is not None and s2_snippets and snippets:
-            all_texts = [s.text for s in snippets]
-            ranked = self._cross_encoder.rerank_texts(all_texts, question)
-            reranked: list[ContextSnippet] = []
-            for new_rank, (orig_idx, score) in enumerate(ranked):
-                s = snippets[orig_idx]
-                reranked.append(ContextSnippet(
-                    node_id=s.node_id,
-                    document_title=s.document_title,
-                    text=s.text,
-                    metadata=s.metadata,
-                    rank=new_rank,
-                    score=score,
-                ))
-            snippets = reranked
+            try:
+                all_texts = [s.text for s in snippets]
+                ranked = self._cross_encoder.rerank_texts(all_texts, question)
+                reranked: list[ContextSnippet] = []
+                for new_rank, (orig_idx, score) in enumerate(ranked):
+                    s = snippets[orig_idx]
+                    reranked.append(ContextSnippet(
+                        node_id=s.node_id,
+                        document_title=s.document_title,
+                        text=s.text,
+                        metadata=s.metadata,
+                        rank=new_rank,
+                        score=score,
+                    ))
+                snippets = reranked
+            except Exception as exc:
+                logger.warning(
+                    "Joint reranking failed (%s); proceeding with unranked snippets",
+                    exc,
+                )
+                # Fall through with original snippet order (local first, then S2)
 
         return RetrievalResult(
             question=question,
