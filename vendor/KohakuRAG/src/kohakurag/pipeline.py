@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import time as _time
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from .reranker import CrossEncoderReranker
 from .semantic_scholar import SemanticScholarRetriever
 from .types import ContextSnippet, NodeKind, RetrievalMatch, StoredNode
 
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # PROTOCOLS
@@ -668,24 +670,53 @@ class RAGPipeline:
                 )
                 snippets = list(snippets) + s2_snippets
 
-        # Joint reranking: when S2 results are mixed in, rerank ALL snippets
-        # together so local and S2 compete fairly on relevance.  When S2 is
-        # off, local matches are already cross-encoder-ranked at match level.
-        if self._cross_encoder is not None and s2_snippets and snippets:
-            all_texts = [s.text for s in snippets]
-            ranked = self._cross_encoder.rerank_texts(all_texts, question)
-            reranked: list[ContextSnippet] = []
-            for new_rank, (orig_idx, score) in enumerate(ranked):
-                s = snippets[orig_idx]
-                reranked.append(ContextSnippet(
-                    node_id=s.node_id,
-                    document_title=s.document_title,
-                    text=s.text,
-                    metadata=s.metadata,
-                    rank=new_rank,
-                    score=score,
-                ))
-            snippets = reranked
+        # Score S2 snippets with the cross-encoder so they can be interleaved
+        # with local results by relevance.  Local snippets already carry
+        # cross-encoder scores from the match-level rerank (line 615), so we
+        # only need to score the new S2 texts — this keeps the request small
+        # and avoids sending oversized expanded local texts to the reranker.
+        if self._cross_encoder is not None and s2_snippets:
+            try:
+                s2_texts = [s.text for s in s2_snippets]
+                ranked_s2 = self._cross_encoder.rerank_texts(s2_texts, question)
+                # Update S2 snippet scores in-place
+                scored_s2: list[ContextSnippet] = []
+                for orig_idx, score in ranked_s2:
+                    s = s2_snippets[orig_idx]
+                    scored_s2.append(ContextSnippet(
+                        node_id=s.node_id,
+                        document_title=s.document_title,
+                        text=s.text,
+                        metadata=s.metadata,
+                        rank=s.rank,
+                        score=score,
+                    ))
+                # Merge local + scored S2 snippets, sorted by score descending.
+                # Local snippets are everything before the S2 append.
+                local_snippets = snippets[: len(snippets) - len(s2_snippets)]
+                merged = sorted(
+                    local_snippets + scored_s2,
+                    key=lambda s: s.score,
+                    reverse=True,
+                )
+                # Re-assign ranks
+                snippets = [
+                    ContextSnippet(
+                        node_id=s.node_id,
+                        document_title=s.document_title,
+                        text=s.text,
+                        metadata=s.metadata,
+                        rank=i,
+                        score=s.score,
+                    )
+                    for i, s in enumerate(merged)
+                ]
+            except Exception as exc:
+                logger.warning(
+                    "S2 reranking failed (%s); keeping S2 results unranked",
+                    exc,
+                )
+                # Fall through with original order (local first, then S2)
 
         return RetrievalResult(
             question=question,
