@@ -346,10 +346,11 @@ SYSTEM_PROMPT_RESEARCH = ("""
 You are a scientific research assistant specializing in AI's environmental impact. \
 You synthesize information from multiple academic sources to provide comprehensive, \
 well-cited answers. Write in an academic but accessible style, similar to a literature \
-review or survey paper. Always cite your sources using the ref_id provided in square \
-brackets (e.g., [wu2021a]). When the context contains specific numbers, statistics, or \
-claims, include them with citations. If the provided context is limited, acknowledge \
-this explicitly rather than inventing information.
+review or survey paper. Always cite your sources using the cite_as label provided \
+in the context headers in square brackets (e.g., [Luccioni et al., 2025]). When the \
+context contains specific numbers, statistics, or claims, include them with citations. \
+If the provided context is limited, acknowledge this explicitly rather than inventing \
+information.
 
 IMPORTANT: You must ALWAYS provide an answer. Never output "is_blank" for the answer \
 or explanation fields. Even when the context only partially covers the question, \
@@ -365,7 +366,7 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. If multiple context snippets support the answer, include all their ref_ids.
+- Cite ALL relevant sources, not just one. Use the cite_as labels from context headers for citations.
 
 Question: {question}
 
@@ -373,10 +374,10 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources by ref_id, e.g. "According to [wu2021a] and [luccioni2025c], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources using cite_as labels in brackets, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
-- ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
+- ref_id               (list of ALL document ids (ref_id values) from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
@@ -390,7 +391,7 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. If multiple context snippets support the answer, include all their ref_ids.
+- Cite ALL relevant sources, not just one. Use the cite_as labels from context headers for citations.
 
 Question: {question}
 
@@ -398,7 +399,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources by ref_id, e.g. "According to [wu2021a] and [luccioni2025c], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources using cite_as labels in brackets, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
@@ -411,32 +412,35 @@ JSON Answer:
 
 USER_TEMPLATE_RESEARCH = """
 You will be given a question and context snippets taken from academic papers and reports.
+Each snippet has a header with cite_as (the citation label to use) and ref_id (the document id).
 
 Your task is to write a comprehensive, multi-paragraph answer that synthesizes information \
 from the provided sources, similar to a literature review. Follow these rules:
 
 1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
 2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
-square brackets immediately after, e.g. "Training GPT-3 consumed approximately 1,287 MWh \
-of energy [luccioni2025c]." Do NOT write any factual claim without a citation.
-3. Include specific numbers, statistics, and quantitative findings when available in context. \
+square brackets immediately after, using the cite_as label from the context header. \
+Example: "Training GPT-3 consumed approximately 1,287 MWh of energy [Luccioni et al., 2025]." \
+Do NOT write any factual claim without a citation.
+3. Do NOT use numeric citations like [1], [2], [5] — always use [Author et al., Year] format.
+4. Include specific numbers, statistics, and quantitative findings when available in context. \
 For key metrics, add a brief real-world comparison in parentheses so non-experts can grasp \
 the scale (e.g., "3,500 MWh (enough to power ~3,500 US homes for a month)").
-4. Organize your answer logically: start with a direct answer, then expand with details, \
+5. Organize your answer logically: start with a direct answer, then expand with details, \
 comparisons, and implications.
-5. If multiple sources discuss the same topic, synthesize and compare their findings, \
-citing each: "While [wu2021a] reports X, [luccioni2025c] found Y."
-6. End with a brief summary or outlook paragraph.
-7. If the context is insufficient to fully answer the question, state what IS known from \
+6. If multiple sources discuss the same topic, synthesize and compare their findings, \
+citing each: "While [Wu et al., 2021] reports X, [Luccioni et al., 2025] found Y."
+7. End with a brief summary or outlook paragraph.
+8. If the context is insufficient to fully answer the question, state what IS known from \
 the context and note the gaps. You MUST still provide an answer — never use "is_blank" for \
 the answer or explanation fields.
 
 Example of properly cited text:
 "The energy required to train GPT-3 was approximately 1,287 MWh (enough to power ~1,287 \
-US homes for a month) [luccioni2025c], while GPT-4 training consumed an estimated 50 GWh \
-(annual electricity for ~4,500 US homes) [islam2025]. Fine-tuning typically requires \
-substantially less computation [samsi2024], but its cumulative impact across organizations \
-can be significant [dodge2022]."
+US homes for a month) [Luccioni et al., 2025], while GPT-4 training consumed an estimated \
+50 GWh (annual electricity for ~4,500 US homes) [Islam et al., 2025]. Fine-tuning typically \
+requires substantially less computation [Samsi et al., 2024], but its cumulative impact \
+across organizations can be significant [Dodge et al., 2022]."
 
 Question: {question}
 
@@ -444,10 +448,10 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys:
-- explanation          (your multi-paragraph answer with inline [ref_id] citations on EVERY factual sentence)
+- explanation          (your multi-paragraph answer with inline [Author et al., Year] citations on EVERY factual sentence)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
-- ref_id               (list of ALL document ids cited in your answer)
+- ref_id               (list of ALL document ref_ids cited in your answer, e.g. ["luccioni2025c", "islam2025"])
 - ref_url              (list of URLs for cited documents, or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
@@ -509,9 +513,10 @@ Additional context from re-retrieval:
 Instructions:
 1. Address each feedback item by incorporating relevant information.
 2. Maintain all existing correct citations and add new ones from the additional context.
-3. Keep the same academic style and structure, but improve coverage and accuracy.
-4. Do NOT remove correct information from the previous response — only add or refine.
-5. For key numeric metrics (energy, water, emissions), add a brief real-world comparison \
+3. Use [Author et al., Year] citation format (from the cite_as labels in context headers).
+4. Keep the same academic style and structure, but improve coverage and accuracy.
+5. Do NOT remove correct information from the previous response — only add or refine.
+6. For key numeric metrics (energy, water, emissions), add a brief real-world comparison \
 in parentheses so non-expert readers can grasp the scale. Use only these trusted benchmarks:
    - 1 MWh ≈ monthly electricity for ~1 average US home
    - 1 GWh ≈ annual electricity for ~100 US homes
@@ -521,10 +526,10 @@ in parentheses so non-expert readers can grasp the scale. Use only these trusted
    - 1 kg CO2 ≈ driving ~2.5 miles in an average gasoline car
 
 Return STRICT JSON with the following keys:
-- explanation          (your improved multi-paragraph answer with inline [ref_id] citations)
+- explanation          (your improved multi-paragraph answer with inline [Author et al., Year] citations)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
-- ref_id               (list of ALL document ids cited in your answer)
+- ref_id               (list of ALL document ref_ids cited in your answer)
 - ref_url              (list of URLs for cited documents, or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
@@ -539,16 +544,18 @@ JSON Answer:
 CITATION_VERIFY_PROMPT = """
 You are a citation verification assistant. The explanation below answers a scientific \
 question but is missing inline citations or has incorrect numeric citations like [1], [5]. \
-You MUST attribute every factual claim to a source using [ref_id] notation.
+You MUST attribute every factual claim to a source using [Author et al., Year] notation.
 
 IMPORTANT RULES:
-1. Use ONLY the ref_ids from the source list below (e.g. [{example_ref_ids}]).
-2. Do NOT use numeric citations like [1], [2], [5] — these are WRONG. Use the actual \
-ref_id strings from the sources.
+1. Use ONLY the cite_as labels from the source list below for citations. \
+Valid citation labels include: {example_ref_ids}.
+2. Do NOT use numeric citations like [1], [2], [5] — these are WRONG. Use the \
+[Author et al., Year] format from the cite_as labels.
 3. EVERY sentence that states a fact, statistic, or claim MUST end with at least one \
-[ref_id] citation. Sentences without citations are NOT acceptable.
+citation in brackets. Sentences without citations are NOT acceptable.
 4. Do NOT change the meaning, remove sentences, or add new information — only insert citations.
-5. If a sentence is supported by multiple sources, cite all of them: [ref_id1][ref_id2].
+5. If a sentence is supported by multiple sources, cite all of them: \
+[Author1 et al., Year1][Author2 et al., Year2].
 
 Example of correct citations:
 "Training GPT-3 consumed approximately 1,287 MWh [{example_ref_ids}]."
@@ -556,11 +563,11 @@ Example of correct citations:
 Explanation to fix:
 {explanation}
 
-Available sources — use these ref_ids for citations:
+Available sources — use the cite_as labels for citations:
 {sources}
 
-Return ONLY the rewritten explanation with [ref_id] citations inserted inline after \
-every factual sentence. Do not wrap in JSON or add any other text.
+Return ONLY the rewritten explanation with [Author et al., Year] citations inserted \
+inline after every factual sentence. Do not wrap in JSON or add any other text.
 """.strip()
 
 
@@ -1936,13 +1943,25 @@ def _linkify_citations(
             humanized_to_rid[label] = rid
 
     def _replace_bracket(match: re.Match) -> str:
-        rid = match.group(1)
-        url = METADATA_URLS.get(rid) or answer_urls.get(rid)
-        label = _humanize_ref_id(rid)
+        inner = match.group(1)
+
+        # Case 1: raw ref_id like "luccioni2025c"
+        url = METADATA_URLS.get(inner) or answer_urls.get(inner)
+        label = _humanize_ref_id(inner)
         if url:
             return f"[{label}]({url})"
-        if label != rid:
+        if label != inner:
+            # No URL but we can humanize — check if it's already humanized
             return f"({label})"
+
+        # Case 2: already-humanized "Author et al., Year" — resolve via reverse map
+        rid = humanized_to_rid.get(inner)
+        if rid:
+            url = METADATA_URLS.get(rid) or answer_urls.get(rid)
+            if url:
+                return f"[{inner}]({url})"
+            return f"({inner})"
+
         return match.group(0)
 
     # Match [something] NOT already followed by '(' (avoids double-linking)
