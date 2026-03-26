@@ -193,6 +193,10 @@ echo "HF_HUB_OFFLINE=$HF_HUB_OFFLINE"  # should be 1
 
 ```bash
 cd /home/jovyan/work
+
+# If re-running setup, delete the old clone first (PPVC data is safe):
+# rm -rf KohakuRAG_UI
+
 git clone https://github.com/qualiaMachine/KohakuRAG_UI.git
 cd KohakuRAG_UI
 
