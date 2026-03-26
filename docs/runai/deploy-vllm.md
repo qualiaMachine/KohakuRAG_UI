@@ -172,14 +172,25 @@ Qwen/Qwen3-30B-A3B-GPTQ-Int4 --quantization gptq_marlin --dtype half
 > Uses `gptq_marlin` for faster inference (vLLM warns the plain `gptq`
 > kernel is buggy).
 
+### Qwen 2.5 72B (AWQ 4-bit — official pre-quantized)
+
+```
+Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq_marlin --dtype half
+```
+
+> Largest dense model we run. Needs a full GPU (~39 GB VRAM at 4-bit).
+> No fractional GPU sharing — requires 100% of an 80 GB A100.
+> Uses `awq_marlin` for faster inference.
+
 ### Qwen3-32B (AWQ 4-bit — official pre-quantized)
 
 ```
-Qwen/Qwen3-32B-AWQ --quantization awq --dtype half
+Qwen/Qwen3-32B-AWQ --quantization awq_marlin --dtype half
 ```
 
 > Dense 32B model. Needs a full GPU (~20 GB VRAM at 4-bit). Strong
 > reasoning; rivals Llama 3.1 70B on many benchmarks at half the memory.
+> Uses `awq_marlin` for faster inference.
 
 ### OpenScholar 8B (BitsAndBytes — no pre-quantized version available)
 
