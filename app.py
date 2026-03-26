@@ -125,12 +125,48 @@ def _detect_vllm_model(base_url: str) -> str:
 # 72 for L4, 450 for 4090).
 _GPU_TDP_WATTS = float(os.environ.get("ENERGY_GPU_TDP_WATTS", "300"))
 
-# vLLM fractional GPU allocation (used to estimate vLLM energy from
-# generation time when we can't measure it directly).
-_VLLM_GPU_FRACTION = float(os.environ.get("ENERGY_VLLM_GPU_FRACTION", "0.80"))
+# GPU VRAM capacity in GB — used to scale model power fractions.
+# Override via env var for your hardware (e.g. 80 for A100-80GB, 24 for L4).
+_GPU_VRAM_GB = float(os.environ.get("ENERGY_GPU_VRAM_GB", "80"))
 
 # Typical GPU utilisation during active inference (used for estimation).
 _GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.70"))
+
+
+def _parse_param_billions(model_name: str) -> float:
+    """Extract parameter count (billions) from a model name string.
+
+    Examples::
+
+        "OpenSciLM/Llama-3.1_OpenScholar-8B" → 8.0
+        "Qwen/Qwen2.5-72B-Instruct"          → 72.0
+        "mistralai/Mixtral-8x7B-Instruct"     → 56.0  (MoE total)
+
+    Returns a sensible default (8.0) if no pattern matches.
+    """
+    if not model_name:
+        return 8.0
+    # MoE pattern: 8x7B
+    m = re.search(r"(\d+)[xX](\d+\.?\d*)[bB]", model_name, re.IGNORECASE)
+    if m:
+        return float(m.group(1)) * float(m.group(2))
+    # Standard pattern: 72B, 1.5B, etc.
+    m = re.search(r"(\d+\.?\d*)\s*[bB](?!\w*yte)", model_name)
+    if m:
+        return float(m.group(1))
+    return 8.0
+
+
+def _model_power_fraction(param_billions: float) -> float:
+    """Estimate GPU power draw as a fraction of TDP from model size.
+
+    Uses model VRAM footprint (≈0.75 GB per billion params at 4-bit)
+    relative to total GPU VRAM as a proxy, with a baseline for compute
+    overhead even on small models.
+    """
+    model_vram = param_billions * 0.75          # approx 4-bit VRAM
+    fraction = 0.25 + (model_vram / _GPU_VRAM_GB)
+    return max(0.15, min(0.95, fraction))
 
 
 class EnergyTracker:
@@ -156,9 +192,16 @@ class EnergyTracker:
         wh = tracker.stop(elapsed_s, timing=result.timing)
     """
 
-    def __init__(self, *, is_remote: bool = False):
+    def __init__(self, *, is_remote: bool = False,
+                 llm_model: str = "", embed_model: str = ""):
         self._is_remote = is_remote
         self._method = "estimate"
+
+        # Power fractions derived from model size (falls back to defaults)
+        llm_params = _parse_param_billions(llm_model)
+        embed_params = _parse_param_billions(embed_model) if embed_model else 1.0
+        self._llm_power_frac = _model_power_fraction(llm_params)
+        self._embed_power_frac = _model_power_fraction(embed_params)
 
         # Local-mode: try direct GPU measurement on this node
         self._nvml: NVMLEnergyCounter | None = None
@@ -213,9 +256,14 @@ class EnergyTracker:
             embed_wh = timing.get("embed_energy_wh", 0.0)
             reranker_wh = timing.get("reranker_energy_wh", 0.0)
             gen_s = timing.get("generation_s", 0.0)
-            # vLLM energy estimate: TDP × fractional allocation × utilisation × time
-            vllm_wh = (_GPU_TDP_WATTS * _VLLM_GPU_FRACTION * _GPU_UTIL * gen_s) / 3600.0
+            retrieval_s = timing.get("retrieval_s", 0.0)
+            # vLLM energy estimate: TDP × model power fraction × utilisation × time
+            vllm_wh = (_GPU_TDP_WATTS * self._llm_power_frac * _GPU_UTIL * gen_s) / 3600.0
             total = embed_wh + reranker_wh + vllm_wh
+            # When servers don't report energy, estimate retrieval energy from
+            # retrieval time (embedding + reranking use GPU too).
+            if embed_wh == 0 and reranker_wh == 0 and retrieval_s > 0:
+                total += (_GPU_TDP_WATTS * self._embed_power_frac * _GPU_UTIL * retrieval_s) / 3600.0
             if embed_wh > 0 or reranker_wh > 0:
                 self._method = "server_reported"
             else:
@@ -1262,7 +1310,7 @@ def main():
 
             st.divider()
             top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
-            best_guess = st.toggle("Allow best-guess answers", value=False,
+            best_guess = st.toggle("Allow best-guess answers", value=True,
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
             research_mode = st.toggle(
                 "Research mode", value=False,
@@ -1366,7 +1414,7 @@ def main():
             mode = st.radio("Mode", ["Single model", "Ensemble"], horizontal=True)
             precision = st.selectbox("Precision", ["4bit", "bf16", "fp16", "auto"], index=0)
             top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
-            best_guess = st.toggle("Allow best-guess answers", value=False,
+            best_guess = st.toggle("Allow best-guess answers", value=True,
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
             research_mode = st.toggle(
                 "Research mode", value=False,
@@ -1650,7 +1698,11 @@ def main():
 
         with st.chat_message("assistant"):
             t0 = time.time()
-            energy_tracker = EnergyTracker(is_remote=is_remote)
+            energy_tracker = EnergyTracker(
+                is_remote=is_remote,
+                llm_model=vllm_model if is_remote else "",
+                embed_model="jinaai/jina-embeddings-v4" if is_remote else "",
+            )
             energy_tracker.start()
             # Research mode uses more context for comprehensive answers
             effective_top_k = max(top_k, 15) if research_mode else top_k

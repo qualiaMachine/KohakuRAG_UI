@@ -158,6 +158,9 @@ def format_snippets(snippets: Sequence[ContextSnippet]) -> str:
         # header = f"[ref_id={doc_id} node={node_label} score={snippet.score:.3f}] "
         header = f"[ref_id={doc_id}] "  # only necessary info to avoid LLM hallucination and waste tokens
         text = snippet.text.strip()
+        # Strip numeric bibliography citations (e.g. [6], [12, 45]) from source
+        # text so the LLM doesn't copy them instead of using [ref_id] format.
+        text = re.sub(r"\[(\d+(?:\s*,\s*\d+)*)\]", "", text)
         blocks.append(header + text)
 
     return "\n---\n".join(blocks)
@@ -1167,6 +1170,8 @@ class RAGPipeline:
                 "generation_s": t_generation,
                 "total_s": t_retrieval + t_generation,
                 "feedback_rounds": len(feedback_log),
+                "embed_energy_wh": initial_result.timing.get("embed_energy_wh", 0.0),
+                "reranker_energy_wh": initial_result.timing.get("reranker_energy_wh", 0.0),
             },
         )
 
@@ -1190,8 +1195,31 @@ class RAGPipeline:
         explanation = result.answer.explanation or ""
 
         # Quick check: does the explanation already contain [ref_id] citations?
-        if re.search(r"\[[a-z][a-z0-9_]+\d{4}", explanation):
-            return result  # Already has inline citations, skip
+        has_ref_citations = bool(re.search(r"\[[a-z][a-z0-9_]+\d{4}", explanation))
+        has_numeric_citations = bool(re.search(r"\[\d+\]", explanation))
+
+        if has_ref_citations and not has_numeric_citations:
+            return result  # Already has proper inline citations, skip
+
+        # If we have proper ref citations but also stray numeric ones, just
+        # strip the numeric citations and return without an LLM call.
+        if has_ref_citations and has_numeric_citations:
+            cleaned = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", explanation)
+            cleaned_answer = StructuredAnswer(
+                answer=result.answer.answer,
+                answer_value=result.answer.answer_value,
+                ref_id=result.answer.ref_id,
+                explanation=cleaned,
+                ref_url=result.answer.ref_url,
+                supporting_materials=result.answer.supporting_materials,
+            )
+            return StructuredAnswerResult(
+                answer=cleaned_answer,
+                retrieval=result.retrieval,
+                raw_response=result.raw_response,
+                prompt=result.prompt,
+                timing=result.timing,
+            )
 
         # Build a compact source list from top snippets
         sources = []
@@ -1227,7 +1255,32 @@ class RAGPipeline:
 
         # Validate: only use if it actually has citations now
         if not re.search(r"\[[a-z][a-z0-9_]+\d{4}", rewritten):
+            # Rewrite didn't help — strip any stray numeric citations from
+            # the original and return it as-is.
+            cleaned = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", explanation)
+            if cleaned != explanation:
+                cleaned_answer = StructuredAnswer(
+                    answer=result.answer.answer,
+                    answer_value=result.answer.answer_value,
+                    ref_id=result.answer.ref_id,
+                    explanation=cleaned,
+                    ref_url=result.answer.ref_url,
+                    supporting_materials=result.answer.supporting_materials,
+                )
+                return StructuredAnswerResult(
+                    answer=cleaned_answer,
+                    retrieval=result.retrieval,
+                    raw_response=result.raw_response,
+                    prompt=result.prompt,
+                    timing=dict(result.timing,
+                                generation_s=result.timing.get("generation_s", 0) + t_verify,
+                                total_s=result.timing.get("total_s", 0) + t_verify,
+                                citation_verify_s=t_verify),
+                )
             return result  # Rewrite didn't help, keep original
+
+        # Strip any stray numeric citations from the rewritten text too
+        rewritten = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", rewritten)
 
         # Update the answer with the citation-enhanced explanation
         updated_answer = StructuredAnswer(
