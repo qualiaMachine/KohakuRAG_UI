@@ -294,6 +294,36 @@ def _format_energy(wh: float, *, split: bool = False) -> str | tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Trusted metric comparisons for contextualizing numbers in LLM responses
+# ---------------------------------------------------------------------------
+METRIC_COMPARISONS = """
+When your answer includes specific numeric metrics (energy, water, emissions, etc.), \
+add a brief real-world comparison in parentheses to help non-expert readers. Use ONLY \
+the trusted comparisons below — do not invent your own:
+
+Energy:
+- 1 MWh ≈ monthly electricity for ~1 average US home
+- 1 GWh (1,000 MWh) ≈ annual electricity for ~100 US homes
+- 1 kWh ≈ running a window AC unit for ~1 hour
+- 1 TWh (1,000,000 MWh) ≈ annual electricity for ~100,000 US homes
+
+Water:
+- 1,000 liters ≈ filling ~6 standard bathtubs
+- 1 million liters ≈ about half an Olympic swimming pool
+- 1 gallon ≈ 3.8 liters
+
+Carbon emissions:
+- 1 metric ton CO2 ≈ one passenger's round-trip flight from New York to London
+- 1 kg CO2 ≈ driving ~2.5 miles in an average gasoline car
+- 500 metric tons CO2 ≈ annual emissions of ~55 average US households
+
+Example: "Training consumed 1,287 MWh of energy (roughly enough to power 1,287 US homes for a month) [luccioni2025c]."
+
+Only add comparisons for the most important metrics — do not clutter every number. \
+If a metric does not map to any comparison above, omit the parenthetical.
+""".strip()
+
+# ---------------------------------------------------------------------------
 # Prompts (shared with run_experiment.py)
 # ---------------------------------------------------------------------------
 SYSTEM_PROMPT = """
@@ -312,7 +342,7 @@ Set confidence to "high" when the context clearly and directly answers the quest
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
 """.strip()
 
-SYSTEM_PROMPT_RESEARCH = """
+SYSTEM_PROMPT_RESEARCH = ("""
 You are a scientific research assistant specializing in AI's environmental impact. \
 You synthesize information from multiple academic sources to provide comprehensive, \
 well-cited answers. Write in an academic but accessible style, similar to a literature \
@@ -325,7 +355,8 @@ IMPORTANT: You must ALWAYS provide an answer. Never output "is_blank" for the an
 or explanation fields. Even when the context only partially covers the question, \
 synthesize whatever relevant information IS available and note any gaps. The user \
 has opted into research mode specifically to get comprehensive answers.
-""".strip()
+
+""" + METRIC_COMPARISONS).strip()
 
 USER_TEMPLATE = """
 You will be given a question and context snippets taken from documents.
@@ -388,7 +419,9 @@ from the provided sources, similar to a literature review. Follow these rules:
 2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
 square brackets immediately after, e.g. "Training GPT-3 consumed approximately 1,287 MWh \
 of energy [luccioni2025c]." Do NOT write any factual claim without a citation.
-3. Include specific numbers, statistics, and quantitative findings when available in context.
+3. Include specific numbers, statistics, and quantitative findings when available in context. \
+For key metrics, add a brief real-world comparison in parentheses so non-experts can grasp \
+the scale (e.g., "3,500 MWh (enough to power ~3,500 US homes for a month)").
 4. Organize your answer logically: start with a direct answer, then expand with details, \
 comparisons, and implications.
 5. If multiple sources discuss the same topic, synthesize and compare their findings, \
@@ -399,8 +432,9 @@ the context and note the gaps. You MUST still provide an answer — never use "i
 the answer or explanation fields.
 
 Example of properly cited text:
-"The energy required to train GPT-3 was approximately 1,287 MWh [luccioni2025c], while \
-GPT-4 training consumed an estimated 50 GWh [islam2025]. Fine-tuning typically requires \
+"The energy required to train GPT-3 was approximately 1,287 MWh (enough to power ~1,287 \
+US homes for a month) [luccioni2025c], while GPT-4 training consumed an estimated 50 GWh \
+(annual electricity for ~4,500 US homes) [islam2025]. Fine-tuning typically requires \
 substantially less computation [samsi2024], but its cumulative impact across organizations \
 can be significant [dodge2022]."
 
@@ -441,6 +475,10 @@ Analyze your response and generate feedback. For each issue, provide a specific,
 actionable improvement suggestion. If the response references missing information \
 that might be found in additional papers, generate a retrieval query to find them.
 
+Additionally, flag any numeric metrics (energy in MWh/GWh, water in liters, CO2 in \
+tons/kg) that lack a real-world comparison in parentheses — readers need context to \
+interpret these numbers.
+
 Return STRICT JSON with the following keys:
 - feedback      (list of 1-3 specific improvement suggestions, e.g. \
 ["Add quantitative energy figures for GPT-4 training", "Compare water usage across different model sizes"])
@@ -473,6 +511,14 @@ Instructions:
 2. Maintain all existing correct citations and add new ones from the additional context.
 3. Keep the same academic style and structure, but improve coverage and accuracy.
 4. Do NOT remove correct information from the previous response — only add or refine.
+5. For key numeric metrics (energy, water, emissions), add a brief real-world comparison \
+in parentheses so non-expert readers can grasp the scale. Use only these trusted benchmarks:
+   - 1 MWh ≈ monthly electricity for ~1 average US home
+   - 1 GWh ≈ annual electricity for ~100 US homes
+   - 1,000 liters of water ≈ ~6 standard bathtubs
+   - 1 million liters ≈ about half an Olympic swimming pool
+   - 1 metric ton CO2 ≈ one passenger's round-trip flight NYC–London
+   - 1 kg CO2 ≈ driving ~2.5 miles in an average gasoline car
 
 Return STRICT JSON with the following keys:
 - explanation          (your improved multi-paragraph answer with inline [ref_id] citations)

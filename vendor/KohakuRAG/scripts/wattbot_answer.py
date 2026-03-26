@@ -195,7 +195,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1–3 sentences explaining how the context supports the answer AND how you use the answer_unit; or "is_blank")
+- explanation          (1–3 sentences explaining how the context supports the answer AND how you use the answer_unit. When citing a key metric, add a brief real-world comparison in parentheses, e.g. "3,500 MWh (enough to power ~3,500 US homes for a month)"; or "is_blank")
 - answer               (short sentence in natural language)
 - answer_value         (string with ONLY the numeric or categorical value in the requested unit, or "is_blank")
 - ref_id               (list of document ids from the context used as evidence; or "is_blank")
@@ -247,7 +247,7 @@ IMPORTANT: The "answer_unit" field specifies the expected format/unit for answer
 - If the answer is a numeric range, format as [lower,upper].
 
 Return STRICT JSON with these keys in order:
-- explanation: 1-3 sentences explaining how context supports the answer and how you applied answer_unit
+- explanation: 1-3 sentences explaining how context supports the answer and how you applied answer_unit. For key metrics, add a real-world comparison in parentheses, e.g. "3,500 MWh (enough to power ~3,500 US homes for a month)"
 - answer: Short natural language answer
 - answer_value: The value matching the expected format (or "is_blank")
 - ref_id: List of document IDs from context used as evidence (or "is_blank")
