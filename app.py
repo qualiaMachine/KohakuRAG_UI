@@ -2087,13 +2087,20 @@ def _display_retrieved_images(image_nodes, image_store=None):
                             help="View source paper",
                         )
 
-                    with st.popover(f"Expand: {img['short_label']}"):
-                        st.image(img["bytes"], caption=img["display_caption"] or img["short_label"])
-                        if img["vlm_description"]:
-                            st.write(img["vlm_description"])
-                        if img["source_url"]:
-                            link_text = img["source_title"] or img["doc_id"]
-                            st.markdown(f"Source: [{link_text}]({img['source_url']})")
+                    # Full-size expand via dialog
+                    @st.dialog(f"{img['short_label']}", width="large")
+                    def _show_full(im=img):
+                        st.image(im["bytes"], use_container_width=True)
+                        if im["display_caption"]:
+                            st.markdown(f"**{im['display_caption']}**")
+                        if im["vlm_description"]:
+                            st.write(im["vlm_description"])
+                        if im["source_url"]:
+                            link_text = im["source_title"] or im["doc_id"]
+                            st.markdown(f"Source: [{link_text}]({im['source_url']})")
+
+                    if st.button("Expand", key=f"expand_fig_{idx}"):
+                        _show_full()
 
         # Show text-only fallbacks for images not found in store
         if text_only:
