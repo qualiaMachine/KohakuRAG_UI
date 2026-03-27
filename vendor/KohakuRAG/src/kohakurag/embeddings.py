@@ -1,12 +1,27 @@
 """Embedding utilities used across KohakuRAG."""
 
 import asyncio
+import contextlib
 import io
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol, Sequence
 
 import numpy as np
+
+
+@contextlib.contextmanager
+def _suppress_tqdm():
+    """Temporarily disable tqdm progress bars via environment variable."""
+    old = os.environ.get("TQDM_DISABLE")
+    os.environ["TQDM_DISABLE"] = "1"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("TQDM_DISABLE", None)
+        else:
+            os.environ["TQDM_DISABLE"] = old
 
 try:
     import torch
@@ -470,7 +485,7 @@ class JinaV4EmbeddingModel:
         chunks: list[np.ndarray] = []
         for start in range(0, len(str_texts), self._batch_size):
             batch = str_texts[start : start + self._batch_size]
-            with torch.no_grad():
+            with torch.no_grad(), _suppress_tqdm():
                 embeddings = self._model.encode_text(
                     texts=batch,
                     task=self._task,
@@ -517,11 +532,12 @@ class JinaV4EmbeddingModel:
 
         # Run inference with JinaV4's encode_image method
         with torch.no_grad():
-            embeddings = self._model.encode_image(
-                images=pil_images,
-                task=self._task,
-                truncate_dim=self._truncate_dim,
-            )
+            with _suppress_tqdm():
+                embeddings = self._model.encode_image(
+                    images=pil_images,
+                    task=self._task,
+                    truncate_dim=self._truncate_dim,
+                )
 
         # Convert to numpy
         if isinstance(embeddings, torch.Tensor):
