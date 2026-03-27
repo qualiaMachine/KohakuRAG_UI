@@ -507,6 +507,11 @@ class HuggingFaceLocalVisionModel(VisionModel):
         caption = await vlm.caption(image_bytes)
     """
 
+    # Read-only PVC path where model weights live
+    _PVC_HF_CACHE = "/models/.cache/huggingface"
+    # Writable overlay for HF metadata (tokenizer caches, refs, etc.)
+    _WRITABLE_HF_HOME = "/tmp/hf_home_vision"
+
     DEFAULT_CAPTION_PROMPT = (
         "This is a figure/chart/diagram from a scientific research paper. "
         "Describe what this image represents in detail, focusing on the actual content and data. "
@@ -515,6 +520,64 @@ class HuggingFaceLocalVisionModel(VisionModel):
         "If it's a table: extract key data points and comparisons. "
         "Be specific and detailed (3-5 sentences), as this will be used for information retrieval."
     )
+
+    @staticmethod
+    def _setup_cache_overlay():
+        """Create a writable HF cache overlay pointing to the read-only shared PVC.
+
+        Same pattern used by embedding_server.py — symlinks model weight dirs
+        from the PVC into a writable /tmp location so HuggingFace can write
+        metadata files (tokenizer caches, refs, .no_exist) without needing
+        write access to the PVC or network access (HF_HUB_OFFLINE=1 is fine).
+        """
+        import shutil
+
+        pvc = HuggingFaceLocalVisionModel._PVC_HF_CACHE
+        writable = HuggingFaceLocalVisionModel._WRITABLE_HF_HOME
+
+        if not os.path.isdir(pvc):
+            return  # No PVC mounted, use whatever HF_HOME is already set
+
+        os.makedirs(writable, exist_ok=True)
+
+        for entry in os.listdir(pvc):
+            src = os.path.join(pvc, entry)
+            if entry.startswith("models--") and os.path.isdir(src):
+                model_dir = os.path.join(writable, entry)
+                # Create writable dirs for metadata HF wants to write
+                os.makedirs(os.path.join(model_dir, "snapshots"), exist_ok=True)
+                os.makedirs(os.path.join(model_dir, "refs"), exist_ok=True)
+                os.makedirs(os.path.join(model_dir, ".no_exist"), exist_ok=True)
+
+                # Symlink each snapshot hash dir (actual model weights)
+                snap_src = os.path.join(src, "snapshots")
+                if os.path.isdir(snap_src):
+                    for snap in os.listdir(snap_src):
+                        snap_dst = os.path.join(model_dir, "snapshots", snap)
+                        if not os.path.exists(snap_dst):
+                            os.symlink(os.path.join(snap_src, snap), snap_dst)
+
+                # Copy refs (tiny text files) so HF can overwrite them
+                refs_src = os.path.join(src, "refs")
+                if os.path.isdir(refs_src):
+                    for ref in os.listdir(refs_src):
+                        ref_dst = os.path.join(model_dir, "refs", ref)
+                        if not os.path.exists(ref_dst):
+                            shutil.copy2(os.path.join(refs_src, ref), ref_dst)
+
+                # Create writable .locks dir
+                locks_dst = os.path.join(model_dir, ".locks")
+                os.makedirs(locks_dst, exist_ok=True)
+
+            elif entry == ".locks":
+                os.makedirs(os.path.join(writable, entry), exist_ok=True)
+            elif not os.path.exists(os.path.join(writable, entry)):
+                os.symlink(src, os.path.join(writable, entry))
+
+        os.environ["HF_HOME"] = writable
+        os.environ["HF_HUB_CACHE"] = writable
+        os.environ.setdefault("HF_MODULES_CACHE", "/tmp/hf_modules_vision")
+        print(f"[vision] Writable HF cache overlay at {writable}", flush=True)
 
     def __init__(
         self,
@@ -538,6 +601,11 @@ class HuggingFaceLocalVisionModel(VisionModel):
                 "HuggingFaceLocalVisionModel. Install with:\n"
                 "  pip install torch transformers accelerate Pillow qwen-vl-utils"
             )
+
+        # Set up writable HF cache overlay if models are on a read-only PVC.
+        # This lets HF write metadata (tokenizer caches, config parsing) to /tmp
+        # while reading actual model weights from the shared PVC via symlinks.
+        self._setup_cache_overlay()
 
         self._model_id = model
         self._semaphore = (
