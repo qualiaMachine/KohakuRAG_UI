@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import io
 import os
 import random
 import re
@@ -16,6 +17,15 @@ try:
     OPENROUTER_AVAILABLE = True
 except ImportError:
     OPENROUTER_AVAILABLE = False
+
+try:
+    import torch
+    from PIL import Image
+    from transformers import AutoModelForCausalLM, AutoProcessor
+
+    HF_VISION_AVAILABLE = True
+except ImportError:
+    HF_VISION_AVAILABLE = False
 
 
 def _load_dotenv(path: str | Path = ".env") -> dict[str, str]:
@@ -477,3 +487,161 @@ class OpenRouterVisionModel(VisionModel):
                         f"OpenRouter API error (possibly Cloudflare or rate limit): {error_str}"
                     ) from e
                 raise
+
+
+class HuggingFaceLocalVisionModel(VisionModel):
+    """Vision model loaded directly from HuggingFace for local inference.
+
+    Runs entirely on-device — no API keys, no network calls after initial
+    model download. Designed for one-shot batch jobs (e.g. figure verification
+    during index build) where you don't want to maintain a long-running
+    VLM endpoint.
+
+    Recommended models (larger = better figure/table understanding):
+    - Qwen/Qwen2.5-VL-72B-Instruct (~145 GB bf16, ~40 GB 4-bit) — best quality
+    - Qwen/Qwen2.5-VL-32B-Instruct (~65 GB bf16, ~20 GB 4-bit)  — strong, less VRAM
+    - Qwen/Qwen2.5-VL-7B-Instruct  (~16 GB bf16, ~8 GB 4-bit)   — lightweight fallback
+
+    Usage:
+        vlm = HuggingFaceLocalVisionModel(model="Qwen/Qwen2.5-VL-72B-Instruct")
+        caption = await vlm.caption(image_bytes)
+    """
+
+    DEFAULT_CAPTION_PROMPT = (
+        "This is a figure/chart/diagram from a scientific research paper. "
+        "Describe what this image represents in detail, focusing on the actual content and data. "
+        "If it's a plot/chart: provide specific metric values, axis labels, trends, and comparisons shown. "
+        "If it's a diagram/architecture: describe the components, connections, and system structure. "
+        "If it's a table: extract key data points and comparisons. "
+        "Be specific and detailed (3-5 sentences), as this will be used for information retrieval."
+    )
+
+    def __init__(
+        self,
+        *,
+        model: str = "Qwen/Qwen2.5-VL-72B-Instruct",
+        dtype: str = "4bit",
+        max_concurrent: int = 1,
+    ) -> None:
+        """Initialize local HuggingFace vision model.
+
+        Args:
+            model: HuggingFace model identifier or local path.
+                   Must be a vision-language model with AutoProcessor support.
+            dtype: Torch dtype — "bf16", "fp16", "4bit", or "auto"
+            max_concurrent: Maximum concurrent inference calls (default 1 for
+                          GPU memory safety; increase only if you have headroom)
+        """
+        if not HF_VISION_AVAILABLE:
+            raise ImportError(
+                "transformers, torch, and Pillow are required for "
+                "HuggingFaceLocalVisionModel. Install with:\n"
+                "  pip install torch transformers accelerate Pillow qwen-vl-utils"
+            )
+
+        self._model_id = model
+        self._semaphore = (
+            asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
+        )
+
+        print(f"[vision] Loading processor for {model}...", flush=True)
+        self._processor = AutoProcessor.from_pretrained(self._model_id)
+
+        # Resolve dtype and quantization
+        load_kwargs: dict = {"device_map": "auto"}
+        if dtype == "4bit":
+            try:
+                from transformers import BitsAndBytesConfig
+            except ImportError:
+                raise ImportError(
+                    "4-bit quantization requires bitsandbytes. "
+                    "Install with: pip install bitsandbytes"
+                )
+            load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+            )
+        elif dtype == "bf16":
+            load_kwargs["torch_dtype"] = torch.bfloat16
+        elif dtype == "fp16":
+            load_kwargs["torch_dtype"] = torch.float16
+
+        print(f"[vision] Loading model weights ({dtype})...", flush=True)
+        self._model = AutoModelForCausalLM.from_pretrained(
+            self._model_id,
+            **load_kwargs,
+        )
+        print(f"[vision] Model loaded on {self._model.device}", flush=True)
+
+    def _sync_caption(
+        self, image_data: bytes, prompt: str, max_tokens: int
+    ) -> str:
+        """Synchronous caption generation (runs on GPU)."""
+        # Load image
+        pil_image = Image.open(io.BytesIO(image_data)).convert("RGB")
+
+        # Build chat-style messages with image
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": pil_image},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        # Apply chat template
+        text_input = self._processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True,
+        )
+        inputs = self._processor(
+            text=[text_input],
+            images=[pil_image],
+            padding=True,
+            return_tensors="pt",
+        ).to(self._model.device)
+
+        with torch.no_grad():
+            output_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=False,
+            )
+
+        # Decode only the generated tokens (skip input tokens)
+        generated = output_ids[0][inputs["input_ids"].shape[1]:]
+        result = self._processor.decode(generated, skip_special_tokens=True)
+        return result.strip()
+
+    async def caption(
+        self,
+        image_data: bytes,
+        *,
+        prompt: str | None = None,
+        max_tokens: int = 300,
+    ) -> str:
+        """Generate a caption for an image using local vision model.
+
+        Args:
+            image_data: Raw image bytes (JPEG, PNG, WebP, etc.)
+            prompt: Custom captioning prompt (uses DEFAULT_CAPTION_PROMPT if None)
+            max_tokens: Maximum tokens in response
+
+        Returns:
+            Generated caption text
+        """
+        if not image_data:
+            raise ValueError("image_data cannot be empty")
+
+        caption_prompt = prompt or self.DEFAULT_CAPTION_PROMPT
+
+        if self._semaphore is not None:
+            async with self._semaphore:
+                return await asyncio.to_thread(
+                    self._sync_caption, image_data, caption_prompt, max_tokens,
+                )
+        return await asyncio.to_thread(
+            self._sync_caption, image_data, caption_prompt, max_tokens,
+        )

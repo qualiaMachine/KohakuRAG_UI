@@ -800,6 +800,69 @@ class RAGPipeline:
 
         return image_nodes
 
+    async def _filter_images_by_relevance(
+        self,
+        question: str,
+        image_nodes: list[StoredNode],
+        *,
+        vision_model=None,
+        image_store: ImageStore | None = None,
+    ) -> list[StoredNode]:
+        """Filter images by relevance to the user's question using a VLM.
+
+        Sends each candidate image + the question to a VLM and asks for a
+        relevance judgment (yes/no + short reason). Images that the VLM deems
+        irrelevant are dropped.
+
+        This is a lightweight gate — the prompt is short and max_tokens is low,
+        so each call is fast and cheap.
+
+        Falls back to returning all images if VLM is unavailable or fails.
+        """
+        if not image_nodes or vision_model is None or image_store is None:
+            return image_nodes
+
+        import asyncio as _aio
+
+        prompt = (
+            f"User question: \"{question}\"\n\n"
+            "Does this figure/table help answer the user's question? "
+            "Respond ONLY with valid JSON: {\"relevant\": true/false, \"reason\": \"1 sentence\"}"
+        )
+
+        async def _check_one(node: StoredNode) -> tuple[StoredNode, bool]:
+            storage_key = node.metadata.get("image_storage_key")
+            if not storage_key:
+                return node, True  # keep if no key
+
+            img_bytes = image_store._sync_get(storage_key)
+            if not img_bytes:
+                return node, True  # keep if image missing
+
+            try:
+                raw = await vision_model.caption(
+                    img_bytes, prompt=prompt, max_tokens=80,
+                )
+                raw = raw.strip()
+                if raw.startswith("```"):
+                    import re as _re
+                    raw = _re.sub(r"^```(?:json)?\s*", "", raw)
+                    raw = _re.sub(r"\s*```$", "", raw)
+                result = json.loads(raw)
+                relevant = result.get("relevant", True)
+                if not relevant:
+                    reason = result.get("reason", "")
+                    logger.info(
+                        "VLM relevance gate filtered out %s: %s",
+                        node.node_id, reason,
+                    )
+                return node, relevant
+            except Exception:
+                return node, True  # fail-open
+
+        results = await _aio.gather(*[_check_one(n) for n in image_nodes])
+        return [node for node, keep in results if keep]
+
     async def retrieve_with_images(
         self,
         question: str,
@@ -807,6 +870,7 @@ class RAGPipeline:
         top_k: int | None = None,
         top_k_images: int = 0,
         bm25_top_k: int | None = None,
+        filter_images_vlm=None,
     ) -> RetrievalResult:
         """Execute multi-query retrieval with image extraction.
 
@@ -814,6 +878,7 @@ class RAGPipeline:
         1. Extract images from retrieved text sections (use captions only in LLM)
         2. Additionally retrieve from image-only index if top_k_images > 0 (send as actual images to vision LLM)
         3. Combine and deduplicate for backward compatibility (image_nodes)
+        4. Optionally filter by VLM relevance gate (if filter_images_vlm is provided)
 
         Args:
             question: User question
@@ -821,6 +886,9 @@ class RAGPipeline:
             top_k_images: Number of ADDITIONAL images from image-only index
                          (0 = only extract from sections, >0 = also search image index)
             bm25_top_k: Number of additional BM25 results (uses default if None)
+            filter_images_vlm: Optional VisionModel instance for relevance filtering.
+                              When provided, each retrieved image is checked for
+                              relevance to the question before being returned.
 
         Returns:
             RetrievalResult with separate image sources:
@@ -855,6 +923,18 @@ class RAGPipeline:
             if node.node_id not in seen_ids:
                 seen_ids.add(node.node_id)
                 all_images.append(node)
+
+        # VLM relevance gate: filter out images that don't help answer the question
+        if filter_images_vlm is not None and all_images:
+            all_images = await self._filter_images_by_relevance(
+                question, all_images,
+                vision_model=filter_images_vlm,
+                image_store=self._image_store,
+            )
+            # Re-split into text vs vision sources
+            section_ids = {n.node_id for n in images_from_sections}
+            images_from_sections = [n for n in all_images if n.node_id in section_ids]
+            images_from_index = [n for n in all_images if n.node_id not in section_ids]
 
         return RetrievalResult(
             question=result.question,
@@ -926,6 +1006,7 @@ class RAGPipeline:
         top_k_final: int | None = None,
         send_images_to_llm: bool = False,
         bm25_top_k: int | None = None,
+        filter_images_vlm=None,
     ) -> StructuredAnswerResult:
         """QA with custom prompt template and structured JSON parsing.
 
@@ -958,6 +1039,7 @@ class RAGPipeline:
                     top_k=top_k,
                     top_k_images=top_k_images,
                     bm25_top_k=bm25_top_k,
+                    filter_images_vlm=filter_images_vlm,
                 )
             else:
                 retrieval = await self.retrieve(
@@ -1685,6 +1767,7 @@ class RAGPipeline:
         top_k_final: int | None = None,
         send_images_to_llm: bool = False,
         bm25_top_k: int | None = None,
+        filter_images_vlm=None,
     ) -> StructuredAnswerResult:
         """High-level entry point for structured question answering.
 
@@ -1703,6 +1786,9 @@ class RAGPipeline:
             top_k_final: Optional override for final result truncation
             send_images_to_llm: If True, send actual images to vision-capable LLMs
             bm25_top_k: Number of additional BM25 results (uses pipeline default if None)
+            filter_images_vlm: Optional VisionModel for filtering irrelevant images at query time.
+                              When set, each retrieved image is sent to the VLM with the user's
+                              question for a relevance check before being included in results.
 
         Returns:
             Structured answer result
@@ -1721,6 +1807,7 @@ class RAGPipeline:
             top_k_final=top_k_final,
             send_images_to_llm=send_images_to_llm,
             bm25_top_k=bm25_top_k,
+            filter_images_vlm=filter_images_vlm,
         )
 
     def _build_prompt(

@@ -2320,7 +2320,11 @@ def _linkify_citations(
 def _display_retrieved_images(image_nodes, image_store=None):
     """Show retrieved PDF figures as a compact thumbnail grid.
 
-    Each thumbnail is clickable — selecting it expands to full size.
+    Each thumbnail shows:
+    - The figure image
+    - Caption text underneath (paper caption + VLM description)
+    - A clickable link to the source paper (if available)
+
     Works both for live results (StoredNode objects) and history replay
     (serialized dicts with storage_key/caption/page/doc_id).
     """
@@ -2331,20 +2335,41 @@ def _display_retrieved_images(image_nodes, image_store=None):
         images = []
         for node in image_nodes:
             if hasattr(node, "metadata"):
-                storage_key = node.metadata.get("image_storage_key")
+                meta = node.metadata
+                storage_key = meta.get("image_storage_key")
                 caption = node.text or ""
-                page = node.metadata.get("page", "?")
-                doc_id = node.metadata.get("document_id", "unknown")
+                page = meta.get("page", "?")
+                doc_id = meta.get("document_id", "unknown")
+                caption_text = meta.get("caption_text", "")
+                vlm_description = meta.get("vlm_description", "")
+                figure_type = meta.get("figure_type", "")
+                source_url = meta.get("source_url", "")
+                source_title = meta.get("source_title", "")
             else:
                 storage_key = node.get("storage_key")
                 caption = node.get("caption", "")
                 page = node.get("page", "?")
                 doc_id = node.get("doc_id", "unknown")
+                caption_text = node.get("caption_text", "")
+                vlm_description = node.get("vlm_description", "")
+                figure_type = node.get("figure_type", "")
+                source_url = node.get("source_url", "")
+                source_title = node.get("source_title", "")
+
+            # Build display caption: prefer structured fields, fall back to raw text
+            display_caption = ""
+            if caption_text:
+                display_caption = caption_text
+            elif caption:
+                # Strip embedding-format prefixes like "[Figure 3]" or "[figure:doc p5]"
+                display_caption = re.sub(
+                    r"^\[(?:Fig(?:ure|\.)\s*\d+|figure:\S+\s+p\d+)\]\s*",
+                    "", caption,
+                ).strip()
 
             short_label = f"{doc_id} p.{page}"
-            full_label = short_label
-            if caption:
-                full_label += f": {caption[:120]}"
+            if figure_type:
+                short_label += f" ({figure_type})"
 
             img_bytes = None
             if storage_key and image_store:
@@ -2353,7 +2378,10 @@ def _display_retrieved_images(image_nodes, image_store=None):
             images.append({
                 "bytes": img_bytes,
                 "short_label": short_label,
-                "full_label": full_label,
+                "display_caption": display_caption,
+                "vlm_description": vlm_description,
+                "source_url": source_url,
+                "source_title": source_title,
                 "caption": caption,
                 "doc_id": doc_id,
                 "page": page,
@@ -2370,8 +2398,28 @@ def _display_retrieved_images(image_nodes, image_store=None):
                 col = cols[idx % n_cols]
                 with col:
                     st.image(img["bytes"], caption=img["short_label"], width=200)
+
+                    # Show caption underneath the figure
+                    if img["display_caption"]:
+                        st.caption(img["display_caption"][:200])
+                    if img["vlm_description"]:
+                        st.caption(f"*{img['vlm_description'][:200]}*")
+
+                    # Source link
+                    if img["source_url"]:
+                        link_text = img["source_title"] or img["doc_id"]
+                        st.markdown(
+                            f"[{link_text}]({img['source_url']})",
+                            help="View source paper",
+                        )
+
                     with st.popover(f"Expand: {img['short_label']}"):
-                        st.image(img["bytes"], caption=img["full_label"])
+                        st.image(img["bytes"], caption=img["display_caption"] or img["short_label"])
+                        if img["vlm_description"]:
+                            st.write(img["vlm_description"])
+                        if img["source_url"]:
+                            link_text = img["source_title"] or img["doc_id"]
+                            st.markdown(f"Source: [{link_text}]({img['source_url']})")
 
         # Show text-only fallbacks for images not found in store
         if text_only:

@@ -131,8 +131,9 @@ Budget ~20 GB per model you plan to cache:
 |-----------------|------------|-----------------|
 | Jina V4 + Qwen 7B only | ~17 GB | `50Gi` |
 | + OpenScholar 8B | ~33 GB | `50Gi` |
-| + Qwen 14B | ~61 GB | `100Gi` |
-| + Qwen 72B | ~196 GB | `250Gi` |
+| + Qwen2.5-VL 72B (figure verification) | ~178 GB | `250Gi` |
+| + Qwen 14B | ~206 GB | `250Gi` |
+| + Qwen 72B | ~341 GB | `400Gi` |
 | All models from admin PVC | ~490 GB | `600Gi` |
 
 > **Tip:** Start small. You can always create a larger PVC later and
@@ -202,6 +203,12 @@ python /models/provision_shared_models.py download Qwen/Qwen2.5-7B-Instruct
 
 # ── Download OpenScholar 8B for scientific synthesis (~16 GB) ──
 python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
+
+# ── Download Qwen2.5-VL 72B for figure verification during index build (~145 GB) ──
+# Only needed if you want VLM-based figure/table verification (vlm_verify=True).
+# This model is loaded once during index build (4-bit, ~40 GB VRAM), not served
+# as a long-running endpoint. If you have less VRAM, use the 32B or 7B variant.
+python /models/provision_shared_models.py download Qwen/Qwen2.5-VL-72B-Instruct
 
 # ── Optional: download additional models ──
 # python /models/provision_shared_models.py download Qwen/Qwen2.5-14B-Instruct   # ~28 GB
