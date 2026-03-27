@@ -89,8 +89,10 @@ RERANKER_SERVICE_URL = os.environ.get("RERANKER_SERVICE_URL", "")
 VLLM_ENDPOINTS = os.environ.get("VLLM_ENDPOINTS", "")
 # SHARED_MODELS_PATH: HuggingFace cache on the shared PVC (for model listing).
 SHARED_MODELS_PATH = os.environ.get("SHARED_MODELS_PATH", "/models/.cache/huggingface")
-# VECTOR_DB_DIR: additional directory to scan for knowledge base .db files.
-VECTOR_DB_DIR = os.environ.get("VECTOR_DB_DIR", "")
+# VECTOR_DB_DIRS: comma-separated directories to scan for knowledge base .db files.
+# Each data volume mount should contain an embeddings/ subdirectory with .db files.
+# e.g. "/climate-data/embeddings,/bio-data/embeddings,/custom-corpus/embeddings"
+VECTOR_DB_DIRS = os.environ.get("VECTOR_DB_DIRS", os.environ.get("VECTOR_DB_DIR", ""))
 
 # ---------------------------------------------------------------------------
 # Print RunAI access URL at startup (if running inside a RunAI workspace)
@@ -185,20 +187,48 @@ def _detect_table_prefix(db_path: str) -> str | None:
 def _scan_knowledge_bases() -> list[dict]:
     """Discover vector DB files across configured mount points.
 
+    Supports multiple data volumes — each researcher can attach their own
+    PVC and have its .db files appear in the sidebar selector.
+
+    Search order:
+      1. VECTOR_DB_DIRS env var (comma-separated list of directories)
+      2. Auto-discovered data volume mounts (/*-data/embeddings/, /*-corpus/embeddings/)
+      3. Hardcoded fallback paths (wattbot-data, local dev)
+
     Returns list of dicts with keys: path, name, size_mb, table_prefix.
     """
     search_dirs: list[str] = []
-    # 1. VECTOR_DB_DIR env var (user-specified)
-    if VECTOR_DB_DIR and os.path.isdir(VECTOR_DB_DIR):
-        search_dirs.append(VECTOR_DB_DIR)
-    # 2. Common PVC / NFS mount paths
-    for d in [
-        "/wattbot-data/embeddings",
-        "/tmp/vectordb",
-        str(_repo_root / "data" / "embeddings"),
-    ]:
-        if os.path.isdir(d) and d not in search_dirs:
+
+    def _add_dir(d: str) -> None:
+        d = d.rstrip("/")
+        if d and os.path.isdir(d) and d not in search_dirs:
             search_dirs.append(d)
+
+    # 1. VECTOR_DB_DIRS env var (user-specified, comma-separated)
+    for d in VECTOR_DB_DIRS.split(","):
+        _add_dir(d.strip())
+
+    # 2. Auto-discover data volume mounts at filesystem root.
+    #    RunAI PVCs are typically mounted at /<name> (e.g. /wattbot-data,
+    #    /climate-corpus). Look for any top-level mount that contains an
+    #    embeddings/ subdirectory with .db files.
+    try:
+        for entry in os.listdir("/"):
+            candidate = f"/{entry}/embeddings"
+            if entry.startswith(".") or entry in (
+                "bin", "boot", "dev", "etc", "home", "lib", "lib64",
+                "media", "mnt", "opt", "proc", "root", "run", "sbin",
+                "srv", "sys", "tmp", "usr", "var", "models", "snap",
+            ):
+                continue
+            _add_dir(candidate)
+    except OSError:
+        pass
+
+    # 3. Hardcoded fallback paths
+    _add_dir("/wattbot-data/embeddings")
+    _add_dir("/tmp/vectordb")
+    _add_dir(str(_repo_root / "data" / "embeddings"))
 
     seen_paths: set[str] = set()
     results: list[dict] = []
@@ -1437,22 +1467,24 @@ def main():
             st.subheader("Knowledge Base")
             selected_kb = None
             if kb_options:
-                kb_labels = [
-                    f"{kb['name']} ({kb['size_mb']:.0f} MB)"
-                    for kb in kb_options
-                ]
+                # Include parent volume in label so researchers can distinguish
+                # .db files with the same name from different data volumes.
+                kb_labels = []
+                for kb in kb_options:
+                    vol = os.path.basename(os.path.dirname(kb["path"]))
+                    kb_labels.append(f"{kb['name']} ({kb['size_mb']:.0f} MB) — {vol}/")
                 selected_kb_idx = st.selectbox(
                     "Vector database", range(len(kb_labels)),
                     format_func=lambda i: kb_labels[i],
-                    help="Select the knowledge base (vector DB) to query against.",
+                    help="Select the knowledge base (vector DB) to query against. Each attached data volume is scanned automatically.",
                 )
                 selected_kb = kb_options[selected_kb_idx]
                 st.caption(f"Path: `{selected_kb['path']}`")
                 st.caption(f"Table prefix: `{selected_kb['table_prefix']}`")
             else:
                 st.info(
-                    "No knowledge bases found. Check that volume mounts are "
-                    "configured or set `VECTOR_DB_DIR`."
+                    "No knowledge bases found. Mount a data volume with an "
+                    "`embeddings/` subdirectory, or set `VECTOR_DB_DIRS`."
                 )
 
             # Track KB changes for chat history warning
