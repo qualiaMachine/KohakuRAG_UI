@@ -299,9 +299,7 @@ else
     # The VLM loads Qwen2.5-VL-72B from /models/, verifies each crop is a
     # real figure, and generates rich descriptions for better retrieval.
     # To skip VLM verification, remove the vlm_verify/vlm_provider overrides.
-    kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py \
-        --set vlm_verify=True \
-        --set vlm_provider=hf_local
+    kogine run scripts/wattbot_store_images.py --config configs/jinav4/store_images_vlm.py
 
     # Phase 3: Rebuild text index (picks up new figure nodes) + image index
     kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
@@ -454,10 +452,8 @@ ln -s /wattbot-data/pdfs       data/pdfs
 cd vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 
-# Extract figures with VLM verification (optional: remove --set flags to skip VLM)
-kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py \
-    --set vlm_verify=True \
-    --set vlm_provider=hf_local
+# Extract figures with VLM verification (use store_images.py config for no VLM)
+kogine run scripts/wattbot_store_images.py --config configs/jinav4/store_images_vlm.py
 
 # Rebuild text index (picks up figure nodes) + build image index
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
