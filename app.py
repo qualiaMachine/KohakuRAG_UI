@@ -145,33 +145,64 @@ _REMOTE_RETRIEVAL_GPU_FRAC = float(os.environ.get("ENERGY_RETRIEVAL_GPU_FRAC", "
 # provides real GPU power measurements.  Set to empty string to disable.
 _DCGM_URL = os.environ.get("DCGM_EXPORTER_URL", "")
 
-# Token-based energy estimation: Wh per token for LLM inference.
+# Token-based energy estimation: baseline Wh per token at 8B parameters.
 # Derived from Luccioni et al. 2024 measurements on 8B-class models:
 #   ~0.093 Wh total for a typical query (~2000 prompt + ~200 completion tokens)
 # Prefill (prompt) tokens are cheaper than decode (completion) tokens because
 # they're processed in a single batch, while decode is sequential.
-_WH_PER_PROMPT_TOKEN = float(os.environ.get("ENERGY_WH_PER_PROMPT_TOKEN", "2.0e-5"))
-_WH_PER_COMPLETION_TOKEN = float(os.environ.get("ENERGY_WH_PER_COMPLETION_TOKEN", "2.5e-4"))
+# Rates scale with model size via a power law (see _token_energy_wh).
+_BASE_WH_PER_PROMPT_TOKEN = float(os.environ.get("ENERGY_WH_PER_PROMPT_TOKEN", "2.0e-5"))
+_BASE_WH_PER_COMPLETION_TOKEN = float(os.environ.get("ENERGY_WH_PER_COMPLETION_TOKEN", "2.5e-4"))
+_BASE_MODEL_PARAMS_B = 8.0  # baseline model size for the above rates
+# Scaling exponent: energy ~ params^1.3 (super-linear due to memory bandwidth,
+# multi-GPU communication).  Fit to published data: 6.7B→0.082 Wh, 8B→0.093 Wh,
+# 175B→4.0 Wh, 405B→17.3 Wh (Luccioni et al. 2024, Moore et al. 2025).
+_ENERGY_SCALING_EXPONENT = float(os.environ.get("ENERGY_SCALING_EXPONENT", "1.3"))
 
 
 def _parse_param_billions(model_name: str) -> float:
-    """Extract parameter count (billions) from a model name string.
+    """Extract *active* parameter count (billions) from a model name.
+
+    For dense models this is the total parameter count.  For MoE (Mixture
+    of Experts) models like ``Mixtral-8x7B``, only a fraction of experts
+    are active per token, so we estimate the active parameter count:
+
+        active ≈ (num_active_experts / num_experts) × expert_params × num_experts + shared_params
+               ≈ num_active_experts × expert_params + shared_overhead
+
+    Heuristic: MoE models typically activate 2 experts per token.  With
+    a ~25% shared-parameter overhead (attention, embedding, etc.), the
+    active params for ``8x7B`` ≈ 2×7 + 0.25×56 ≈ 28 → ~13B active.
+    We approximate as: ``2 × per_expert + 0.15 × total``.
 
     Examples::
 
-        "OpenSciLM/Llama-3.1_OpenScholar-8B" → 8.0
-        "Qwen/Qwen2.5-72B-Instruct"          → 72.0
-        "mistralai/Mixtral-8x7B-Instruct"     → 56.0  (MoE total)
+        "OpenSciLM/Llama-3.1_OpenScholar-8B"     → 8.0
+        "Qwen/Qwen2.5-72B-Instruct"              → 72.0
+        "mistralai/Mixtral-8x7B-Instruct"         → 22.4  (2×7 + 0.15×56 active)
+        "Qwen/Qwen3-30B-A3B"                      → 3.0   (explicit active count)
 
     Returns a sensible default (8.0) if no pattern matches.
     """
     if not model_name:
         return 8.0
-    # MoE pattern: 8x7B
+
+    # Explicit active-param pattern: "30B-A3B" (total 30B, active 3B)
+    m = re.search(r"(\d+\.?\d*)\s*[bB][-_]A(\d+\.?\d*)\s*[bB]", model_name, re.IGNORECASE)
+    if m:
+        return float(m.group(2))
+
+    # MoE pattern: 8x7B → estimate active params
     m = re.search(r"(\d+)[xX](\d+\.?\d*)[bB]", model_name, re.IGNORECASE)
     if m:
-        return float(m.group(1)) * float(m.group(2))
-    # Standard pattern: 72B, 1.5B, etc.
+        num_experts = float(m.group(1))
+        expert_params = float(m.group(2))
+        total = num_experts * expert_params
+        # ~2 active experts + ~15% shared overhead (attention, embeddings)
+        active = 2 * expert_params + 0.15 * total
+        return active
+
+    # Standard dense model: 72B, 1.5B, etc.
     m = re.search(r"(\d+\.?\d*)\s*[bB](?!\w*yte)", model_name)
     if m:
         return float(m.group(1))
@@ -314,15 +345,27 @@ class DCGMPowerSampler:
         return total_joules / 3600.0
 
 
-def _token_energy_wh(prompt_tokens: int, completion_tokens: int) -> float:
-    """Estimate LLM inference energy from token counts.
+def _token_energy_wh(prompt_tokens: int, completion_tokens: int,
+                     param_billions: float = 8.0) -> float:
+    """Estimate LLM inference energy from token counts and model size.
 
-    Uses per-token energy rates calibrated from published measurements
-    (Luccioni et al. 2024, Moore et al. 2025) for 8B-class models.
-    Prefill tokens are batched and much cheaper; decode tokens are sequential.
+    Per-token rates are calibrated from published measurements on 8B models
+    (Luccioni et al. 2024, Moore et al. 2025) and scale with parameter
+    count via a power law (exponent ~1.3), consistent with empirical data:
+
+        6.7B → 0.082 Wh,  8B → 0.093 Wh,  175B → 4.0 Wh,  405B → 17.3 Wh
+
+    Uses *active* parameter count (see ``_parse_param_billions``), so MoE
+    models are scaled by their per-token active params, not total.
+
+    Args:
+        prompt_tokens: Number of input (prefill) tokens — batched, cheaper.
+        completion_tokens: Number of output (decode) tokens — sequential, costlier.
+        param_billions: Active model parameters in billions (e.g. 8.0, 72.0).
     """
-    return (prompt_tokens * _WH_PER_PROMPT_TOKEN
-            + completion_tokens * _WH_PER_COMPLETION_TOKEN)
+    scale = (param_billions / _BASE_MODEL_PARAMS_B) ** _ENERGY_SCALING_EXPONENT
+    return (prompt_tokens * _BASE_WH_PER_PROMPT_TOKEN * scale
+            + completion_tokens * _BASE_WH_PER_COMPLETION_TOKEN * scale)
 
 
 class EnergyTracker:
@@ -361,6 +404,7 @@ class EnergyTracker:
         # Power fractions derived from model size (falls back to defaults)
         llm_params = _parse_param_billions(llm_model)
         embed_params = _parse_param_billions(embed_model) if embed_model else 1.0
+        self._llm_params_b = llm_params  # stored for token-based scaling
         self._llm_power_frac = _model_power_fraction(llm_params)
         self._embed_power_frac = _model_power_fraction(embed_params)
 
@@ -443,7 +487,7 @@ class EnergyTracker:
             prompt_tokens = timing.get("llm_prompt_tokens", 0)
             completion_tokens = timing.get("llm_completion_tokens", 0)
             if prompt_tokens > 0 or completion_tokens > 0:
-                vllm_wh = _token_energy_wh(prompt_tokens, completion_tokens)
+                vllm_wh = _token_energy_wh(prompt_tokens, completion_tokens, self._llm_params_b)
                 self._method = "token_based"
             else:
                 # Fallback: time-based estimation
