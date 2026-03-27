@@ -193,9 +193,15 @@ def _model_power_fraction(param_billions: float) -> float:
 class DCGMPowerSampler:
     """Poll DCGM exporter for real GPU power during a query.
 
-    Runs a background thread that periodically fetches
-    ``DCGM_FI_DEV_POWER_USAGE`` from the DCGM Prometheus endpoint and
-    integrates power over time using the trapezoidal rule.
+    Two measurement strategies (in priority order):
+
+    1. **Energy counter** — reads ``DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION``
+       (a monotonic counter in millijoules) at start and stop, giving an
+       exact delta.  Most accurate since it's a hardware counter.
+
+    2. **Power polling** — samples ``DCGM_FI_DEV_POWER_USAGE`` (gauge, watts)
+       in a background thread and integrates with the trapezoidal rule.
+       Used when the energy counter isn't available.
 
     Falls back gracefully (energy_wh = 0) if the endpoint is unreachable.
     """
@@ -208,6 +214,9 @@ class DCGMPowerSampler:
         self._power_readings: list[float] = []  # watts
         self._timestamps: list[float] = []
         self._available = bool(dcgm_url)
+        # Energy counter (millijoules) — read at start/stop for exact delta
+        self._start_energy_mj: float | None = None
+        self._use_energy_counter = False
 
     @property
     def available(self) -> bool:
@@ -219,45 +228,82 @@ class DCGMPowerSampler:
         self._stop_event.clear()
         self._power_readings = []
         self._timestamps = []
+        self._start_energy_mj = None
+        self._use_energy_counter = False
+
+        # Try to read the energy counter first
+        metrics = self._fetch_metrics()
+        if metrics is not None:
+            energy_mj = self._parse_metric(metrics, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION")
+            if energy_mj is not None:
+                self._start_energy_mj = energy_mj
+                self._use_energy_counter = True
+                return  # No polling thread needed
+
+        # Fallback: poll power in a background thread
         self._thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
-        if self._thread is None:
-            return
-        self._stop_event.set()
-        self._thread.join(timeout=5)
-        self._thread = None
+        if self._use_energy_counter:
+            # Will compute delta in energy_wh property
+            metrics = self._fetch_metrics()
+            if metrics is not None:
+                end_mj = self._parse_metric(metrics, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION")
+                if end_mj is not None and self._start_energy_mj is not None:
+                    self._end_energy_mj = end_mj
+                    return
+            self._use_energy_counter = False  # Counter disappeared, fall through
+        if self._thread is not None:
+            self._stop_event.set()
+            self._thread.join(timeout=5)
+            self._thread = None
 
     def _poll_loop(self) -> None:
         while not self._stop_event.is_set():
-            power = self._read_power()
-            if power is not None:
-                self._power_readings.append(power)
-                self._timestamps.append(time.time())
+            metrics = self._fetch_metrics()
+            if metrics is not None:
+                power = self._parse_metric(metrics, "DCGM_FI_DEV_POWER_USAGE")
+                if power is not None:
+                    self._power_readings.append(power)
+                    self._timestamps.append(time.time())
             self._stop_event.wait(self._interval)
 
-    def _read_power(self) -> float | None:
-        """Fetch GPU power from DCGM exporter (Prometheus text format)."""
+    def _fetch_metrics(self) -> str | None:
+        """Fetch the full /metrics text from DCGM exporter."""
         try:
             import httpx
             resp = httpx.get(self._url, timeout=2.0)
-            if resp.status_code != 200:
-                return None
-            # Parse DCGM_FI_DEV_POWER_USAGE from Prometheus text format
-            for line in resp.text.splitlines():
-                if line.startswith("DCGM_FI_DEV_POWER_USAGE"):
-                    # e.g. DCGM_FI_DEV_POWER_USAGE{gpu="0",...} 142.5
-                    parts = line.rsplit(" ", 1)
-                    if len(parts) == 2:
-                        return float(parts[1])
+            return resp.text if resp.status_code == 200 else None
         except Exception:
-            pass
+            return None
+
+    @staticmethod
+    def _parse_metric(text: str, metric_name: str) -> float | None:
+        """Extract the first value for *metric_name* from Prometheus text."""
+        for line in text.splitlines():
+            if line.startswith(metric_name) and not line.startswith("#"):
+                # e.g. DCGM_FI_DEV_POWER_USAGE{gpu="0",...} 142.5
+                parts = line.rsplit(" ", 1)
+                if len(parts) == 2:
+                    try:
+                        return float(parts[1])
+                    except ValueError:
+                        pass
         return None
 
     @property
     def energy_wh(self) -> float:
-        """Total energy consumed in Watt-hours (trapezoidal integration)."""
+        """Total energy consumed in Watt-hours."""
+        # Prefer hardware energy counter delta
+        if self._use_energy_counter:
+            end = getattr(self, "_end_energy_mj", None)
+            if end is not None and self._start_energy_mj is not None:
+                delta_mj = end - self._start_energy_mj
+                return (delta_mj / 1000.0) / 3600.0  # mJ → J → Wh
+            return 0.0
+
+        # Fallback: trapezoidal integration of power samples
         if len(self._timestamps) < 2:
             return 0.0
         total_joules = 0.0
