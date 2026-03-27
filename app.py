@@ -141,6 +141,13 @@ _GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.50"))
 # GPU-active share of total retrieval wall-clock time.
 _REMOTE_RETRIEVAL_GPU_FRAC = float(os.environ.get("ENERGY_RETRIEVAL_GPU_FRAC", "0.10"))
 
+# Bascom Hill energy comparison (fun UW-Madison context for session energy).
+# Climbing one stair step burns ~0.15 Wh of metabolic energy for an average
+# adult (70 kg × 9.8 m/s² × 0.2 m step height ÷ 25% muscle efficiency).
+# Bascom Hill: 110 steps from Park St to Bascom Hall.
+_WH_PER_BASCOM_STEP = 0.15
+_BASCOM_HILL_STEPS = 110
+
 # DCGM (Data Center GPU Manager) exporter URL — if available on the cluster,
 # provides real GPU power measurements.  Set to empty string to disable.
 _DCGM_URL = os.environ.get("DCGM_EXPORTER_URL", "")
@@ -1882,6 +1889,26 @@ def main():
                 e_col1.metric(f"Total ({_e_unit})", _e_val)
                 e_col2.metric("Queries", _n_queries)
                 st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
+
+                # Bascom Hill comparison
+                _steps = _total_e / _WH_PER_BASCOM_STEP
+                _climbs = _steps / _BASCOM_HILL_STEPS
+                if _climbs >= 1.0:
+                    _climb_str = f"{_climbs:.1f} climbs"
+                else:
+                    _climb_str = f"{_climbs:.2f} climbs"
+                _hill_col1, _hill_col2 = st.columns(2)
+                _hill_col1.metric(
+                    "Bascom Hill steps", f"~{_steps:.1f}",
+                    help=(
+                        "How much energy is that? Climbing one stair step burns "
+                        "about 0.15 Wh of metabolic energy. Bascom Hill has 110 "
+                        "steps from Park St to Bascom Hall — so your session "
+                        "energy is equivalent to climbing that many steps up the "
+                        "hill. On, Wisconsin!"
+                    ),
+                )
+                _hill_col2.metric("Hill climbs", _climb_str)
             else:
                 st.caption("No queries yet — energy will be tracked as you ask questions.")
 
