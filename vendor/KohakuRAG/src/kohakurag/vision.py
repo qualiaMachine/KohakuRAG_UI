@@ -497,12 +497,13 @@ class HuggingFaceLocalVisionModel(VisionModel):
     during index build) where you don't want to maintain a long-running
     VLM endpoint.
 
-    Recommended models:
-    - Qwen/Qwen2.5-VL-7B-Instruct (~16 GB VRAM in bf16, ~8 GB in 4-bit)
-    - Qwen/Qwen2.5-VL-3B-Instruct (~6 GB VRAM in bf16)
+    Recommended models (larger = better figure/table understanding):
+    - Qwen/Qwen2.5-VL-72B-Instruct (~145 GB bf16, ~40 GB 4-bit) — best quality
+    - Qwen/Qwen2.5-VL-32B-Instruct (~65 GB bf16, ~20 GB 4-bit)  — strong, less VRAM
+    - Qwen/Qwen2.5-VL-7B-Instruct  (~16 GB bf16, ~8 GB 4-bit)   — lightweight fallback
 
     Usage:
-        vlm = HuggingFaceLocalVisionModel(model="Qwen/Qwen2.5-VL-7B-Instruct")
+        vlm = HuggingFaceLocalVisionModel(model="Qwen/Qwen2.5-VL-72B-Instruct")
         caption = await vlm.caption(image_bytes)
     """
 
@@ -518,8 +519,8 @@ class HuggingFaceLocalVisionModel(VisionModel):
     def __init__(
         self,
         *,
-        model: str = "Qwen/Qwen2.5-VL-7B-Instruct",
-        dtype: str = "bf16",
+        model: str = "Qwen/Qwen2.5-VL-72B-Instruct",
+        dtype: str = "4bit",
         max_concurrent: int = 1,
     ) -> None:
         """Initialize local HuggingFace vision model.

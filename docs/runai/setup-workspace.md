@@ -29,7 +29,7 @@ documents) or to debug issues.
   come from the shared PVC.
 - **Does not serve anything in production.** The three production services
   are deployed separately as Inference workloads (steps 2-4). The VLM
-  (Qwen2.5-VL-7B) is loaded only during figure extraction, not hosted
+  (Qwen2.5-VL-72B) is loaded only during figure extraction, not hosted
   as a long-running endpoint.
 
 To add or update models on the shared PVC, use the `update-shared-models`
@@ -152,14 +152,14 @@ nvidia-smi --query-gpu=index,name,memory.total,memory.free \
 ls /models/.cache/huggingface/ | grep models--
 # Should list: models--jinaai--jina-embeddings-v4,
 #              models--Qwen--Qwen2.5-7B-Instruct,
-#              models--Qwen--Qwen2.5-VL-7B-Instruct (if using VLM verification), etc.
+#              models--Qwen--Qwen2.5-VL-72B-Instruct (if using VLM verification), etc.
 
 # Verify Jina V4 has adapters (required for embedding)
 ls /models/.cache/huggingface/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
 # Should list: adapter_config.json, adapter_model.safetensors
 
 # Verify VLM weights (only needed if using vlm_verify=True)
-ls /models/.cache/huggingface/models--Qwen--Qwen2.5-VL-7B-Instruct/snapshots/*/config.json 2>/dev/null \
+ls /models/.cache/huggingface/models--Qwen--Qwen2.5-VL-72B-Instruct/snapshots/*/config.json 2>/dev/null \
     && echo "VLM weights: OK" || echo "VLM weights: MISSING (optional — needed for figure verification)"
 
 # Verify HF_HUB_OFFLINE is set (prevents accidental downloads)
@@ -261,13 +261,13 @@ images directly into the same vector space as text.
 During figure extraction (`wattbot_store_images.py`), you can enable
 VLM-based verification to filter out non-figures (logos, equations,
 decorative elements) and generate rich descriptions. This uses a local
-Qwen2.5-VL-7B model loaded from the shared PVC — no API endpoint needed.
+Qwen2.5-VL-72B model loaded from the shared PVC — no API endpoint needed.
 
 **To enable:** set `vlm_verify = True` and `vlm_provider = "hf_local"`
 in the index config, or pass them as overrides. The VLM model is loaded
 once, processes all figures, and is unloaded when the script finishes.
 
-> **Note:** VLM verification requires `Qwen/Qwen2.5-VL-7B-Instruct` on
+> **Note:** VLM verification requires `Qwen/Qwen2.5-VL-72B-Instruct` on
 > the shared models PVC. See [Setup Shared Models](setup-shared-models.md)
 > step 3. It also requires temporarily unsetting `HF_HUB_OFFLINE` so
 > the VLM processor can write metadata to the writable cache overlay.
@@ -302,7 +302,7 @@ else
     kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 
     # Phase 2: Figure extraction with VLM verification
-    # The VLM loads Qwen2.5-VL-7B from /models/, verifies each crop is a
+    # The VLM loads Qwen2.5-VL-72B from /models/, verifies each crop is a
     # real figure, and generates rich descriptions for better retrieval.
     # To skip VLM verification, remove the vlm_verify/vlm_provider overrides.
     kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py \

@@ -75,8 +75,11 @@ margin_pt = 10  # Points of padding around the crop region
 vlm_verify = False  # Set True to enable VLM-based verification of extracted crops
 vlm_provider = "openrouter"  # "openrouter" (API) or "hf_local" (load from HuggingFace)
 vlm_model = "qwen/qwen3-vl-235b-a22b-instruct"  # OpenRouter model ID
-vlm_local_model = "Qwen/Qwen2.5-VL-7B-Instruct"  # HuggingFace model ID (for hf_local)
-vlm_local_dtype = "bf16"  # "bf16", "fp16", "4bit" (for hf_local)
+vlm_local_model = "Qwen/Qwen2.5-VL-72B-Instruct"  # HuggingFace model ID (for hf_local)
+#   Options:  "Qwen/Qwen2.5-VL-72B-Instruct"  (~145 GB bf16, ~40 GB 4bit) — best quality
+#             "Qwen/Qwen2.5-VL-32B-Instruct"  (~65 GB bf16, ~20 GB 4bit)  — strong, less VRAM
+#             "Qwen/Qwen2.5-VL-7B-Instruct"   (~16 GB bf16, ~8 GB 4bit)   — lightweight fallback
+vlm_local_dtype = "4bit"  # "bf16", "fp16", "4bit" (for hf_local)
 vlm_max_concurrent = 5  # API concurrency (openrouter) or GPU concurrency (hf_local, recommend 1)
 
 # Caption pattern for "Figure N" / "Fig. N" / "Table N" labels
