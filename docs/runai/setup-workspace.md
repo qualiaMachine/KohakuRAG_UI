@@ -21,12 +21,11 @@ documents) or to debug issues.
 
 - **Does not download large model weights.** All model weights (Qwen LLM,
   Jina V4, Qwen2.5-VL, etc.) must already exist on the shared models PVC
-  at `/models/`. The workspace starts with `HF_HUB_OFFLINE=1` — if a
-  model is missing, you get a clear error instead of a surprise multi-GB
-  download. During the index build, `HF_HUB_OFFLINE` is temporarily
-  unset to allow the VLM processor to write small metadata files (tokenizer
-  configs, etc.) to the writable cache overlay — actual model weights still
-  come from the shared PVC.
+  at `/models/`. The workspace sets `HF_HUB_OFFLINE=1` to enforce this —
+  if a model is missing, you get a clear error instead of a surprise
+  multi-GB download. The VLM loader creates a writable cache overlay at
+  `/tmp` so HuggingFace can write metadata without PVC write access or
+  network access.
 - **Does not serve anything in production.** The three production services
   are deployed separately as Inference workloads (steps 2-4). The VLM
   (Qwen2.5-VL-72B) is loaded only during figure extraction, not hosted
@@ -269,8 +268,8 @@ once, processes all figures, and is unloaded when the script finishes.
 
 > **Note:** VLM verification requires `Qwen/Qwen2.5-VL-72B-Instruct` on
 > the shared models PVC. See [Setup Shared Models](setup-shared-models.md)
-> step 3. It also requires temporarily unsetting `HF_HUB_OFFLINE` so
-> the VLM processor can write metadata to the writable cache overlay.
+> step 3. The VLM loader automatically creates a writable cache overlay
+> at `/tmp` for HF metadata — `HF_HUB_OFFLINE=1` stays set.
 
 ```bash
 cd /home/jovyan/work/KohakuRAG_UI
@@ -285,11 +284,6 @@ rm -rf data/embeddings data/corpus data/pdfs
 ln -s /wattbot-data/embeddings data/embeddings
 ln -s /wattbot-data/corpus     data/corpus
 ln -s /wattbot-data/pdfs       data/pdfs
-
-# Allow HF to write metadata during VLM loading (model weights still come
-# from the shared PVC — this only lets the processor cache tokenizer configs
-# and small metadata files to /tmp).
-export HF_HUB_OFFLINE=0
 
 # Check if index already exists on the PPVC
 if [ -f /wattbot-data/embeddings/wattbot_jinav4.db ]; then
@@ -315,9 +309,6 @@ else
 
     cd ../..
 fi
-
-# Re-enable offline mode for safety
-export HF_HUB_OFFLINE=1
 
 # Verify the index was created
 ls -lh /wattbot-data/embeddings/wattbot_jinav4.db
@@ -459,9 +450,6 @@ ln -s /wattbot-data/embeddings data/embeddings
 ln -s /wattbot-data/corpus     data/corpus
 ln -s /wattbot-data/pdfs       data/pdfs
 
-# Allow HF to write metadata during VLM loading
-export HF_HUB_OFFLINE=0
-
 # Build text index (downloads PDFs, parses to JSON, creates embeddings)
 cd vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
@@ -475,9 +463,6 @@ kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py \
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
 cd ../..
-
-# Re-enable offline mode
-export HF_HUB_OFFLINE=1
 
 # Verify
 echo "PDFs:    $(ls /wattbot-data/pdfs/*.pdf 2>/dev/null | wc -l)"
