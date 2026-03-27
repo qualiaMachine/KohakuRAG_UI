@@ -1904,8 +1904,8 @@ def main():
                         "How much energy is that? Climbing one stair step burns "
                         "about 0.15 Wh of metabolic energy. Bascom Hill has 110 "
                         "steps from Park St to Bascom Hall — so your session "
-                        "energy is equivalent to climbing that many steps up the "
-                        "hill. On, Wisconsin!"
+                        "energy is equivalent to climbing that many steps up "
+                        "the hill."
                     ),
                 )
                 _hill_col2.metric("Hill climbs", _climb_str)
