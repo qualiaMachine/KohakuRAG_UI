@@ -153,12 +153,41 @@ async def _download_pdf(url: str, dest: Path, client) -> None:
     dest.write_bytes(resp.content)
 
 
+def _recover_json_from_git(doc_id: str, target_path: Path) -> bool:
+    """Try to recover a pre-built JSON from the git repo.
+
+    When data/corpus is a symlink (e.g. to /wattbot-data/corpus), pre-built
+    JSON files committed to git (like hardware spec sheets) are not in the
+    symlink target.  This function uses ``git show`` to extract them.
+    """
+    import subprocess
+
+    git_blob = f"HEAD:data/corpus/{doc_id}.json"
+    try:
+        result = subprocess.run(
+            ["git", "show", git_blob],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # Validate it's actual JSON
+            json.loads(result.stdout)
+            target_path.write_text(result.stdout, encoding="utf-8")
+            return True
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        pass
+    return False
+
+
 async def fetch_and_parse_pdfs(
     metadata_records: dict[str, dict[str, str]],
     target_docs_dir: Path,
     raw_pdf_dir: Path,
 ) -> int:
     """Download PDFs from metadata URLs and parse into structured JSON.
+
+    For documents without URLs (e.g. spec sheets), attempts to recover the
+    pre-built JSON from the git repository when the corpus directory is a
+    symlink (common in server deployments).
 
     Returns the number of documents successfully processed.
     """
@@ -200,8 +229,19 @@ async def fetch_and_parse_pdfs(
             title = info.get("title") or doc_id
 
             if not url:
-                skipped += 1
-                print(f"  [skip] {doc_id}: no URL in metadata", file=sys.stderr)
+                # No URL — try to recover pre-built JSON from git (e.g. spec sheets).
+                # This handles deployments where data/corpus is a symlink.
+                json_path = target_docs_dir / f"{doc_id}.json"
+                if json_path.exists():
+                    processed += 1
+                    continue
+                recovered = _recover_json_from_git(doc_id, json_path)
+                if recovered:
+                    processed += 1
+                    print(f"  [ok] {doc_id} -> {json_path} (recovered from git)")
+                else:
+                    skipped += 1
+                    print(f"  [skip] {doc_id}: no URL in metadata", file=sys.stderr)
                 continue
 
             if not _is_pdf_url(url) and not await _has_pdf_mime(url, client):
