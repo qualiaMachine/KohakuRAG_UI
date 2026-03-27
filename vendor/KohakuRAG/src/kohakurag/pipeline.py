@@ -143,6 +143,7 @@ def humanize_ref_id(rid: str) -> str:
     """Convert ``luccioni2025c`` → ``Luccioni et al., 2025``.
 
     Handles ``s2_`` prefix for Semantic Scholar references.
+    Also handles underscore-separated ids like ``ai_hardware_comparison_2025``.
     Falls back to the raw id if the pattern doesn't match.
     """
     display_rid = rid.removeprefix("s2_")
@@ -151,6 +152,15 @@ def humanize_ref_id(rid: str) -> str:
         author = m.group(1).capitalize()
         year = m.group(2)
         label = f"{author} et al., {year}"
+        if rid.startswith("s2_"):
+            label += " [S2]"
+        return label
+    # Underscore-separated ids: ai_hardware_comparison_2025 → AI Hardware Comparison, 2025
+    m2 = re.match(r"(.+?)_(\d{4})([a-z]?)$", display_rid)
+    if m2:
+        name = m2.group(1).replace("_", " ").title()
+        year = m2.group(2)
+        label = f"{name}, {year}"
         if rid.startswith("s2_"):
             label += " [S2]"
         return label
@@ -1345,10 +1355,27 @@ class RAGPipeline:
         """
         explanation = result.answer.explanation or ""
 
+        # Normalise bold-wrapped citations from LLMs like Qwen:
+        # __Author et al., Year__ → [Author et al., Year]
+        explanation = re.sub(
+            r"__([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4}[a-z]?))__",
+            r"[\1]",
+            explanation,
+        )
+        # __raw_ref_id_2025__ → [raw_ref_id_2025]
+        explanation = re.sub(
+            r"__([a-z][a-z0-9_]*\d{4}[a-z]?)__",
+            r"[\1]",
+            explanation,
+        )
+
         # Quick check: does the explanation already contain proper citations?
         # Matches both [luccioni2025c] and [Luccioni et al., 2025] formats.
         has_ref_citations = bool(_RE_ANY_CITATION.search(explanation))
         has_numeric_citations = bool(re.search(r"\[\d+\]", explanation))
+
+        # If bold-normalisation changed the explanation, update the result
+        explanation_normalised = explanation != (result.answer.explanation or "")
 
         if has_ref_citations and not has_numeric_citations:
             # Check citation density — if fewer than 30% of factual sentences
@@ -1356,6 +1383,23 @@ class RAGPipeline:
             sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', explanation) if len(s.strip()) > 40]
             cited = sum(1 for s in sentences if _RE_ANY_CITATION.search(s))
             if sentences and cited / len(sentences) >= 0.3:
+                if explanation_normalised:
+                    # Return updated result with bold-normalised explanation
+                    updated_answer = StructuredAnswer(
+                        answer=result.answer.answer,
+                        answer_value=result.answer.answer_value,
+                        ref_id=result.answer.ref_id,
+                        explanation=explanation,
+                        ref_url=result.answer.ref_url,
+                        supporting_materials=result.answer.supporting_materials,
+                    )
+                    return StructuredAnswerResult(
+                        answer=updated_answer,
+                        retrieval=result.retrieval,
+                        raw_response=result.raw_response,
+                        prompt=result.prompt,
+                        timing=result.timing,
+                    )
                 return result  # Sufficient inline citations, skip
 
         # If we have proper ref citations but also stray numeric ones, just
@@ -1906,6 +1950,13 @@ class RAGPipeline:
                     # LLM sometimes copies the context format like [ref_id=doc1]
                     if text.lower().startswith("ref_id="):
                         text = text[7:].strip()  # Remove "ref_id=" prefix
+                    # Strip markdown bold wrappers: __ref_id__ → ref_id
+                    # Some LLMs (e.g. Qwen) wrap ref_ids in double underscores.
+                    if text.startswith("__") and text.endswith("__") and len(text) > 4:
+                        text = text[2:-2].strip()
+                    # Strip bracket wrappers: [ref_id] → ref_id
+                    if text.startswith("[") and text.endswith("]") and len(text) > 2:
+                        text = text[1:-1].strip()
                     ref_ids.append(text)
 
         # Parse ref_url (can be string or list)

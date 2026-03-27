@@ -2494,6 +2494,7 @@ def _humanize_ref_id(rid: str) -> str:
 
     Expects the common ``<surname><4-digit-year>[suffix]`` pattern.
     Handles ``s2_`` prefix for Semantic Scholar references.
+    Also handles underscore-separated ids like ``ai_hardware_comparison_2025``.
     Falls back to the raw id if the pattern doesn't match.
     """
     # Strip Semantic Scholar prefix for display
@@ -2507,19 +2508,44 @@ def _humanize_ref_id(rid: str) -> str:
         if rid.startswith("s2_"):
             label += " [S2]"
         return label
+    # Underscore-separated ids: ai_hardware_comparison_2025 → AI Hardware Comparison, 2025
+    m2 = re.match(r"(.+?)_(\d{4})([a-z]?)$", display_rid)
+    if m2:
+        name = m2.group(1).replace("_", " ").title()
+        year = m2.group(2)
+        suffix = m2.group(3)
+        label = f"{name}, {year}{suffix}"
+        if rid.startswith("s2_"):
+            label += " [S2]"
+        return label
     return rid
 
 
 def _clean_ref_ids(ref_ids) -> list[str]:
-    """Normalize ref_ids: always return a clean list, filtering out 'is_blank'."""
+    """Normalize ref_ids: always return a clean list, filtering out 'is_blank'.
+
+    Also strips markdown bold wrappers (``__ref_id__``) and bracket wrappers
+    (``[ref_id]``) that some LLMs (e.g. Qwen) add around ref_ids.
+    """
     if not ref_ids:
         return []
+
+    def _strip(r: str) -> str:
+        r = r.strip()
+        # Strip markdown bold wrappers: __ref_id__ → ref_id
+        if r.startswith("__") and r.endswith("__") and len(r) > 4:
+            r = r[2:-2].strip()
+        # Strip bracket wrappers: [ref_id] → ref_id
+        if r.startswith("[") and r.endswith("]") and len(r) > 2:
+            r = r[1:-1].strip()
+        return r
+
     if isinstance(ref_ids, str):
         if ref_ids == "is_blank":
             return []
-        return [ref_ids]
+        return [_strip(ref_ids)]
     if isinstance(ref_ids, list):
-        return [r for r in ref_ids if r and str(r) != "is_blank"]
+        return [_strip(str(r)) for r in ref_ids if r and str(r) != "is_blank"]
     return []
 
 
@@ -2592,6 +2618,13 @@ def _linkify_citations(
     # Some LLMs emit markdown bold instead of brackets for inline citations.
     text = re.sub(
         r"__([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4}[a-z]?))__",
+        r"[\1]",
+        text,
+    )
+    # Also normalise bold-wrapped raw ref_ids: __ai_hardware_comparison_2025__ → [ai_hardware_comparison_2025]
+    # Qwen models often wrap raw ref_ids in markdown bold instead of brackets.
+    text = re.sub(
+        r"__([a-z][a-z0-9_]*\d{4}[a-z]?)__",
         r"[\1]",
         text,
     )
@@ -2812,7 +2845,10 @@ def _display_single_result(
         if len(linked_explanation) > 500 or "\n\n" in linked_explanation:
             st.markdown(linked_explanation)
         else:
-            st.markdown(f"**{linked_explanation}**")
+            # Escape any remaining __ delimiters to prevent nested bold conflicts
+            # when we wrap the whole explanation in **...**
+            safe_explanation = re.sub(r"__(.+?)__", r"\_\_\1\_\_", linked_explanation)
+            st.markdown(f"**{safe_explanation}**")
         if confidence == "low":
             st.warning("Best guess — the retrieved context only partially supports this answer.")
     elif answer.answer and answer.answer != "is_blank":
