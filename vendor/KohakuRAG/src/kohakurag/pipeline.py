@@ -1001,6 +1001,10 @@ class RAGPipeline:
         if self._cross_encoder is not None:
             reranker_energy_wh = getattr(self._cross_encoder, "last_energy_wh", 0.0)
 
+        # Collect token usage from LLM for token-based energy estimation
+        llm_prompt_tokens = getattr(self._chat, "last_prompt_tokens", 0)
+        llm_completion_tokens = getattr(self._chat, "last_completion_tokens", 0)
+
         return StructuredAnswerResult(
             answer=parsed,
             retrieval=retrieval,
@@ -1012,6 +1016,8 @@ class RAGPipeline:
                 "total_s": t_retrieval + t_generation,
                 "embed_energy_wh": embed_energy_wh,
                 "reranker_energy_wh": reranker_energy_wh,
+                "llm_prompt_tokens": llm_prompt_tokens,
+                "llm_completion_tokens": llm_completion_tokens,
             },
         )
 
@@ -1228,6 +1234,8 @@ class RAGPipeline:
                 "feedback_rounds": len(feedback_log),
                 "embed_energy_wh": initial_result.timing.get("embed_energy_wh", 0.0),
                 "reranker_energy_wh": initial_result.timing.get("reranker_energy_wh", 0.0),
+                "llm_prompt_tokens": getattr(self._chat, "last_prompt_tokens", 0),
+                "llm_completion_tokens": getattr(self._chat, "last_completion_tokens", 0),
             },
         )
 

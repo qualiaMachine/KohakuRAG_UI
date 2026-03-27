@@ -69,6 +69,10 @@ class VLLMChatModel(ChatModel):
         # Auto-detect the model name from the vLLM server
         self._model = self._detect_model(base_url, api_key, model)
 
+        # Token usage from last complete() call
+        self.last_prompt_tokens: int = 0
+        self.last_completion_tokens: int = 0
+
     @staticmethod
     def _detect_model(base_url: str, api_key: str, fallback: str) -> str:
         """Query GET /v1/models to find the actual served model name."""
@@ -111,6 +115,13 @@ class VLLMChatModel(ChatModel):
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
             )
+            # Capture token usage for energy estimation
+            if response.usage:
+                self.last_prompt_tokens = response.usage.prompt_tokens or 0
+                self.last_completion_tokens = response.usage.completion_tokens or 0
+            else:
+                self.last_prompt_tokens = 0
+                self.last_completion_tokens = 0
             return response.choices[0].message.content or ""
 
         if self._semaphore is not None:

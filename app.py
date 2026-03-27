@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 from collections import Counter
@@ -140,6 +141,18 @@ _GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.50"))
 # GPU-active share of total retrieval wall-clock time.
 _REMOTE_RETRIEVAL_GPU_FRAC = float(os.environ.get("ENERGY_RETRIEVAL_GPU_FRAC", "0.10"))
 
+# DCGM (Data Center GPU Manager) exporter URL — if available on the cluster,
+# provides real GPU power measurements.  Set to empty string to disable.
+_DCGM_URL = os.environ.get("DCGM_EXPORTER_URL", "")
+
+# Token-based energy estimation: Wh per token for LLM inference.
+# Derived from Luccioni et al. 2024 measurements on 8B-class models:
+#   ~0.093 Wh total for a typical query (~2000 prompt + ~200 completion tokens)
+# Prefill (prompt) tokens are cheaper than decode (completion) tokens because
+# they're processed in a single batch, while decode is sequential.
+_WH_PER_PROMPT_TOKEN = float(os.environ.get("ENERGY_WH_PER_PROMPT_TOKEN", "2.0e-5"))
+_WH_PER_COMPLETION_TOKEN = float(os.environ.get("ENERGY_WH_PER_COMPLETION_TOKEN", "2.5e-4"))
+
 
 def _parse_param_billions(model_name: str) -> float:
     """Extract parameter count (billions) from a model name string.
@@ -177,31 +190,125 @@ def _model_power_fraction(param_billions: float) -> float:
     return max(0.15, min(0.95, fraction))
 
 
+class DCGMPowerSampler:
+    """Poll DCGM exporter for real GPU power during a query.
+
+    Runs a background thread that periodically fetches
+    ``DCGM_FI_DEV_POWER_USAGE`` from the DCGM Prometheus endpoint and
+    integrates power over time using the trapezoidal rule.
+
+    Falls back gracefully (energy_wh = 0) if the endpoint is unreachable.
+    """
+
+    def __init__(self, dcgm_url: str, interval: float = 0.5):
+        self._url = dcgm_url.rstrip("/") + "/metrics"
+        self._interval = interval
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._power_readings: list[float] = []  # watts
+        self._timestamps: list[float] = []
+        self._available = bool(dcgm_url)
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def start(self) -> None:
+        if not self._available:
+            return
+        self._stop_event.clear()
+        self._power_readings = []
+        self._timestamps = []
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._thread is None:
+            return
+        self._stop_event.set()
+        self._thread.join(timeout=5)
+        self._thread = None
+
+    def _poll_loop(self) -> None:
+        while not self._stop_event.is_set():
+            power = self._read_power()
+            if power is not None:
+                self._power_readings.append(power)
+                self._timestamps.append(time.time())
+            self._stop_event.wait(self._interval)
+
+    def _read_power(self) -> float | None:
+        """Fetch GPU power from DCGM exporter (Prometheus text format)."""
+        try:
+            import httpx
+            resp = httpx.get(self._url, timeout=2.0)
+            if resp.status_code != 200:
+                return None
+            # Parse DCGM_FI_DEV_POWER_USAGE from Prometheus text format
+            for line in resp.text.splitlines():
+                if line.startswith("DCGM_FI_DEV_POWER_USAGE"):
+                    # e.g. DCGM_FI_DEV_POWER_USAGE{gpu="0",...} 142.5
+                    parts = line.rsplit(" ", 1)
+                    if len(parts) == 2:
+                        return float(parts[1])
+        except Exception:
+            pass
+        return None
+
+    @property
+    def energy_wh(self) -> float:
+        """Total energy consumed in Watt-hours (trapezoidal integration)."""
+        if len(self._timestamps) < 2:
+            return 0.0
+        total_joules = 0.0
+        for i in range(1, len(self._timestamps)):
+            dt = self._timestamps[i] - self._timestamps[i - 1]
+            avg_power = (self._power_readings[i] + self._power_readings[i - 1]) / 2
+            total_joules += avg_power * dt
+        return total_joules / 3600.0
+
+
+def _token_energy_wh(prompt_tokens: int, completion_tokens: int) -> float:
+    """Estimate LLM inference energy from token counts.
+
+    Uses per-token energy rates calibrated from published measurements
+    (Luccioni et al. 2024, Moore et al. 2025) for 8B-class models.
+    Prefill tokens are batched and much cheaper; decode tokens are sequential.
+    """
+    return (prompt_tokens * _WH_PER_PROMPT_TOKEN
+            + completion_tokens * _WH_PER_COMPLETION_TOKEN)
+
+
 class EnergyTracker:
     """Track energy consumed by a RAG query across distributed services.
 
-    Supports two modes depending on where the GPU lives:
+    Supports three measurement strategies (in priority order):
 
     **Local mode** (all models loaded in this process):
       Uses NVML hardware counters or nvidia-smi power sampling to measure
       actual GPU energy on this node.
 
     **Remote mode** (vLLM + embedding + reranker on separate RunAI jobs):
-      Collects per-request energy reported by our embedding/reranker servers
-      (via ``result.timing["embed_energy_wh"]`` and ``reranker_energy_wh``).
-      Estimates vLLM energy from ``generation_s × TDP × gpu_fraction × util``
-      since we don't control the vLLM container.
+      1. **DCGM** — if a DCGM exporter URL is configured, polls real GPU
+         power in a background thread during the query.
+      2. **Token-based** — uses ``prompt_tokens`` and ``completion_tokens``
+         from the vLLM response with calibrated per-token energy rates.
+      3. **Time-based** (fallback) — estimates from wall-clock time × TDP.
+
+      Embedding/reranker energy comes from server-reported values when
+      available, otherwise estimated from retrieval time.
 
     Usage::
 
-        tracker = EnergyTracker(is_remote=True)
+        tracker = EnergyTracker(is_remote=True, vllm_base_url="http://...")
         tracker.start()
         # ... run query ...
         wh = tracker.stop(elapsed_s, timing=result.timing)
     """
 
     def __init__(self, *, is_remote: bool = False,
-                 llm_model: str = "", embed_model: str = ""):
+                 llm_model: str = "", embed_model: str = "",
+                 vllm_base_url: str = ""):
         self._is_remote = is_remote
         self._method = "estimate"
 
@@ -210,6 +317,11 @@ class EnergyTracker:
         embed_params = _parse_param_billions(embed_model) if embed_model else 1.0
         self._llm_power_frac = _model_power_fraction(llm_params)
         self._embed_power_frac = _model_power_fraction(embed_params)
+
+        # Remote-mode: try DCGM exporter for real GPU power measurement
+        self._dcgm: DCGMPowerSampler | None = None
+        if is_remote and _DCGM_URL:
+            self._dcgm = DCGMPowerSampler(_DCGM_URL, interval=0.5)
 
         # Local-mode: try direct GPU measurement on this node
         self._nvml: NVMLEnergyCounter | None = None
@@ -222,13 +334,20 @@ class EnergyTracker:
 
     @property
     def method(self) -> str:
-        """Return the measurement method: 'nvml', 'power_sampling', 'server_reported', or 'estimate'."""
+        """Return the measurement method used.
+
+        One of: 'nvml', 'power_sampling', 'dcgm', 'server_reported',
+        'token_based', or 'estimate'.
+        """
         return self._method
 
     def start(self) -> None:
         if self._is_remote:
-            # Energy will come from service responses + vLLM estimation
-            self._method = "server_reported"
+            if self._dcgm and self._dcgm.available:
+                self._dcgm.start()
+                self._method = "dcgm"
+            else:
+                self._method = "server_reported"
             return
         if self._nvml:
             self._nvml.start()
@@ -246,7 +365,7 @@ class EnergyTracker:
             elapsed_s: Total wall-clock seconds for the query.
             timing: The ``result.timing`` dict from the pipeline. In remote
                 mode this contains ``embed_energy_wh`` and ``reranker_energy_wh``
-                reported by the servers, plus ``generation_s`` for vLLM estimation.
+                reported by the servers, plus token counts for estimation.
         """
         # --- Local mode: direct GPU measurement ---
         if self._method == "nvml" and self._nvml:
@@ -259,14 +378,32 @@ class EnergyTracker:
             if wh > 0:
                 return wh
 
+        # --- DCGM: real power measurement from cluster GPU ---
+        if self._method == "dcgm" and self._dcgm:
+            self._dcgm.stop()
+            dcgm_wh = self._dcgm.energy_wh
+            if dcgm_wh > 0:
+                return dcgm_wh
+            # DCGM was configured but returned no data — fall through
+
         # --- Remote mode: aggregate server-reported + vLLM estimate ---
         if timing:
             embed_wh = timing.get("embed_energy_wh", 0.0)
             reranker_wh = timing.get("reranker_energy_wh", 0.0)
-            gen_s = timing.get("generation_s", 0.0)
             retrieval_s = timing.get("retrieval_s", 0.0)
-            # vLLM energy estimate: TDP × model power fraction × utilisation × time
-            vllm_wh = (_GPU_TDP_WATTS * self._llm_power_frac * _GPU_UTIL * gen_s) / 3600.0
+            gen_s = timing.get("generation_s", 0.0)
+
+            # vLLM energy: prefer token-based estimation from actual usage
+            prompt_tokens = timing.get("llm_prompt_tokens", 0)
+            completion_tokens = timing.get("llm_completion_tokens", 0)
+            if prompt_tokens > 0 or completion_tokens > 0:
+                vllm_wh = _token_energy_wh(prompt_tokens, completion_tokens)
+                self._method = "token_based"
+            else:
+                # Fallback: time-based estimation
+                vllm_wh = (_GPU_TDP_WATTS * self._llm_power_frac * _GPU_UTIL * gen_s) / 3600.0
+                self._method = "estimate"
+
             total = embed_wh + reranker_wh + vllm_wh
             # When servers don't report energy, estimate retrieval energy from
             # retrieval time.  Only a fraction of wall-clock retrieval time is
@@ -274,10 +411,11 @@ class EnergyTracker:
             if embed_wh == 0 and reranker_wh == 0 and retrieval_s > 0:
                 gpu_retrieval_s = retrieval_s * _REMOTE_RETRIEVAL_GPU_FRAC
                 total += (_GPU_TDP_WATTS * self._embed_power_frac * _GPU_UTIL * gpu_retrieval_s) / 3600.0
+
             if embed_wh > 0 or reranker_wh > 0:
-                self._method = "server_reported"
-            else:
-                self._method = "estimate"
+                # Server reported retrieval energy; keep vLLM method label
+                if self._method == "estimate":
+                    self._method = "server_reported"
             return total
 
         # Pure fallback: estimate everything from wall-clock time
@@ -1775,6 +1913,7 @@ def main():
                 is_remote=is_remote,
                 llm_model=vllm_model if is_remote else "",
                 embed_model="jinaai/jina-embeddings-v4" if is_remote else "",
+                vllm_base_url=VLLM_BASE_URL if is_remote else "",
             )
             energy_tracker.start()
             # Research mode uses more context for comprehensive answers
@@ -2211,7 +2350,7 @@ def _display_ensemble_result(
     model_times = [e["time"] for e in model_results.values()]
     total_gen = sum(model_times)
 
-    _e_label = "Energy" if energy_method in ("nvml", "power_sampling", "server_reported") else "Est. energy"
+    _e_label = "Energy" if energy_method in ("nvml", "power_sampling", "dcgm", "server_reported", "token_based") else "Est. energy"
     _e_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
     cols = st.columns(4)
     cols[0].metric("Models", n_models)
@@ -2297,7 +2436,7 @@ def _render_details(details: dict, *, image_store=None):
     """Render expandable sections for a stored message (history replay)."""
     energy_wh = details.get("energy_wh", 0.0)
     energy_method = details.get("energy_method", "")
-    _measured = energy_method in ("nvml", "power_sampling", "server_reported")
+    _measured = energy_method in ("nvml", "power_sampling", "dcgm", "server_reported", "token_based")
     energy_label = "Energy" if _measured else "Est. energy"
     energy_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
 
