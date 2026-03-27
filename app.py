@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -83,6 +84,17 @@ VLLM_TEMPERATURE = float(os.environ.get("VLLM_TEMPERATURE", "0.2"))
 EMBEDDING_SERVICE_URL = os.environ.get("EMBEDDING_SERVICE_URL", "http://localhost:8080")
 RERANKER_SERVICE_URL = os.environ.get("RERANKER_SERVICE_URL", "")
 
+# Multi-endpoint and knowledge-base discovery (remote mode)
+# VLLM_ENDPOINTS: comma-separated name=url pairs for multiple vLLM servers.
+#   e.g. "qwen7b=http://wattbot-qwen:8000/v1,llama8b=http://wattbot-llama:8000/v1"
+VLLM_ENDPOINTS = os.environ.get("VLLM_ENDPOINTS", "")
+# SHARED_MODELS_PATH: HuggingFace cache on the shared PVC (for model listing).
+SHARED_MODELS_PATH = os.environ.get("SHARED_MODELS_PATH", "/models/.cache/huggingface")
+# VECTOR_DB_DIRS: comma-separated directories to scan for knowledge base .db files.
+# Each data volume mount should contain an embeddings/ subdirectory with .db files.
+# e.g. "/climate-data/embeddings,/bio-data/embeddings,/custom-corpus/embeddings"
+VECTOR_DB_DIRS = os.environ.get("VECTOR_DB_DIRS", os.environ.get("VECTOR_DB_DIR", ""))
+
 # ---------------------------------------------------------------------------
 # Print RunAI access URL at startup (if running inside a RunAI workspace)
 # ---------------------------------------------------------------------------
@@ -115,6 +127,185 @@ def _detect_vllm_model(base_url: str) -> str:
     except Exception:
         pass
     return fallback
+
+
+# ---------------------------------------------------------------------------
+# Discovery helpers (remote mode: models on PVC, knowledge bases, endpoints)
+# ---------------------------------------------------------------------------
+
+def _scan_pvc_models(cache_dir: str | None = None) -> list[dict]:
+    """Scan the shared HuggingFace cache for available models.
+
+    Returns list of dicts with keys: name, size_gb.
+    """
+    cache_dir = cache_dir or SHARED_MODELS_PATH
+    if not os.path.isdir(cache_dir):
+        return []
+    results = []
+    try:
+        entries = sorted(
+            e for e in os.listdir(cache_dir)
+            if e.startswith("models--") and os.path.isdir(os.path.join(cache_dir, e))
+        )
+    except OSError:
+        return []
+    for dir_name in entries:
+        model_name = dir_name.replace("models--", "").replace("--", "/")
+        model_path = os.path.join(cache_dir, dir_name)
+        total_bytes = 0
+        try:
+            for root, _dirs, files in os.walk(model_path):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    if not os.path.islink(fp):
+                        total_bytes += os.path.getsize(fp)
+        except OSError:
+            pass
+        results.append({"name": model_name, "size_gb": total_bytes / (1024 ** 3)})
+    return results
+
+
+def _detect_table_prefix(db_path: str) -> str | None:
+    """Auto-detect the KVault table prefix from a .db file.
+
+    KVaultNodeStore creates tables named '{prefix}_kv', '{prefix}_vec', etc.
+    Opens the DB read-only and returns the first detected prefix, or None.
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%\\_kv' ESCAPE '\\'"
+        )
+        tables = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        # Filter out system/internal tables
+        prefixes = [t.removesuffix("_kv") for t in tables if t.endswith("_kv")]
+        return prefixes[0] if prefixes else None
+    except Exception:
+        return None
+
+
+def _scan_knowledge_bases() -> list[dict]:
+    """Discover vector DB files across configured mount points.
+
+    Supports multiple data volumes — each researcher can attach their own
+    PVC and have its .db files appear in the sidebar selector.
+
+    Search order:
+      1. VECTOR_DB_DIRS env var (comma-separated list of directories)
+      2. Auto-discovered data volume mounts (/*-data/embeddings/, /*-corpus/embeddings/)
+      3. Hardcoded fallback paths (wattbot-data, local dev)
+
+    Returns list of dicts with keys: path, name, size_mb, table_prefix.
+    """
+    search_dirs: list[str] = []
+
+    def _add_dir(d: str) -> None:
+        d = d.rstrip("/")
+        if d and os.path.isdir(d) and d not in search_dirs:
+            search_dirs.append(d)
+
+    # 1. VECTOR_DB_DIRS env var (user-specified, comma-separated)
+    for d in VECTOR_DB_DIRS.split(","):
+        _add_dir(d.strip())
+
+    # 2. Auto-discover data volume mounts at filesystem root.
+    #    RunAI PVCs are typically mounted at /<name> (e.g. /wattbot-data,
+    #    /climate-corpus). Look for any top-level mount that contains an
+    #    embeddings/ subdirectory with .db files.
+    try:
+        for entry in os.listdir("/"):
+            candidate = f"/{entry}/embeddings"
+            if entry.startswith(".") or entry in (
+                "bin", "boot", "dev", "etc", "home", "lib", "lib64",
+                "media", "mnt", "opt", "proc", "root", "run", "sbin",
+                "srv", "sys", "tmp", "usr", "var", "models", "snap",
+            ):
+                continue
+            _add_dir(candidate)
+    except OSError:
+        pass
+
+    # 3. Hardcoded fallback paths
+    _add_dir("/wattbot-data/embeddings")
+    _add_dir("/tmp/vectordb")
+    _add_dir(str(_repo_root / "data" / "embeddings"))
+
+    seen_paths: set[str] = set()
+    results: list[dict] = []
+    for d in search_dirs:
+        try:
+            for fname in sorted(os.listdir(d)):
+                if not fname.endswith(".db"):
+                    continue
+                fpath = os.path.join(d, fname)
+                # Resolve symlinks to avoid duplicates
+                real = os.path.realpath(fpath)
+                if real in seen_paths:
+                    continue
+                seen_paths.add(real)
+                try:
+                    size_mb = os.path.getsize(real) / (1024 ** 2)
+                except OSError:
+                    size_mb = 0
+                prefix = _detect_table_prefix(real)
+                if prefix is None:
+                    continue  # Skip files that aren't KVault databases
+                results.append({
+                    "path": fpath,
+                    "name": fname,
+                    "size_mb": size_mb,
+                    "table_prefix": prefix,
+                })
+        except OSError:
+            continue
+    return results
+
+
+def _list_vllm_endpoints() -> list[dict]:
+    """Build list of available vLLM endpoints from env config.
+
+    Sources:
+      1. VLLM_BASE_URL env var (always included as 'default')
+      2. VLLM_ENDPOINTS env var (comma-separated name=url pairs)
+
+    Returns list of dicts: {name, url, model, status}.
+    """
+    endpoints: list[dict] = []
+
+    # Primary endpoint
+    primary_model = _detect_vllm_model(VLLM_BASE_URL)
+    endpoints.append({
+        "name": "default",
+        "url": VLLM_BASE_URL,
+        "model": primary_model,
+        "status": "online" if primary_model != "unknown" else "offline",
+    })
+
+    # Additional endpoints from VLLM_ENDPOINTS
+    if VLLM_ENDPOINTS:
+        for part in VLLM_ENDPOINTS.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "=" in part:
+                name, url = part.split("=", 1)
+            else:
+                name, url = part, part
+            name = name.strip()
+            url = url.strip()
+            # Skip if same URL as primary
+            if url == VLLM_BASE_URL:
+                continue
+            model = _detect_vllm_model(url)
+            endpoints.append({
+                "name": name,
+                "url": url,
+                "model": model,
+                "status": "online" if model != "unknown" else "offline",
+            })
+
+    return endpoints
 
 
 # ---------------------------------------------------------------------------
@@ -1273,11 +1464,19 @@ def init_remote_pipeline(
     embedding_url: str,
     max_tokens: int = 512,
     temperature: float = 0.2,
+    db_path_override: str | None = None,
+    table_prefix_override: str | None = None,
 ) -> RAGPipeline:
     """Create a pipeline backed by remote vLLM and embedding services.
 
     The vector store (SQLite) is still read locally — only the LLM and
     embedding model run on separate GPU pods.
+
+    Args:
+        db_path_override: If provided, use this DB path instead of the
+            config-derived default. Enables KB switching from the sidebar.
+        table_prefix_override: If provided, use this table prefix instead
+            of reading it from the config file.
     """
     if not REMOTE_AVAILABLE:
         raise ImportError(
@@ -1298,12 +1497,17 @@ def init_remote_pipeline(
     embedder = RemoteEmbeddingModel(base_url=embedding_url)
 
     # Vector store is local (lightweight SQLite reads, no GPU needed).
-    # VECTOR_DB_PATH env var overrides the config-derived path so the
-    # Streamlit pod can point directly at the PPVC without symlinks.
-    ref_config = load_config(next(CONFIGS_DIR.glob("hf_*.py")))
-    table_prefix = ref_config.get("table_prefix", "wattbot_jv4")
+    if db_path_override:
+        db_path = Path(db_path_override)
+        table_prefix = table_prefix_override or _detect_table_prefix(str(db_path)) or "wattbot_jv4"
+        _debug(f"Using sidebar-selected KB: {db_path} (prefix={table_prefix})")
+    else:
+        # VECTOR_DB_PATH env var overrides the config-derived path so the
+        # Streamlit pod can point directly at the PPVC without symlinks.
+        ref_config = load_config(next(CONFIGS_DIR.glob("hf_*.py")))
+        table_prefix = ref_config.get("table_prefix", "wattbot_jv4")
+        db_path = _resolve_vector_db_path(ref_config)
 
-    db_path = _resolve_vector_db_path(ref_config)
     embedding_dim = embedder.dimension
 
     # If the DB is on a read-only filesystem (e.g. PPVC), copy it to a
@@ -1648,22 +1852,122 @@ def main():
 
     is_remote = RAG_MODE == "remote"
 
-    # ---- Remote mode: simplified sidebar ----
+    # ---- Remote mode: sidebar with model/KB selection ----
     if is_remote:
         mode = "Single model"  # vLLM serves one model
         precision = "auto"     # handled by vLLM
         ensemble_strategy = None
         selected_configs = []  # not used in remote mode
         gpu_info = {"gpu_count": 0, "gpus": [], "total_free_gb": 0}
-        vllm_model = _detect_vllm_model(VLLM_BASE_URL)
+
+        # Discover endpoints and knowledge bases
+        endpoints = _list_vllm_endpoints()
+        kb_options = _scan_knowledge_bases()
 
         with st.sidebar:
             st.header("Settings")
             st.caption(f"**Remote mode** — vLLM + embedding server")
-            st.caption(f"LLM: `{vllm_model}`")
-            st.caption(f"vLLM: `{VLLM_BASE_URL}`")
+
+            # -- LLM Server section --
+            st.subheader("LLM Server")
+
+            # Endpoint selectbox (only show if multiple endpoints available)
+            if len(endpoints) > 1:
+                endpoint_labels = []
+                for e in endpoints:
+                    status = "" if e["status"] == "online" else " [OFFLINE]"
+                    model_info = e["model"] if e["model"] != "unknown" else "?"
+                    endpoint_labels.append(f"{e['name']} ({model_info}){status}")
+                selected_ep_idx = st.selectbox(
+                    "vLLM endpoint", range(len(endpoint_labels)),
+                    format_func=lambda i: endpoint_labels[i],
+                    help="Select which vLLM inference server to use.",
+                )
+                active_endpoint = endpoints[selected_ep_idx]
+            else:
+                active_endpoint = endpoints[0] if endpoints else {
+                    "name": "default", "url": VLLM_BASE_URL, "model": "unknown", "status": "offline",
+                }
+
+            # Custom URL override
+            custom_vllm_url = st.text_input(
+                "Custom vLLM URL",
+                placeholder="http://my-server:8000/v1",
+                help="Override the selected endpoint with a custom vLLM server URL. Leave empty to use the endpoint above.",
+            )
+            if custom_vllm_url.strip():
+                actual_vllm_url = custom_vllm_url.strip()
+                vllm_model = _detect_vllm_model(actual_vllm_url)
+            else:
+                actual_vllm_url = active_endpoint["url"]
+                vllm_model = active_endpoint["model"]
+
+            # Status display
+            if vllm_model != "unknown":
+                st.caption(f"Serving: **{vllm_model}**")
+            else:
+                st.caption(":orange[Server unreachable] — check URL or wait for startup.")
             st.caption(f"Embeddings: `{EMBEDDING_SERVICE_URL}`")
 
+            # Models on shared PVC (collapsible)
+            pvc_models = _scan_pvc_models()
+            if pvc_models:
+                with st.expander(f"Models on shared PVC ({len(pvc_models)})"):
+                    for m in pvc_models:
+                        marker = " **(active)**" if m["name"] == vllm_model else ""
+                        st.caption(f"- `{m['name']}` ({m['size_gb']:.1f} GB){marker}")
+            elif os.path.isdir(SHARED_MODELS_PATH):
+                with st.expander("Models on shared PVC"):
+                    st.caption("No models found on PVC.")
+            # If PVC isn't mounted, don't show the expander at all
+
+            # -- Knowledge Base section --
+            st.divider()
+            st.subheader("Knowledge Base")
+            selected_kb = None
+            if kb_options:
+                # Include parent volume in label so researchers can distinguish
+                # .db files with the same name from different data volumes.
+                kb_labels = []
+                for kb in kb_options:
+                    vol = os.path.basename(os.path.dirname(kb["path"]))
+                    kb_labels.append(f"{kb['name']} ({kb['size_mb']:.0f} MB) — {vol}/")
+                selected_kb_idx = st.selectbox(
+                    "Vector database", range(len(kb_labels)),
+                    format_func=lambda i: kb_labels[i],
+                    help="Select the knowledge base (vector DB) to query against. Each attached data volume is scanned automatically.",
+                )
+                selected_kb = kb_options[selected_kb_idx]
+                st.caption(f"Path: `{selected_kb['path']}`")
+                st.caption(f"Table prefix: `{selected_kb['table_prefix']}`")
+            else:
+                st.info(
+                    "No knowledge bases found. Mount a data volume with an "
+                    "`embeddings/` subdirectory, or set `VECTOR_DB_DIRS`."
+                )
+
+            # Track KB changes for chat history warning
+            if "active_kb" not in st.session_state:
+                st.session_state.active_kb = None
+            _new_kb_path = selected_kb["path"] if selected_kb else None
+            if (
+                _new_kb_path
+                and st.session_state.active_kb is not None
+                and st.session_state.active_kb != _new_kb_path
+                and st.session_state.get("messages")
+            ):
+                st.warning(
+                    "Knowledge base changed. Previous answers reference the old corpus."
+                )
+                if st.button("Clear chat history"):
+                    st.session_state.messages = []
+                    st.session_state.query_count = 0
+                    st.session_state.total_energy_wh = 0.0
+                    st.session_state.active_kb = _new_kb_path
+                    st.rerun()
+            st.session_state.active_kb = _new_kb_path
+
+            # -- Query settings (unchanged) --
             st.divider()
             top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
             best_guess = st.toggle("Allow best-guess answers", value=True,
@@ -1981,8 +2285,10 @@ def main():
     try:
         if is_remote:
             pipeline = init_remote_pipeline(
-                VLLM_BASE_URL, vllm_model, EMBEDDING_SERVICE_URL,
+                actual_vllm_url, vllm_model, EMBEDDING_SERVICE_URL,
                 max_tokens=VLLM_MAX_TOKENS, temperature=VLLM_TEMPERATURE,
+                db_path_override=selected_kb["path"] if selected_kb else None,
+                table_prefix_override=selected_kb["table_prefix"] if selected_kb else None,
             )
             _apply_retrieval_enhancements(pipeline, **_enhancement_kwargs)
         elif mode == "Single model":

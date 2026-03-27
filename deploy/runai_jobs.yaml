@@ -227,13 +227,27 @@
 #                    EMBEDDING_SERVICE_URL=http://wattbot-embedding.runai-<project>.svc.cluster.local
 #                    RERANKER_SERVICE_URL=http://wattbot-reranker.runai-<project>.svc.cluster.local
 #                    STREAMLIT_BASE_PATH=/<project>/<workspace-name>/proxy/8501
+#
+#                    # --- Model & KB selection (optional) ---
+#                    # PVC model listing (shows what's cached on shared volume):
+#                    SHARED_MODELS_PATH=/models/.cache/huggingface
+#                    # Extra KB scan dirs (usually not needed — volumes auto-discovered):
+#                    # VECTOR_DB_DIRS=/extra-corpus/embeddings
+#                    # Multiple vLLM servers (only if running >1 vLLM pod):
+#                    # VLLM_ENDPOINTS=openscholar=http://wattbot-chat.runai-<project>.svc.cluster.local/v1,qwen=http://wattbot-qwen.runai-<project>.svc.cluster.local/v1
+#
 #   NOTE: Inference workloads use Knative (envoy). You MUST use the FQDN
 #         (workload.runai-project.svc.cluster.local) on port 80 (no port
 #         number). Short names like wattbot-chat:8000 return envoy 404.
 #   GPU:             0 (none)
 #   CPU:             1
 #   Memory:          2Gi
-#   Data volume:     wattbot-data -> /wattbot-data
+#   Data volumes:    wattbot-data -> /wattbot-data
+#                    shared-models -> /models  (optional, for PVC model listing)
+#
+#   To add another researcher's corpus, attach their PVC as a data volume:
+#     e.g. climate-corpus -> /climate-corpus
+#   The app auto-discovers any /<volume>/embeddings/*.db files.
 #
 #   rm -f EXTERNALLY-MANAGED removes the Debian PEP 668 marker that
 #   blocks uv pip install --system. Safe in ephemeral containers.
