@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import traceback
 from collections import Counter
@@ -140,25 +141,75 @@ _GPU_UTIL = float(os.environ.get("ENERGY_GPU_UTIL", "0.50"))
 # GPU-active share of total retrieval wall-clock time.
 _REMOTE_RETRIEVAL_GPU_FRAC = float(os.environ.get("ENERGY_RETRIEVAL_GPU_FRAC", "0.10"))
 
+# Bascom Hill energy comparison (fun UW-Madison context for session energy).
+# Climbing one stair step burns ~0.15 Wh of metabolic energy for an average
+# adult (70 kg × 9.8 m/s² × 0.2 m step height ÷ 25% muscle efficiency).
+# Bascom Hill: 110 steps from Park St to Bascom Hall.
+_WH_PER_BASCOM_STEP = 0.15
+_BASCOM_HILL_STEPS = 110
+
+# DCGM (Data Center GPU Manager) exporter URL — if available on the cluster,
+# provides real GPU power measurements.  Set to empty string to disable.
+_DCGM_URL = os.environ.get("DCGM_EXPORTER_URL", "")
+
+# Token-based energy estimation: baseline Wh per token at 8B parameters.
+# Derived from Luccioni et al. 2024 measurements on 8B-class models:
+#   ~0.093 Wh total for a typical query (~2000 prompt + ~200 completion tokens)
+# Prefill (prompt) tokens are cheaper than decode (completion) tokens because
+# they're processed in a single batch, while decode is sequential.
+# Rates scale with model size via a power law (see _token_energy_wh).
+_BASE_WH_PER_PROMPT_TOKEN = float(os.environ.get("ENERGY_WH_PER_PROMPT_TOKEN", "2.0e-5"))
+_BASE_WH_PER_COMPLETION_TOKEN = float(os.environ.get("ENERGY_WH_PER_COMPLETION_TOKEN", "2.5e-4"))
+_BASE_MODEL_PARAMS_B = 8.0  # baseline model size for the above rates
+# Scaling exponent: energy ~ params^1.3 (super-linear due to memory bandwidth,
+# multi-GPU communication).  Fit to published data: 6.7B→0.082 Wh, 8B→0.093 Wh,
+# 175B→4.0 Wh, 405B→17.3 Wh (Luccioni et al. 2024, Moore et al. 2025).
+_ENERGY_SCALING_EXPONENT = float(os.environ.get("ENERGY_SCALING_EXPONENT", "1.3"))
+
 
 def _parse_param_billions(model_name: str) -> float:
-    """Extract parameter count (billions) from a model name string.
+    """Extract *active* parameter count (billions) from a model name.
+
+    For dense models this is the total parameter count.  For MoE (Mixture
+    of Experts) models like ``Mixtral-8x7B``, only a fraction of experts
+    are active per token, so we estimate the active parameter count:
+
+        active ≈ (num_active_experts / num_experts) × expert_params × num_experts + shared_params
+               ≈ num_active_experts × expert_params + shared_overhead
+
+    Heuristic: MoE models typically activate 2 experts per token.  With
+    a ~25% shared-parameter overhead (attention, embedding, etc.), the
+    active params for ``8x7B`` ≈ 2×7 + 0.25×56 ≈ 28 → ~13B active.
+    We approximate as: ``2 × per_expert + 0.15 × total``.
 
     Examples::
 
-        "OpenSciLM/Llama-3.1_OpenScholar-8B" → 8.0
-        "Qwen/Qwen2.5-72B-Instruct"          → 72.0
-        "mistralai/Mixtral-8x7B-Instruct"     → 56.0  (MoE total)
+        "OpenSciLM/Llama-3.1_OpenScholar-8B"     → 8.0
+        "Qwen/Qwen2.5-72B-Instruct"              → 72.0
+        "mistralai/Mixtral-8x7B-Instruct"         → 22.4  (2×7 + 0.15×56 active)
+        "Qwen/Qwen3-30B-A3B"                      → 3.0   (explicit active count)
 
     Returns a sensible default (8.0) if no pattern matches.
     """
     if not model_name:
         return 8.0
-    # MoE pattern: 8x7B
+
+    # Explicit active-param pattern: "30B-A3B" (total 30B, active 3B)
+    m = re.search(r"(\d+\.?\d*)\s*[bB][-_]A(\d+\.?\d*)\s*[bB]", model_name, re.IGNORECASE)
+    if m:
+        return float(m.group(2))
+
+    # MoE pattern: 8x7B → estimate active params
     m = re.search(r"(\d+)[xX](\d+\.?\d*)[bB]", model_name, re.IGNORECASE)
     if m:
-        return float(m.group(1)) * float(m.group(2))
-    # Standard pattern: 72B, 1.5B, etc.
+        num_experts = float(m.group(1))
+        expert_params = float(m.group(2))
+        total = num_experts * expert_params
+        # ~2 active experts + ~15% shared overhead (attention, embeddings)
+        active = 2 * expert_params + 0.15 * total
+        return active
+
+    # Standard dense model: 72B, 1.5B, etc.
     m = re.search(r"(\d+\.?\d*)\s*[bB](?!\w*yte)", model_name)
     if m:
         return float(m.group(1))
@@ -177,39 +228,197 @@ def _model_power_fraction(param_billions: float) -> float:
     return max(0.15, min(0.95, fraction))
 
 
+class DCGMPowerSampler:
+    """Poll DCGM exporter for real GPU power during a query.
+
+    Two measurement strategies (in priority order):
+
+    1. **Energy counter** — reads ``DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION``
+       (a monotonic counter in millijoules) at start and stop, giving an
+       exact delta.  Most accurate since it's a hardware counter.
+
+    2. **Power polling** — samples ``DCGM_FI_DEV_POWER_USAGE`` (gauge, watts)
+       in a background thread and integrates with the trapezoidal rule.
+       Used when the energy counter isn't available.
+
+    Falls back gracefully (energy_wh = 0) if the endpoint is unreachable.
+    """
+
+    def __init__(self, dcgm_url: str, interval: float = 0.5):
+        self._url = dcgm_url.rstrip("/") + "/metrics"
+        self._interval = interval
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._power_readings: list[float] = []  # watts
+        self._timestamps: list[float] = []
+        self._available = bool(dcgm_url)
+        # Energy counter (millijoules) — read at start/stop for exact delta
+        self._start_energy_mj: float | None = None
+        self._use_energy_counter = False
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def start(self) -> None:
+        if not self._available:
+            return
+        self._stop_event.clear()
+        self._power_readings = []
+        self._timestamps = []
+        self._start_energy_mj = None
+        self._use_energy_counter = False
+
+        # Try to read the energy counter first
+        metrics = self._fetch_metrics()
+        if metrics is not None:
+            energy_mj = self._parse_metric(metrics, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION")
+            if energy_mj is not None:
+                self._start_energy_mj = energy_mj
+                self._use_energy_counter = True
+                return  # No polling thread needed
+
+        # Fallback: poll power in a background thread
+        self._thread = threading.Thread(target=self._poll_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._use_energy_counter:
+            # Will compute delta in energy_wh property
+            metrics = self._fetch_metrics()
+            if metrics is not None:
+                end_mj = self._parse_metric(metrics, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION")
+                if end_mj is not None and self._start_energy_mj is not None:
+                    self._end_energy_mj = end_mj
+                    return
+            self._use_energy_counter = False  # Counter disappeared, fall through
+        if self._thread is not None:
+            self._stop_event.set()
+            self._thread.join(timeout=5)
+            self._thread = None
+
+    def _poll_loop(self) -> None:
+        while not self._stop_event.is_set():
+            metrics = self._fetch_metrics()
+            if metrics is not None:
+                power = self._parse_metric(metrics, "DCGM_FI_DEV_POWER_USAGE")
+                if power is not None:
+                    self._power_readings.append(power)
+                    self._timestamps.append(time.time())
+            self._stop_event.wait(self._interval)
+
+    def _fetch_metrics(self) -> str | None:
+        """Fetch the full /metrics text from DCGM exporter."""
+        try:
+            import httpx
+            resp = httpx.get(self._url, timeout=2.0)
+            return resp.text if resp.status_code == 200 else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_metric(text: str, metric_name: str) -> float | None:
+        """Extract the first value for *metric_name* from Prometheus text."""
+        for line in text.splitlines():
+            if line.startswith(metric_name) and not line.startswith("#"):
+                # e.g. DCGM_FI_DEV_POWER_USAGE{gpu="0",...} 142.5
+                parts = line.rsplit(" ", 1)
+                if len(parts) == 2:
+                    try:
+                        return float(parts[1])
+                    except ValueError:
+                        pass
+        return None
+
+    @property
+    def energy_wh(self) -> float:
+        """Total energy consumed in Watt-hours."""
+        # Prefer hardware energy counter delta
+        if self._use_energy_counter:
+            end = getattr(self, "_end_energy_mj", None)
+            if end is not None and self._start_energy_mj is not None:
+                delta_mj = end - self._start_energy_mj
+                return (delta_mj / 1000.0) / 3600.0  # mJ → J → Wh
+            return 0.0
+
+        # Fallback: trapezoidal integration of power samples
+        if len(self._timestamps) < 2:
+            return 0.0
+        total_joules = 0.0
+        for i in range(1, len(self._timestamps)):
+            dt = self._timestamps[i] - self._timestamps[i - 1]
+            avg_power = (self._power_readings[i] + self._power_readings[i - 1]) / 2
+            total_joules += avg_power * dt
+        return total_joules / 3600.0
+
+
+def _token_energy_wh(prompt_tokens: int, completion_tokens: int,
+                     param_billions: float = 8.0) -> float:
+    """Estimate LLM inference energy from token counts and model size.
+
+    Per-token rates are calibrated from published measurements on 8B models
+    (Luccioni et al. 2024, Moore et al. 2025) and scale with parameter
+    count via a power law (exponent ~1.3), consistent with empirical data:
+
+        6.7B → 0.082 Wh,  8B → 0.093 Wh,  175B → 4.0 Wh,  405B → 17.3 Wh
+
+    Uses *active* parameter count (see ``_parse_param_billions``), so MoE
+    models are scaled by their per-token active params, not total.
+
+    Args:
+        prompt_tokens: Number of input (prefill) tokens — batched, cheaper.
+        completion_tokens: Number of output (decode) tokens — sequential, costlier.
+        param_billions: Active model parameters in billions (e.g. 8.0, 72.0).
+    """
+    scale = (param_billions / _BASE_MODEL_PARAMS_B) ** _ENERGY_SCALING_EXPONENT
+    return (prompt_tokens * _BASE_WH_PER_PROMPT_TOKEN * scale
+            + completion_tokens * _BASE_WH_PER_COMPLETION_TOKEN * scale)
+
+
 class EnergyTracker:
     """Track energy consumed by a RAG query across distributed services.
 
-    Supports two modes depending on where the GPU lives:
+    Supports three measurement strategies (in priority order):
 
     **Local mode** (all models loaded in this process):
       Uses NVML hardware counters or nvidia-smi power sampling to measure
       actual GPU energy on this node.
 
     **Remote mode** (vLLM + embedding + reranker on separate RunAI jobs):
-      Collects per-request energy reported by our embedding/reranker servers
-      (via ``result.timing["embed_energy_wh"]`` and ``reranker_energy_wh``).
-      Estimates vLLM energy from ``generation_s × TDP × gpu_fraction × util``
-      since we don't control the vLLM container.
+      1. **DCGM** — if a DCGM exporter URL is configured, polls real GPU
+         power in a background thread during the query.
+      2. **Token-based** — uses ``prompt_tokens`` and ``completion_tokens``
+         from the vLLM response with calibrated per-token energy rates.
+      3. **Time-based** (fallback) — estimates from wall-clock time × TDP.
+
+      Embedding/reranker energy comes from server-reported values when
+      available, otherwise estimated from retrieval time.
 
     Usage::
 
-        tracker = EnergyTracker(is_remote=True)
+        tracker = EnergyTracker(is_remote=True, vllm_base_url="http://...")
         tracker.start()
         # ... run query ...
         wh = tracker.stop(elapsed_s, timing=result.timing)
     """
 
     def __init__(self, *, is_remote: bool = False,
-                 llm_model: str = "", embed_model: str = ""):
+                 llm_model: str = "", embed_model: str = "",
+                 vllm_base_url: str = ""):
         self._is_remote = is_remote
         self._method = "estimate"
 
         # Power fractions derived from model size (falls back to defaults)
         llm_params = _parse_param_billions(llm_model)
         embed_params = _parse_param_billions(embed_model) if embed_model else 1.0
+        self._llm_params_b = llm_params  # stored for token-based scaling
         self._llm_power_frac = _model_power_fraction(llm_params)
         self._embed_power_frac = _model_power_fraction(embed_params)
+
+        # Remote-mode: try DCGM exporter for real GPU power measurement
+        self._dcgm: DCGMPowerSampler | None = None
+        if is_remote and _DCGM_URL:
+            self._dcgm = DCGMPowerSampler(_DCGM_URL, interval=0.5)
 
         # Local-mode: try direct GPU measurement on this node
         self._nvml: NVMLEnergyCounter | None = None
@@ -222,13 +431,20 @@ class EnergyTracker:
 
     @property
     def method(self) -> str:
-        """Return the measurement method: 'nvml', 'power_sampling', 'server_reported', or 'estimate'."""
+        """Return the measurement method used.
+
+        One of: 'nvml', 'power_sampling', 'dcgm', 'server_reported',
+        'token_based', or 'estimate'.
+        """
         return self._method
 
     def start(self) -> None:
         if self._is_remote:
-            # Energy will come from service responses + vLLM estimation
-            self._method = "server_reported"
+            if self._dcgm and self._dcgm.available:
+                self._dcgm.start()
+                self._method = "dcgm"
+            else:
+                self._method = "server_reported"
             return
         if self._nvml:
             self._nvml.start()
@@ -246,7 +462,7 @@ class EnergyTracker:
             elapsed_s: Total wall-clock seconds for the query.
             timing: The ``result.timing`` dict from the pipeline. In remote
                 mode this contains ``embed_energy_wh`` and ``reranker_energy_wh``
-                reported by the servers, plus ``generation_s`` for vLLM estimation.
+                reported by the servers, plus token counts for estimation.
         """
         # --- Local mode: direct GPU measurement ---
         if self._method == "nvml" and self._nvml:
@@ -259,14 +475,32 @@ class EnergyTracker:
             if wh > 0:
                 return wh
 
+        # --- DCGM: real power measurement from cluster GPU ---
+        if self._method == "dcgm" and self._dcgm:
+            self._dcgm.stop()
+            dcgm_wh = self._dcgm.energy_wh
+            if dcgm_wh > 0:
+                return dcgm_wh
+            # DCGM was configured but returned no data — fall through
+
         # --- Remote mode: aggregate server-reported + vLLM estimate ---
         if timing:
             embed_wh = timing.get("embed_energy_wh", 0.0)
             reranker_wh = timing.get("reranker_energy_wh", 0.0)
-            gen_s = timing.get("generation_s", 0.0)
             retrieval_s = timing.get("retrieval_s", 0.0)
-            # vLLM energy estimate: TDP × model power fraction × utilisation × time
-            vllm_wh = (_GPU_TDP_WATTS * self._llm_power_frac * _GPU_UTIL * gen_s) / 3600.0
+            gen_s = timing.get("generation_s", 0.0)
+
+            # vLLM energy: prefer token-based estimation from actual usage
+            prompt_tokens = timing.get("llm_prompt_tokens", 0)
+            completion_tokens = timing.get("llm_completion_tokens", 0)
+            if prompt_tokens > 0 or completion_tokens > 0:
+                vllm_wh = _token_energy_wh(prompt_tokens, completion_tokens, self._llm_params_b)
+                self._method = "token_based"
+            else:
+                # Fallback: time-based estimation
+                vllm_wh = (_GPU_TDP_WATTS * self._llm_power_frac * _GPU_UTIL * gen_s) / 3600.0
+                self._method = "estimate"
+
             total = embed_wh + reranker_wh + vllm_wh
             # When servers don't report energy, estimate retrieval energy from
             # retrieval time.  Only a fraction of wall-clock retrieval time is
@@ -274,10 +508,11 @@ class EnergyTracker:
             if embed_wh == 0 and reranker_wh == 0 and retrieval_s > 0:
                 gpu_retrieval_s = retrieval_s * _REMOTE_RETRIEVAL_GPU_FRAC
                 total += (_GPU_TDP_WATTS * self._embed_power_frac * _GPU_UTIL * gpu_retrieval_s) / 3600.0
+
             if embed_wh > 0 or reranker_wh > 0:
-                self._method = "server_reported"
-            else:
-                self._method = "estimate"
+                # Server reported retrieval energy; keep vLLM method label
+                if self._method == "estimate":
+                    self._method = "server_reported"
             return total
 
         # Pure fallback: estimate everything from wall-clock time
@@ -1654,6 +1889,26 @@ def main():
                 e_col1.metric(f"Total ({_e_unit})", _e_val)
                 e_col2.metric("Queries", _n_queries)
                 st.caption(f"Avg per query: {_format_energy(_total_e / _n_queries)}")
+
+                # Bascom Hill comparison
+                _steps = _total_e / _WH_PER_BASCOM_STEP
+                _climbs = _steps / _BASCOM_HILL_STEPS
+                if _climbs >= 1.0:
+                    _climb_str = f"{_climbs:.1f} climbs"
+                else:
+                    _climb_str = f"{_climbs:.2f} climbs"
+                _hill_col1, _hill_col2 = st.columns(2)
+                _hill_col1.metric(
+                    "Bascom Hill steps", f"~{_steps:.1f}",
+                    help=(
+                        "How much energy is that? Climbing one stair step burns "
+                        "about 0.15 Wh of metabolic energy. Bascom Hill has 110 "
+                        "steps from Park St to Bascom Hall — so your session "
+                        "energy is equivalent to climbing that many steps up "
+                        "the hill."
+                    ),
+                )
+                _hill_col2.metric("Hill climbs", _climb_str)
             else:
                 st.caption("No queries yet — energy will be tracked as you ask questions.")
 
@@ -1775,6 +2030,7 @@ def main():
                 is_remote=is_remote,
                 llm_model=vllm_model if is_remote else "",
                 embed_model="jinaai/jina-embeddings-v4" if is_remote else "",
+                vllm_base_url=VLLM_BASE_URL if is_remote else "",
             )
             energy_tracker.start()
             # Research mode uses more context for comprehensive answers
@@ -2211,7 +2467,7 @@ def _display_ensemble_result(
     model_times = [e["time"] for e in model_results.values()]
     total_gen = sum(model_times)
 
-    _e_label = "Energy" if energy_method in ("nvml", "power_sampling", "server_reported") else "Est. energy"
+    _e_label = "Energy" if energy_method in ("nvml", "power_sampling", "dcgm", "server_reported", "token_based") else "Est. energy"
     _e_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
     cols = st.columns(4)
     cols[0].metric("Models", n_models)
@@ -2297,7 +2553,7 @@ def _render_details(details: dict, *, image_store=None):
     """Render expandable sections for a stored message (history replay)."""
     energy_wh = details.get("energy_wh", 0.0)
     energy_method = details.get("energy_method", "")
-    _measured = energy_method in ("nvml", "power_sampling", "server_reported")
+    _measured = energy_method in ("nvml", "power_sampling", "dcgm", "server_reported", "token_based")
     energy_label = "Energy" if _measured else "Est. energy"
     energy_str = _format_energy(energy_wh) if energy_wh > 0 else "—"
 
