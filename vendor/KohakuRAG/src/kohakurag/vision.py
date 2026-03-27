@@ -21,7 +21,14 @@ except ImportError:
 try:
     import torch
     from PIL import Image
-    from transformers import AutoModelForVision2Seq, AutoProcessor
+    from transformers import AutoProcessor
+
+    # AutoModelForImageTextToText is the recommended class in transformers v5+.
+    # Fall back to AutoModelForVision2Seq for older versions.
+    try:
+        from transformers import AutoModelForImageTextToText as _VisionAutoModel
+    except ImportError:
+        from transformers import AutoModelForVision2Seq as _VisionAutoModel
 
     HF_VISION_AVAILABLE = True
 except ImportError:
@@ -636,7 +643,7 @@ class HuggingFaceLocalVisionModel(VisionModel):
             load_kwargs["torch_dtype"] = torch.float16
 
         print(f"[vision] Loading model weights ({dtype})...", flush=True)
-        self._model = AutoModelForVision2Seq.from_pretrained(
+        self._model = _VisionAutoModel.from_pretrained(
             self._model_id,
             **load_kwargs,
         )
