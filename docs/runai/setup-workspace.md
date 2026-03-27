@@ -19,12 +19,18 @@ documents) or to debug issues.
 
 ## What this workspace does NOT do
 
-- **Does not download models.** All model weights (Qwen, Jina V4, etc.)
-  must already exist on the shared models PVC at `/models/`. The workspace
-  sets `HF_HUB_OFFLINE=1` to enforce this — if a model is missing, you
-  get a clear error instead of a surprise multi-GB download.
+- **Does not download large model weights.** All model weights (Qwen LLM,
+  Jina V4, Qwen2.5-VL, etc.) must already exist on the shared models PVC
+  at `/models/`. The workspace starts with `HF_HUB_OFFLINE=1` — if a
+  model is missing, you get a clear error instead of a surprise multi-GB
+  download. During the index build, `HF_HUB_OFFLINE` is temporarily
+  unset to allow the VLM processor to write small metadata files (tokenizer
+  configs, etc.) to the writable cache overlay — actual model weights still
+  come from the shared PVC.
 - **Does not serve anything in production.** The three production services
-  are deployed separately as Inference workloads (steps 2-4).
+  are deployed separately as Inference workloads (steps 2-4). The VLM
+  (Qwen2.5-VL-7B) is loaded only during figure extraction, not hosted
+  as a long-running endpoint.
 
 To add or update models on the shared PVC, use the `update-shared-models`
 workspace instead — see
@@ -145,11 +151,16 @@ nvidia-smi --query-gpu=index,name,memory.total,memory.free \
 # Confirm model weights are on the shared PVC
 ls /models/.cache/huggingface/ | grep models--
 # Should list: models--jinaai--jina-embeddings-v4,
-#              models--Qwen--Qwen2.5-7B-Instruct, etc.
+#              models--Qwen--Qwen2.5-7B-Instruct,
+#              models--Qwen--Qwen2.5-VL-7B-Instruct (if using VLM verification), etc.
 
 # Verify Jina V4 has adapters (required for embedding)
 ls /models/.cache/huggingface/models--jinaai--jina-embeddings-v4/snapshots/*/adapters/
 # Should list: adapter_config.json, adapter_model.safetensors
+
+# Verify VLM weights (only needed if using vlm_verify=True)
+ls /models/.cache/huggingface/models--Qwen--Qwen2.5-VL-7B-Instruct/snapshots/*/config.json 2>/dev/null \
+    && echo "VLM weights: OK" || echo "VLM weights: MISSING (optional — needed for figure verification)"
 
 # Verify HF_HUB_OFFLINE is set (prevents accidental downloads)
 [ "$HF_HUB_OFFLINE" = "1" ] && echo "OK: offline mode" || echo "WARNING: HF_HUB_OFFLINE not set!"
@@ -240,10 +251,26 @@ The index build writes directly to the PPVC so all workloads can access
 it without copies. We symlink `data/embeddings/` into the PPVC mount so
 the build scripts' relative paths still work.
 
-The build has two phases: (1) text embeddings from parsed PDFs, and
-(2) multimodal image embeddings from rendered PDF pages. JinaV4 embeds
-images directly into the same vector space as text — no vision LLM or
-API key required.
+The build has three phases: (1) text embeddings from parsed PDFs,
+(2) figure extraction with optional VLM verification, and
+(3) multimodal image embeddings from extracted figures. JinaV4 embeds
+images directly into the same vector space as text.
+
+#### VLM figure verification (optional but recommended)
+
+During figure extraction (`wattbot_store_images.py`), you can enable
+VLM-based verification to filter out non-figures (logos, equations,
+decorative elements) and generate rich descriptions. This uses a local
+Qwen2.5-VL-7B model loaded from the shared PVC — no API endpoint needed.
+
+**To enable:** set `vlm_verify = True` and `vlm_provider = "hf_local"`
+in the index config, or pass them as overrides. The VLM model is loaded
+once, processes all figures, and is unloaded when the script finishes.
+
+> **Note:** VLM verification requires `Qwen/Qwen2.5-VL-7B-Instruct` on
+> the shared models PVC. See [Setup Shared Models](setup-shared-models.md)
+> step 3. It also requires temporarily unsetting `HF_HUB_OFFLINE` so
+> the VLM processor can write metadata to the writable cache overlay.
 
 ```bash
 cd /home/jovyan/work/KohakuRAG_UI
@@ -259,6 +286,11 @@ ln -s /wattbot-data/embeddings data/embeddings
 ln -s /wattbot-data/corpus     data/corpus
 ln -s /wattbot-data/pdfs       data/pdfs
 
+# Allow HF to write metadata during VLM loading (model weights still come
+# from the shared PVC — this only lets the processor cache tokenizer configs
+# and small metadata files to /tmp).
+export HF_HUB_OFFLINE=0
+
 # Check if index already exists on the PPVC
 if [ -f /wattbot-data/embeddings/wattbot_jinav4.db ]; then
     echo "Index already exists: $(du -h /wattbot-data/embeddings/wattbot_jinav4.db | cut -f1)"
@@ -269,13 +301,23 @@ else
     # Phase 1: Text index (fetch PDFs, parse to JSON, embed sentences)
     kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 
-    # Phase 2: Image index (render PDF pages, embed with JinaV4)
-    kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
+    # Phase 2: Figure extraction with VLM verification
+    # The VLM loads Qwen2.5-VL-7B from /models/, verifies each crop is a
+    # real figure, and generates rich descriptions for better retrieval.
+    # To skip VLM verification, remove the vlm_verify/vlm_provider overrides.
+    kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py \
+        --set vlm_verify=True \
+        --set vlm_provider=hf_local
+
+    # Phase 3: Rebuild text index (picks up new figure nodes) + image index
     kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
     kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
 
     cd ../..
 fi
+
+# Re-enable offline mode for safety
+export HF_HUB_OFFLINE=1
 
 # Verify the index was created
 ls -lh /wattbot-data/embeddings/wattbot_jinav4.db
@@ -417,15 +459,25 @@ ln -s /wattbot-data/embeddings data/embeddings
 ln -s /wattbot-data/corpus     data/corpus
 ln -s /wattbot-data/pdfs       data/pdfs
 
+# Allow HF to write metadata during VLM loading
+export HF_HUB_OFFLINE=0
+
 # Build text index (downloads PDFs, parses to JSON, creates embeddings)
 cd vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 
-# Build multimodal image index (renders PDF pages, embeds with JinaV4)
-kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py
+# Extract figures with VLM verification (optional: remove --set flags to skip VLM)
+kogine run scripts/wattbot_store_images.py --config configs/jinav4/index.py \
+    --set vlm_verify=True \
+    --set vlm_provider=hf_local
+
+# Rebuild text index (picks up figure nodes) + build image index
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 kogine run scripts/wattbot_build_image_index.py --config configs/jinav4/image_index.py
 cd ../..
+
+# Re-enable offline mode
+export HF_HUB_OFFLINE=1
 
 # Verify
 echo "PDFs:    $(ls /wattbot-data/pdfs/*.pdf 2>/dev/null | wc -l)"

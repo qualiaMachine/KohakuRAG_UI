@@ -73,8 +73,11 @@ margin_pt = 10  # Points of padding around the crop region
 
 # VLM verification settings
 vlm_verify = False  # Set True to enable VLM-based verification of extracted crops
-vlm_model = "qwen/qwen3-vl-235b-a22b-instruct"
-vlm_max_concurrent = 5
+vlm_provider = "openrouter"  # "openrouter" (API) or "hf_local" (load from HuggingFace)
+vlm_model = "qwen/qwen3-vl-235b-a22b-instruct"  # OpenRouter model ID
+vlm_local_model = "Qwen/Qwen2.5-VL-7B-Instruct"  # HuggingFace model ID (for hf_local)
+vlm_local_dtype = "bf16"  # "bf16", "fp16", "4bit" (for hf_local)
+vlm_max_concurrent = 5  # API concurrency (openrouter) or GPU concurrency (hf_local, recommend 1)
 
 # Caption pattern for "Figure N" / "Fig. N" / "Table N" labels
 _CAPTION_RE = re.compile(
@@ -535,16 +538,29 @@ async def main() -> None:
     # Initialize VLM for verification if enabled
     vision_model = None
     if vlm_verify:
-        try:
-            from kohakurag.vision import OpenAIVisionModel
-            vision_model = OpenAIVisionModel(
-                model=vlm_model,
-                max_concurrent=vlm_max_concurrent,
-            )
-            print("VLM verification: ENABLED")
-        except (ImportError, ValueError) as e:
-            print(f"WARNING: VLM verification requested but unavailable: {e}")
-            print("Falling back to heuristic-only extraction.")
+        if vlm_provider == "hf_local":
+            try:
+                from kohakurag.vision import HuggingFaceLocalVisionModel
+                vision_model = HuggingFaceLocalVisionModel(
+                    model=vlm_local_model,
+                    dtype=vlm_local_dtype,
+                    max_concurrent=vlm_max_concurrent,
+                )
+                print(f"VLM verification: ENABLED (local: {vlm_local_model})")
+            except (ImportError, ValueError) as e:
+                print(f"WARNING: Local VLM requested but unavailable: {e}")
+                print("Falling back to heuristic-only extraction.")
+        else:
+            try:
+                from kohakurag.vision import OpenAIVisionModel
+                vision_model = OpenAIVisionModel(
+                    model=vlm_model,
+                    max_concurrent=vlm_max_concurrent,
+                )
+                print(f"VLM verification: ENABLED (API: {vlm_model})")
+            except (ImportError, ValueError) as e:
+                print(f"WARNING: VLM API requested but unavailable: {e}")
+                print("Falling back to heuristic-only extraction.")
 
     print("=" * 60)
     print("KohakuRAG — Extract & Store PDF Figures")
@@ -554,7 +570,11 @@ async def main() -> None:
     print(f"Database:   {db_path}")
     print(f"Resolution: {dpi} DPI (max {max_figure_dim}px)")
     print(f"Format:     {image_format} (quality={jpeg_quality})")
-    print(f"VLM verify: {'ON (' + vlm_model + ')' if vision_model else 'OFF'}")
+    if vision_model:
+        model_name = vlm_local_model if vlm_provider == "hf_local" else vlm_model
+        print(f"VLM verify: ON ({vlm_provider}: {model_name})")
+    else:
+        print(f"VLM verify: OFF")
     print("=" * 60)
 
     t0 = time.time()
