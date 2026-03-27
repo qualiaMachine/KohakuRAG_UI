@@ -1497,6 +1497,173 @@ class RAGPipeline:
 
         return "".join(result_parts)
 
+    async def verify_claim_attribution(
+        self,
+        result: StructuredAnswerResult,
+        attribution_prompt: str,
+    ) -> StructuredAnswerResult:
+        """Verify that cited statements are actually supported by their sources.
+
+        OpenScholar-style claim-evidence checking (Section 2.2 step 3):
+        for each sentence with a citation, verify the cited source actually
+        supports the claim.  Unsupported claims are flagged with a
+        ``[citation not verified]`` marker so the reader knows to check.
+
+        This runs in **both** research and standard modes.
+
+        Args:
+            result: Answer result with citations already inserted.
+            attribution_prompt: Prompt template with {claims_and_sources}
+                placeholder for batch verification.
+
+        Returns:
+            Updated result with unsupported citations flagged/removed.
+        """
+        explanation = result.answer.explanation or ""
+        if not explanation:
+            return result
+
+        # Build a map: citation label → best matching snippet text
+        label_to_snippet: dict[str, str] = {}
+        rid_to_label: dict[str, str] = {}
+        for s in result.retrieval.snippets[:15]:
+            doc_id = (s.metadata or {}).get("document_id", "unknown")
+            label = humanize_ref_id(doc_id)
+            rid_to_label[doc_id] = label
+            # Keep the longest snippet per label for best coverage
+            existing = label_to_snippet.get(label, "")
+            if len(s.text) > len(existing):
+                label_to_snippet[label] = s.text[:500]
+            # Also store by raw ref_id
+            if len(s.text) > len(label_to_snippet.get(doc_id, "")):
+                label_to_snippet[doc_id] = s.text[:500]
+
+        if not label_to_snippet:
+            return result
+
+        # Extract sentences that have citations
+        sentences = re.split(r'(?<=[.!?])\s+', explanation)
+        claims_to_check: list[dict[str, str]] = []
+        for sent in sentences:
+            sent = sent.strip()
+            if len(sent) < 40:
+                continue
+            # Find all citations in this sentence (both formats)
+            raw_cites = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", sent)
+            human_cites = re.findall(r"\[([A-Z][a-z]+ et al\., \d{4}(?:\s*\[S2\])?)\]", sent)
+            all_cites = raw_cites + human_cites
+            if not all_cites:
+                continue
+
+            # Get source text for each citation
+            for cite in all_cites:
+                source_text = label_to_snippet.get(cite, "")
+                if not source_text:
+                    # Try matching label to raw id
+                    for rid, lbl in rid_to_label.items():
+                        if lbl == cite:
+                            source_text = label_to_snippet.get(rid, "")
+                            break
+                if source_text:
+                    claims_to_check.append({
+                        "sentence": re.sub(r"\[[^\]]+\]", "", sent).strip(),
+                        "citation": cite,
+                        "source": source_text[:400],
+                    })
+
+        if not claims_to_check:
+            return result
+
+        # Limit to avoid context overflow — check up to 15 claims
+        claims_to_check = claims_to_check[:15]
+
+        # Build the batch verification prompt
+        claims_text_parts: list[str] = []
+        for i, c in enumerate(claims_to_check, 1):
+            claims_text_parts.append(
+                f"Claim {i}: {c['sentence']}\n"
+                f"Citation: [{c['citation']}]\n"
+                f"Source passage: {c['source']}"
+            )
+        claims_block = "\n---\n".join(claims_text_parts)
+
+        prompt = attribution_prompt.format(claims_and_sources=claims_block)
+
+        t0 = _time.time()
+        raw = await self._chat.complete(prompt)
+        t_verify = _time.time() - t0
+
+        # Parse the LLM response — expect JSON list of verdicts
+        unsupported_claims: set[str] = set()
+        try:
+            start = raw.index("[")
+            end = raw.rindex("]") + 1
+            verdicts = json.loads(raw[start:end])
+            for v in verdicts:
+                if isinstance(v, dict):
+                    supported = v.get("supported", True)
+                    claim_num = v.get("claim", 0)
+                    if not supported and 1 <= claim_num <= len(claims_to_check):
+                        # Store the citation to flag
+                        unsupported_claims.add(claims_to_check[claim_num - 1]["citation"])
+        except Exception:
+            # If parsing fails, don't modify anything — conservative approach
+            logger.debug("Claim attribution parsing failed, skipping")
+            return result
+
+        if not unsupported_claims:
+            # All claims verified — no changes needed
+            updated_timing = dict(result.timing)
+            updated_timing["attribution_verify_s"] = t_verify
+            updated_timing["claims_checked"] = len(claims_to_check)
+            updated_timing["claims_unsupported"] = 0
+            return StructuredAnswerResult(
+                answer=result.answer,
+                retrieval=result.retrieval,
+                raw_response=result.raw_response,
+                prompt=result.prompt,
+                timing=updated_timing,
+            )
+
+        # Flag unsupported citations by removing them from the text
+        # (rather than keeping misleading citations).
+        flagged_explanation = explanation
+        for cite in unsupported_claims:
+            # Remove the unsupported citation brackets
+            flagged_explanation = flagged_explanation.replace(
+                f"[{cite}]", ""
+            )
+        # Clean up any double spaces from removed citations
+        flagged_explanation = re.sub(r"  +", " ", flagged_explanation)
+
+        updated_answer = StructuredAnswer(
+            answer=result.answer.answer,
+            answer_value=result.answer.answer_value,
+            ref_id=[
+                rid for rid in (result.answer.ref_id if isinstance(result.answer.ref_id, list)
+                                else [result.answer.ref_id] if result.answer.ref_id else [])
+                if rid not in unsupported_claims and rid_to_label.get(rid, "") not in unsupported_claims
+            ],
+            explanation=flagged_explanation,
+            ref_url=result.answer.ref_url,
+            supporting_materials=result.answer.supporting_materials,
+        )
+
+        updated_timing = dict(result.timing)
+        updated_timing["generation_s"] = updated_timing.get("generation_s", 0) + t_verify
+        updated_timing["total_s"] = updated_timing.get("total_s", 0) + t_verify
+        updated_timing["attribution_verify_s"] = t_verify
+        updated_timing["claims_checked"] = len(claims_to_check)
+        updated_timing["claims_unsupported"] = len(unsupported_claims)
+
+        return StructuredAnswerResult(
+            answer=updated_answer,
+            retrieval=result.retrieval,
+            raw_response=result.raw_response,
+            prompt=result.prompt,
+            timing=updated_timing,
+        )
+
     async def run_qa(
         self,
         question: str,

@@ -581,6 +581,36 @@ Return ONLY the rewritten explanation with [Author et al., Year] citations inser
 inline after every factual sentence. Do not wrap in JSON or add any other text.
 """.strip()
 
+# ---------------------------------------------------------------------------
+# Claim-attribution verification prompt (OpenScholar Section 2.2 step 3)
+# Checks whether cited statements are actually supported by their sources.
+# Applied in BOTH research and standard modes.
+# ---------------------------------------------------------------------------
+ATTRIBUTION_VERIFY_PROMPT = """
+You are a scientific claim attribution verifier. For each claim-citation pair below, \
+determine whether the cited source passage ACTUALLY SUPPORTS the claim made in the sentence.
+
+A claim is "supported" if the source passage contains information that directly backs \
+the factual statement. A claim is "unsupported" if:
+- The source says something different from the claim
+- The source does not mention the topic at all
+- The numbers/statistics in the claim do not match the source
+- The claim extrapolates or inverts findings from the source
+
+Claims to verify:
+{claims_and_sources}
+
+Return a JSON array with one object per claim:
+[
+  {{"claim": 1, "supported": true, "reason": "source confirms the energy figure"}},
+  {{"claim": 2, "supported": false, "reason": "source mentions 500W not 300W"}}
+]
+
+Be STRICT: if the source does not clearly support the specific claim, mark it unsupported. \
+Only mark "supported": true when the source genuinely backs the statement.
+
+JSON:
+""".strip()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1187,6 +1217,21 @@ def run_single_query(
             loop.close()
     except Exception as e:
         _debug(f"Citation verification skipped: {e}")
+
+    # Claim-attribution verification (OpenScholar Section 2.2 step 3):
+    # Check that each cited statement is actually supported by its source.
+    # Runs in BOTH research and standard modes — removes unsupported citations
+    # rather than leaving misleading attributions.
+    try:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                pipeline.verify_claim_attribution(result, ATTRIBUTION_VERIFY_PROMPT)
+            )
+        finally:
+            loop.close()
+    except Exception as e:
+        _debug(f"Claim attribution verification skipped: {e}")
 
     return result
 
