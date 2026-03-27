@@ -107,6 +107,39 @@ Rules:
 - If it's a table, list the column headers and key data points
 """
 
+# VLM page-level detection prompt — finds all figures and returns bounding boxes
+_VLM_DETECT_PROMPT = """\
+This is a full page from a scientific PDF rendered as an image. Identify ALL figures, \
+charts, plots, diagrams, and tables on this page.
+
+For each figure/table found, return a tight bounding box that includes the figure \
+content AND its caption, but excludes surrounding body text, page headers/footers, \
+and page numbers.
+
+Respond ONLY with valid JSON matching this schema:
+
+{
+  "figures": [
+    {
+      "bbox": [x_min, y_min, x_max, y_max],
+      "figure_type": "chart"|"diagram"|"table"|"photo"|"screenshot"|"other",
+      "label": "Figure 1" or "Table 2" or "" if no label visible,
+      "caption": "the full caption text if visible",
+      "description": "2-3 sentence description of what this figure shows"
+    }
+  ]
+}
+
+IMPORTANT:
+- bbox coordinates are NORMALIZED to [0, 1] range (0,0 = top-left, 1,1 = bottom-right)
+- Include the caption in the bbox (usually below the figure, or above for tables)
+- Do NOT include surrounding body text paragraphs in the bbox
+- Do NOT include page headers, footers, or page numbers
+- Do NOT include logos, icons, decorative elements, equations, or author photos
+- If no figures/tables exist on this page, return {"figures": []}
+- Be precise with bounding boxes — tight crops around actual content
+"""
+
 
 async def _vlm_verify_figure(
     image_bytes: bytes,
@@ -181,6 +214,146 @@ async def _vlm_verify_batch(
         verified.append(fig)
 
     return verified
+
+
+def _render_full_page(page) -> tuple[bytes, int, int]:
+    """Render a full PDF page as JPEG bytes for VLM detection.
+
+    Returns (image_bytes, width, height).
+    """
+    zoom = dpi / 72.0
+    mat = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+
+    w, h = pix.width, pix.height
+    # Cap at max dimension
+    if max(w, h) > max_figure_dim:
+        scale = max_figure_dim / max(w, h)
+        adjusted_zoom = zoom * scale
+        mat = fitz.Matrix(adjusted_zoom, adjusted_zoom)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        w, h = pix.width, pix.height
+
+    img_bytes = pix.tobytes(output="jpeg", jpg_quality=jpeg_quality)
+    return img_bytes, w, h
+
+
+async def _vlm_detect_page_figures(
+    page_image_bytes: bytes,
+    page_width: int,
+    page_height: int,
+    vision_model,
+) -> list[dict]:
+    """Use a VLM to detect all figures on a page and return bounding boxes.
+
+    Returns list of dicts: {bbox_norm, figure_type, label, caption, description}
+    where bbox_norm is [x_min, y_min, x_max, y_max] in normalized [0,1] coords.
+    """
+    try:
+        raw = await vision_model.caption(
+            page_image_bytes,
+            prompt=_VLM_DETECT_PROMPT,
+            max_tokens=2000,
+        )
+        # Strip markdown code fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+
+        result = json.loads(raw)
+        figures = result.get("figures", [])
+
+        # Validate and clean each figure entry
+        valid = []
+        for fig in figures:
+            bbox = fig.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            # Ensure coords are in [0, 1]
+            x_min, y_min, x_max, y_max = [float(v) for v in bbox]
+
+            # Handle coords > 1 (VLM returned pixel coords instead of normalized)
+            if x_max > 1.0 or y_max > 1.0:
+                x_min = x_min / page_width
+                y_min = y_min / page_height
+                x_max = x_max / page_width
+                y_max = y_max / page_height
+
+            x_min = max(0.0, min(1.0, x_min))
+            y_min = max(0.0, min(1.0, y_min))
+            x_max = max(0.0, min(1.0, x_max))
+            y_max = max(0.0, min(1.0, y_max))
+
+            # Sanity: box must have some area
+            if x_max - x_min < 0.02 or y_max - y_min < 0.02:
+                continue
+
+            valid.append({
+                "bbox_norm": [x_min, y_min, x_max, y_max],
+                "figure_type": fig.get("figure_type", ""),
+                "label": fig.get("label", ""),
+                "caption": (fig.get("caption", "") or "")[:300],
+                "description": fig.get("description", "") or "",
+            })
+
+        return valid
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"    VLM page detection failed: {e}")
+        return []
+
+
+async def extract_figures_vlm(pdf_path: Path, doc_id: str, vision_model) -> list[dict]:
+    """Extract figures using VLM page-level detection.
+
+    Renders each page, sends to VLM to get bounding boxes, then crops
+    each detected figure tightly. No heuristic fallback — the VLM is the
+    sole figure detector.
+
+    Returns list of dicts matching extract_figures() format.
+    """
+    doc = fitz.open(str(pdf_path))
+    all_figures = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        page_rect = page.rect
+
+        # Render full page for VLM
+        page_bytes, pw, ph = _render_full_page(page)
+
+        # Ask VLM to find figures with bounding boxes
+        detections = await _vlm_detect_page_figures(page_bytes, pw, ph, vision_model)
+
+        for fig_idx, det in enumerate(detections):
+            x_min, y_min, x_max, y_max = det["bbox_norm"]
+
+            # Convert normalized coords to page points (PDF coordinate space)
+            crop_rect = fitz.Rect(
+                page_rect.x0 + x_min * page_rect.width,
+                page_rect.y0 + y_min * page_rect.height,
+                page_rect.x0 + x_max * page_rect.width,
+                page_rect.y0 + y_max * page_rect.height,
+            )
+
+            # Render the cropped region
+            img_bytes, w, h = _render_crop(page, crop_rect)
+
+            all_figures.append({
+                "page_num": page_num + 1,
+                "fig_idx": fig_idx,
+                "image_bytes": img_bytes,
+                "width": w,
+                "height": h,
+                "caption": det["caption"],
+                "fig_label": det["label"],
+                "vlm_verified": True,
+                "figure_type": det["figure_type"],
+                "vlm_description": det["description"],
+            })
+
+    doc.close()
+    return all_figures
 
 
 def _find_figure_regions(page) -> list[dict]:
@@ -388,7 +561,6 @@ async def process_document(
         "doc_id": doc_id,
         "figures_found": 0,
         "figures_stored": 0,
-        "vlm_rejected": 0,
         "errors": 0,
     }
 
@@ -399,21 +571,17 @@ async def process_document(
         return stats
 
     try:
-        figures = extract_figures(pdf_path, doc_id)
+        # Choose extraction strategy: VLM page-level detection or heuristic
+        if vision_model is not None:
+            # VLM detects figures directly from full page renders — tighter crops,
+            # no separate verify step needed
+            figures = await extract_figures_vlm(pdf_path, doc_id, vision_model)
+        else:
+            figures = extract_figures(pdf_path, doc_id)
         stats["figures_found"] = len(figures)
 
         if not figures:
             print("no figures found")
-            return stats
-
-        # VLM verification pass — filter out non-figures, enrich captions
-        if vision_model is not None:
-            before_count = len(figures)
-            figures = await _vlm_verify_batch(figures, vision_model)
-            stats["vlm_rejected"] = before_count - len(figures)
-
-        if not figures:
-            print(f"0 figures after VLM verification ({stats['vlm_rejected']} rejected)")
             return stats
 
         # Open image store
@@ -508,10 +676,9 @@ async def process_document(
 
         found = stats["figures_found"]
         stored = stats["figures_stored"]
-        rejected = stats["vlm_rejected"]
         size_mb = sum(len(f["image_bytes"]) for f in figures) / 1024 / 1024
-        vlm_info = f", {rejected} VLM-rejected" if rejected else ""
-        print(f"{stored}/{found} figures ({size_mb:.1f} MB{vlm_info})")
+        vlm_tag = " [VLM]" if vision_model is not None else ""
+        print(f"{stored}/{found} figures ({size_mb:.1f} MB){vlm_tag}")
 
     except Exception as e:
         print(f"ERROR: {e}")
@@ -593,7 +760,6 @@ async def main() -> None:
 
     total_found = sum(r["figures_found"] for r in results)
     total_stored = sum(r["figures_stored"] for r in results)
-    total_rejected = sum(r["vlm_rejected"] for r in results)
     total_errors = sum(r["errors"] for r in results)
     elapsed = time.time() - t0
 
@@ -601,8 +767,6 @@ async def main() -> None:
     print(f"Done in {elapsed:.1f}s")
     print(f"Figures found:   {total_found}")
     print(f"Figures stored:  {total_stored}")
-    if total_rejected:
-        print(f"VLM rejected:    {total_rejected}")
     print(f"Errors:          {total_errors}")
     print(f"{'=' * 60}")
 
