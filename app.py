@@ -337,21 +337,24 @@ If a metric does not map to any comparison above, omit the parenthetical.
 # ---------------------------------------------------------------------------
 # Prompts (shared with run_experiment.py)
 # ---------------------------------------------------------------------------
-SYSTEM_PROMPT = """
+SYSTEM_PROMPT = ("""
 You must answer strictly based on the provided context snippets.
 Do NOT use external knowledge or assumptions.
 If the context does not clearly support an answer, you must output the literal string "is_blank" for both answer_value and ref_id.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
-IMPORTANT: When you use information from a context snippet, you MUST cite its ref_id in your explanation AND include it in the ref_id list. Never give an answer without citing the source.
-""".strip()
+IMPORTANT: When you use information from a context snippet, you MUST cite it using the cite_as label from the context header in [Author et al., Year] format (e.g., [Luccioni et al., 2025]). Do NOT use raw ref_ids or numeric citations like [1]. Include every cited ref_id in the ref_id list. Never give an answer without citing the source.
 
-SYSTEM_PROMPT_BEST_GUESS = """
+""" + METRIC_COMPARISONS).strip()
+
+SYSTEM_PROMPT_BEST_GUESS = ("""
 You must answer based on the provided context snippets.
 If the context strongly supports an answer, answer normally.
 If the context only partially or weakly supports an answer, still provide your best guess but set confidence to "low".
 Set confidence to "high" when the context clearly and directly answers the question.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
-""".strip()
+IMPORTANT: Cite sources using the cite_as label from the context header in [Author et al., Year] format (e.g., [Luccioni et al., 2025]). Do NOT use raw ref_ids or numeric citations like [1].
+
+""" + METRIC_COMPARISONS).strip()
 
 SYSTEM_PROMPT_RESEARCH = ("""
 You are a scientific research assistant specializing in AI's environmental impact. \
@@ -377,7 +380,7 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use the cite_as labels from context headers for citations.
+- Cite ALL relevant sources, not just one. Use [Author et al., Year] format from the cite_as labels in context headers. Do NOT use raw ref_ids or numeric citations like [1], [2].
 
 Question: {question}
 
@@ -385,7 +388,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources using cite_as labels in brackets, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - ref_id               (list of ALL document ids (ref_id values) from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
@@ -402,7 +405,7 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use the cite_as labels from context headers for citations.
+- Cite ALL relevant sources, not just one. Use [Author et al., Year] format from the cite_as labels in context headers. Do NOT use raw ref_ids or numeric citations like [1], [2].
 
 Question: {question}
 
@@ -410,7 +413,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources using cite_as labels in brackets, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions".)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
@@ -1851,6 +1854,7 @@ def main():
                 _display_single_result(
                     result, elapsed, pipeline=pipeline,
                     energy_wh=query_energy_wh, energy_method=energy_tracker.method,
+                    chat_settings=_build_chat_settings_dict(locals()),
                 )
 
             else:  # Ensemble (local mode only)
@@ -1902,6 +1906,7 @@ def main():
                 _display_ensemble_result(
                     agg, model_results, elapsed, ensemble_strategy,
                     energy_wh=query_energy_wh, energy_method=energy_tracker.method,
+                    chat_settings=_build_chat_settings_dict(locals()),
                 )
 
 
@@ -2126,9 +2131,50 @@ def _display_retrieved_images(image_nodes, image_store=None):
                     st.caption(f"{img['short_label']}: (image not available)")
 
 
+def _build_chat_settings_dict(local_vars: dict) -> dict:
+    """Extract chat settings from the caller's local variables for display."""
+    keys = [
+        "top_k", "effective_top_k", "best_guess", "research_mode",
+        "max_tokens_override", "max_retries", "enable_semantic_scholar",
+        "s2_top_k", "enable_query_planner", "planner_max_queries",
+        "enable_cross_encoder", "with_images", "send_images_to_llm",
+        "mode", "ensemble_strategy", "vllm_model", "precision",
+    ]
+    return {k: local_vars[k] for k in keys if k in local_vars}
+
+
+def _render_chat_settings(settings: dict):
+    """Render chat settings as a small caption below the answer."""
+    if not settings:
+        return
+    parts = []
+    if settings.get("research_mode"):
+        parts.append("research")
+    elif settings.get("best_guess"):
+        parts.append("best-guess")
+    else:
+        parts.append("strict")
+    top_k = settings.get("effective_top_k") or settings.get("top_k")
+    if top_k:
+        parts.append(f"top_k={top_k}")
+    if settings.get("max_tokens_override"):
+        parts.append(f"max_tokens={settings['max_tokens_override']}")
+    if settings.get("enable_semantic_scholar"):
+        parts.append(f"S2(k={settings.get('s2_top_k', '?')})")
+    if settings.get("enable_query_planner"):
+        parts.append(f"query_exp(n={settings.get('planner_max_queries', '?')})")
+    if settings.get("enable_cross_encoder"):
+        parts.append("reranker")
+    model = settings.get("vllm_model") or settings.get("mode")
+    if model:
+        parts.append(f"model={model}")
+    st.caption(f"Settings: {' · '.join(parts)}")
+
+
 def _display_single_result(
     result, elapsed: float, *, pipeline: RAGPipeline | None = None,
     energy_wh: float = 0.0, energy_method: str = "",
+    chat_settings: dict | None = None,
 ):
     """Display a single-model answer."""
     answer = result.answer
@@ -2219,6 +2265,7 @@ def _display_single_result(
         "raw_response": result.raw_response,
         "image_nodes": image_details,
         "s2_snippet_count": s2_snippet_count,
+        "chat_settings": chat_settings,
     }
     image_store = getattr(pipeline, "_image_store", None) if pipeline else None
     _render_details(details, image_store=image_store)
@@ -2237,6 +2284,7 @@ def _display_single_result(
 def _display_ensemble_result(
     agg: dict, model_results: dict, elapsed: float, strategy: str,
     energy_wh: float = 0.0, energy_method: str = "",
+    chat_settings: dict | None = None,
 ):
     """Display aggregated ensemble answer + per-model breakdown."""
     linked_explanation = _linkify_citations(
@@ -2324,6 +2372,7 @@ def _display_ensemble_result(
         "answer": agg["answer"],
         "answer_value": agg["answer_value"],
         "image_nodes": image_details,
+        "chat_settings": chat_settings,
     }
     if total_cost is not None:
         details["total_cost"] = total_cost
@@ -2365,6 +2414,7 @@ def _render_details(details: dict, *, image_store=None):
         image_details = details.get("image_nodes", [])
         if image_details:
             _display_retrieved_images(image_details[:5], image_store)
+        _render_chat_settings(details.get("chat_settings", {}))
         return
 
     timing = details.get("timing", {})
@@ -2442,6 +2492,9 @@ def _render_details(details: dict, *, image_store=None):
     image_details = details.get("image_nodes", [])
     if image_details:
         _display_retrieved_images(image_details[:5], image_store)
+
+    # Chat settings footer for easy log review
+    _render_chat_settings(details.get("chat_settings", {}))
 
     # Raw LLM response available in debug logs (removed from UI for cleanliness)
 
