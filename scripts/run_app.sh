@@ -30,19 +30,17 @@ if [ ! -f "$DB_PATH" ]; then
     exit 1
 fi
 
-echo "Starting WattBot RAG on 0.0.0.0:$PORT"
+CLUSTER_HOST="${CLUSTER_HOST:-deepthought.doit.wisc.edu}"
+
 echo ""
-echo "Access the app:"
-echo "  - Inside the pod:   http://localhost:$PORT"
-echo ""
-echo "  - Via jupyter-server-proxy (recommended):"
-echo "    https://deepthought.doit.wisc.edu/doit-ai-eval/<WORKSPACE-NAME>/proxy/$PORT/"
-echo "    Replace <WORKSPACE-NAME> with your Run:ai workspace name."
-echo "    Requires jupyter-server-proxy in the system Python (see docs/Streamlit_App_Guide.md)."
-echo ""
-echo "  - Via kubectl port-forward:"
-echo "    kubectl port-forward <pod-name> $PORT:$PORT"
-echo "    then open http://localhost:$PORT"
+echo "============================================================"
+if [[ -n "${STREAMLIT_BASE_PATH:-}" ]]; then
+    echo "  App URL: https://${CLUSTER_HOST}${STREAMLIT_BASE_PATH}/"
+else
+    echo "  App URL: http://localhost:$PORT"
+    echo "  (Set STREAMLIT_BASE_PATH for the full proxy URL)"
+fi
+echo "============================================================"
 echo ""
 
 exec streamlit run app.py \
