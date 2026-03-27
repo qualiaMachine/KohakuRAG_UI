@@ -272,10 +272,11 @@ def _list_vllm_endpoints() -> list[dict]:
     """
     endpoints: list[dict] = []
 
-    # Primary endpoint
+    # Primary endpoint — use detected model name instead of "default"
     primary_model = _detect_vllm_model(VLLM_BASE_URL)
+    primary_name = primary_model if primary_model != "unknown" else "primary"
     endpoints.append({
-        "name": "default",
+        "name": primary_name,
         "url": VLLM_BASE_URL,
         "model": primary_model,
         "status": "online" if primary_model != "unknown" else "offline",
@@ -1417,8 +1418,11 @@ def main():
                 endpoint_labels = []
                 for e in endpoints:
                     status = "" if e["status"] == "online" else " [OFFLINE]"
-                    model_info = e["model"] if e["model"] != "unknown" else "?"
-                    endpoint_labels.append(f"{e['name']} ({model_info}){status}")
+                    # Avoid redundant "model (model)" when name is the model name
+                    if e["name"] == e["model"] or e["model"] == "unknown":
+                        endpoint_labels.append(f"{e['name']}{status}")
+                    else:
+                        endpoint_labels.append(f"{e['name']} ({e['model']}){status}")
                 selected_ep_idx = st.selectbox(
                     "vLLM endpoint", range(len(endpoint_labels)),
                     format_func=lambda i: endpoint_labels[i],
