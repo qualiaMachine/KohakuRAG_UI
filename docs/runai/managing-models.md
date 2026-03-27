@@ -93,7 +93,7 @@ python /models/provision_shared_models.py download <org>/<model-name>
 ## Swapping the LLM (e.g., Qwen 7B → Llama 3 8B)
 
 1. Make sure the new model is on the PVC (see above)
-2. In the RunAI UI, edit the `wattbot-chat` job's arguments: change `--model`
+2. In the RunAI UI, edit the `wattbot-chat` job's arguments: change the model name (first positional arg)
 3. Restart the job (the app auto-detects the model name from vLLM)
 4. Restart both jobs
 

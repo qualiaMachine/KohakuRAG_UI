@@ -45,13 +45,13 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 ## Runtime settings
 
 The `vllm/vllm-openai` image has a built-in entrypoint that launches the
-API server — you only need to pass `--model` as an argument. No command
-is required.
+API server — you only need to pass the model name as the first positional
+argument. No command is required.
 
 | Field | Value |
 |-------|-------|
 | **Command** | *(leave empty — image default launches the API server)* |
-| **Arguments** | `--model OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto` |
+| **Arguments** | `OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto` |
 | **Working directory** | *(leave empty)* |
 
 **Environment variables:**
@@ -134,8 +134,8 @@ replacement for Qwen 7B — same VRAM footprint (~16 GB bf16, ~6 GB 4-bit).
    ```bash
    python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
    ```
-2. Change the vLLM job's **Arguments** to:
-   `--model OpenSciLM/Llama-3.1_OpenScholar-8B`
+2. Change the vLLM job's **Arguments** (first positional arg) to:
+   `OpenSciLM/Llama-3.1_OpenScholar-8B`
 3. Change the Streamlit job's `VLLM_MODEL` env var to:
    `OpenSciLM/Llama-3.1_OpenScholar-8B`
 4. Restart both jobs
@@ -171,7 +171,7 @@ runai submit wattbot-chat \
   --env HF_HUB_CACHE=/models/.cache/huggingface \
   --env HF_HUB_OFFLINE=1 \
   --port 8000 \
-  -- --model OpenSciLM/Llama-3.1_OpenScholar-8B \
+  -- OpenSciLM/Llama-3.1_OpenScholar-8B \
     --quantization bitsandbytes \
     --load-format bitsandbytes \
     --dtype auto

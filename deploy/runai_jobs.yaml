@@ -36,7 +36,7 @@
 #   Image:           vllm/vllm-openai:latest (custom image)
 #   Container port:  8000
 #   Command:         (leave empty — image default)
-#   Arguments:       --model OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto
+#   Arguments:       OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto
 #   Env:             HF_HOME=/models/.cache/huggingface
 #                    HF_HUB_CACHE=/models/.cache/huggingface
 #                    HF_HUB_OFFLINE=1
@@ -57,7 +57,7 @@
 #     --env HF_HUB_CACHE=/models/.cache/huggingface \
 #     --env HF_HUB_OFFLINE=1 \
 #     --port 8000 \
-#     -- --model OpenSciLM/Llama-3.1_OpenScholar-8B \
+#     -- OpenSciLM/Llama-3.1_OpenScholar-8B \
 #       --quantization bitsandbytes \
 #       --load-format bitsandbytes \
 #       --dtype auto
@@ -71,7 +71,7 @@
 #   - 16GB: --quantization awq --max-model-len 4096
 #
 # ALTERNATIVE MODEL: OpenScholar 8B (scientific synthesis, Llama 3.1 8B fine-tune)
-#   Replace --model with: --model OpenSciLM/Llama-3.1_OpenScholar-8B
+#   Replace the model name (first positional arg) with: OpenSciLM/Llama-3.1_OpenScholar-8B
 #   Same VRAM requirements as Qwen 7B. Download first:
 #     python /models/provision_shared_models.py download OpenSciLM/Llama-3.1_OpenScholar-8B
 
