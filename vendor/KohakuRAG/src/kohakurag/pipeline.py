@@ -1774,8 +1774,17 @@ class RAGPipeline:
             flagged_explanation = flagged_explanation.replace(
                 f"[{cite}]", ""
             )
-        # Clean up any double spaces from removed citations
+        # Clean up broken text left by removed citations:
+        #   "According to , ..."  → "According to ..."
+        #   "According to  and [X]" → "According to [X]"
+        #   "rapidly ."  → "rapidly."
         flagged_explanation = re.sub(r"  +", " ", flagged_explanation)
+        flagged_explanation = re.sub(r"(?i)\baccording to\s+and\b", "According to", flagged_explanation)
+        flagged_explanation = re.sub(r"(?i)\baccording to\s*,", "According to", flagged_explanation)
+        flagged_explanation = re.sub(r"\s+\.", ".", flagged_explanation)
+        flagged_explanation = re.sub(r"\s+,", ",", flagged_explanation)
+        flagged_explanation = re.sub(r",\s*and\s*,", ",", flagged_explanation)
+        flagged_explanation = re.sub(r"\band\s*\.", ".", flagged_explanation)
 
         updated_answer = StructuredAnswer(
             answer=result.answer.answer,

@@ -2582,8 +2582,8 @@ def _linkify_citations(
         if url:
             return f"[{label}]({url})"
         if label != inner:
-            # No URL but we can humanize — check if it's already humanized
-            return f"({label})"
+            # No URL but we can humanize — keep in brackets (not parens)
+            return f"[{label}]"
 
         # Case 2: already-humanized "Author et al., Year" — resolve via reverse map
         rid = humanized_to_rid.get(inner)
@@ -2591,7 +2591,7 @@ def _linkify_citations(
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
             if url:
                 return f"[{inner}]({url})"
-            return f"({inner})"
+            return f"[{inner}]"
 
         return match.group(0)
 
