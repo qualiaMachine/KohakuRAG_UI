@@ -2555,6 +2555,13 @@ def _linkify_citations(
     if not text:
         return text
 
+    # --- Pre-normalise common LLM citation quirks ---
+    # Fix "et al ." → "et al." (OpenScholar-8B adds a space before the period)
+    text = text.replace("et al .", "et al.")
+    # Strip stray tags the LLM injects next to citations: [S2], [L1], etc.
+    # These are NOT real ref_ids — they're shorthand labels the LLM invents.
+    text = re.sub(r"\s*\[(?:S2|L\d+)\]", "", text)
+
     # Build URL map from verified sources only (snippet metadata, NOT LLM ref_urls)
     answer_urls: dict[str, str] = {}
     if snippet_urls:
@@ -2572,6 +2579,10 @@ def _linkify_citations(
         label = _humanize_ref_id(rid)
         if label != rid and label not in humanized_to_rid:
             humanized_to_rid[label] = rid
+            # Also map without [S2] suffix so S2 citations match
+            bare = label.removesuffix(" [S2]")
+            if bare != label and bare not in humanized_to_rid:
+                humanized_to_rid[bare] = rid
 
     def _replace_bracket(match: re.Match) -> str:
         inner = match.group(1)
