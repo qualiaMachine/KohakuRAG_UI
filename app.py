@@ -818,7 +818,6 @@ Return STRICT JSON with the following keys, in this order:
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - ref_id               (list of ALL document ids (ref_id values) from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
-- ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
 JSON Answer:
@@ -844,7 +843,6 @@ Return STRICT JSON with the following keys, in this order:
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
 - ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
-- ref_url              (list of URLs for the cited documents; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
 JSON Answer:
@@ -892,7 +890,6 @@ Return STRICT JSON with the following keys:
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
 - ref_id               (list of ALL document ref_ids cited in your answer, e.g. ["luccioni2025c", "islam2025"])
-- ref_url              (list of URLs for cited documents, or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -970,7 +967,6 @@ Return STRICT JSON with the following keys:
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
 - ref_id               (list of ALL document ref_ids cited in your answer)
-- ref_url              (list of URLs for cited documents, or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -1787,7 +1783,6 @@ def build_ensemble_answer(
     values = []
     explanations = []
     ref_lists = []
-    ref_url_lists = []
 
     for name, entry in model_results.items():
         ans = entry["result"].answer
@@ -1795,7 +1790,6 @@ def build_ensemble_answer(
         values.append(ans.answer_value)
         explanations.append(ans.explanation)
         ref_lists.append(ans.ref_id)
-        ref_url_lists.append(ans.ref_url)
 
     agg_fn = aggregate_majority if strategy == "majority" else aggregate_first_non_blank
 
@@ -1805,14 +1799,12 @@ def build_ensemble_answer(
 
     # Scope refs to runs that agree with the winning answer
     winning_refs = [r for a, r in zip(answers, ref_lists) if a == best_answer]
-    winning_ref_urls = [r for a, r in zip(answers, ref_url_lists) if a == best_answer]
 
     return {
         "answer": best_answer,
         "answer_value": best_value,
         "explanation": best_explanation,
         "ref_id": aggregate_refs(winning_refs),
-        "ref_url": aggregate_refs(winning_ref_urls),
         "individual": {
             name: {
                 "answer": entry["result"].answer.answer,
@@ -2359,7 +2351,6 @@ def main():
                 linked = _linkify_citations(
                     msg["content"],
                     ref_ids=details.get("ref_id"),
-                    ref_urls=details.get("ref_url"),
                     snippet_urls=details.get("snippet_urls"),
                 )
                 # Use regular markdown for long research-mode answers
@@ -2526,7 +2517,6 @@ def _clean_ref_ids(ref_ids) -> list[str]:
 def _linkify_citations(
     text: str,
     ref_ids=None,
-    ref_urls=None,
     snippet_urls: dict[str, str] | None = None,
 ) -> str:
     """Replace citation references in *text* with clickable markdown links.
@@ -2537,22 +2527,17 @@ def _linkify_citations(
 
     Converts raw ids to human-readable labels, inserts comma separators
     between adjacent citations, and looks up URLs from METADATA_URLS
-    (primary) and the answer's own ref_url list (fallback).
+    (primary) and snippet metadata (secondary).  LLM-provided ref_urls
+    are intentionally ignored to prevent hallucinated URLs.
     """
     if not text:
         return text
 
-    # Build fallback url map from the answer's own ref data + snippet URLs
+    # Build URL map from verified sources only (snippet metadata, NOT LLM ref_urls)
     answer_urls: dict[str, str] = {}
     if snippet_urls:
         answer_urls.update(snippet_urls)
     clean_ids = _clean_ref_ids(ref_ids)
-    urls = ref_urls if isinstance(ref_urls, list) else ([ref_urls] if ref_urls else [])
-    for i, rid in enumerate(clean_ids):
-        if not METADATA_URLS.get(rid) and not answer_urls.get(rid) and i < len(urls):
-            u = urls[i]
-            if u and u != "is_blank":
-                answer_urls[rid] = u
 
     # Build reverse map: "Luccioni et al., 2025" → first matching ref_id
     # so we can resolve parenthetical citations like (Luccioni et al., 2025)
@@ -2802,7 +2787,7 @@ def _display_single_result(
 
     # Linkify inline [ref_id] citations so they match the Sources section
     linked_explanation = _linkify_citations(
-        answer.explanation, ref_ids=answer.ref_id, ref_urls=answer.ref_url,
+        answer.explanation, ref_ids=answer.ref_id,
         snippet_urls=_snippet_urls,
     )
 
@@ -2865,7 +2850,6 @@ def _display_single_result(
         "energy_wh": energy_wh,
         "energy_method": energy_method,
         "ref_id": effective_ref_ids,
-        "ref_url": answer.ref_url,
         "snippet_urls": _snippet_urls,
         "supporting_materials": answer.supporting_materials,
         "snippets": [
@@ -2897,8 +2881,19 @@ def _display_ensemble_result(
     chat_settings: dict | None = None,
 ):
     """Display aggregated ensemble answer + per-model breakdown."""
+    # Build snippet URL map early so _linkify_citations can use it
+    _first = next(iter(model_results.values()))["result"]
+    _ensemble_snippet_urls: dict[str, str] = {}
+    for s in _first.retrieval.snippets:
+        meta = s.metadata or {}
+        doc_id = meta.get("document_id", "")
+        url = meta.get("url", "")
+        if doc_id and url and doc_id not in _ensemble_snippet_urls:
+            _ensemble_snippet_urls[doc_id] = url
+
     linked_explanation = _linkify_citations(
-        agg["explanation"], ref_ids=agg.get("ref_id"), ref_urls=agg.get("ref_url"),
+        agg["explanation"], ref_ids=agg.get("ref_id"),
+        snippet_urls=_ensemble_snippet_urls,
     )
 
     if linked_explanation and linked_explanation != "is_blank":
@@ -2939,21 +2934,20 @@ def _display_ensemble_result(
                 ))
             st.divider()
 
-    # Clickable reference links
+    # Clickable reference links (verified URLs only)
     if agg["ref_id"]:
         links = []
         for rid in agg["ref_id"]:
             url = METADATA_URLS.get(rid)
+            if not url:
+                url = _ensemble_snippet_urls.get(rid)
             label = _humanize_ref_id(rid)
             if url:
                 links.append(f"[{label}]({url})")
             else:
                 links.append(label)
         st.markdown("Sources: " + " · ".join(links))
-
-    # First model's retrieval context (shared across models since same embedder+store)
-    first_result = next(iter(model_results.values()))["result"]
-    snippets = first_result.retrieval.snippets
+    snippets = _first.retrieval.snippets
     if snippets:
         display_snippets = snippets[:5]
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
@@ -2965,7 +2959,7 @@ def _display_ensemble_result(
                 st.divider()
 
     # Show retrieved figures from first model's retrieval
-    image_nodes = first_result.retrieval.image_nodes
+    image_nodes = _first.retrieval.image_nodes
     _display_retrieved_images(image_nodes[:5] if image_nodes else None)
 
     # Raw responses available via debug logging (removed from UI for cleanliness)
@@ -3046,16 +3040,15 @@ def _render_details(details: dict, *, image_store=None):
         cols[3].metric(energy_label, energy_str)
 
     ref_ids = _clean_ref_ids(details.get("ref_id", []))
-    ref_urls = details.get("ref_url", [])
     snippet_urls = details.get("snippet_urls", {})  # URLs from S2 and other retrieved snippets
     if ref_ids:
         links = []
         for i, rid in enumerate(ref_ids if isinstance(ref_ids, list) else [ref_ids]):
+            # Only use verified URLs from metadata.csv or retrieved snippet metadata.
+            # Never use LLM-provided ref_url — it is prone to hallucination.
             url = METADATA_URLS.get(rid)
             if not url:
                 url = snippet_urls.get(rid)  # Try S2/snippet URLs
-            if not url:
-                url = ref_urls[i] if isinstance(ref_urls, list) and i < len(ref_urls) else None
             label = _humanize_ref_id(rid)
             if url and url != "is_blank":
                 links.append(f"[{label}]({url})")
