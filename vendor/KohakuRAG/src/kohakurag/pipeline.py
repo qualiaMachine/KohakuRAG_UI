@@ -1351,6 +1351,28 @@ class RAGPipeline:
             images_from_vision=initial_result.retrieval.images_from_vision,
         )
 
+        # Validate ref_ids: only keep those actually present in retrieved
+        # snippets (same check as structured_answer, but needed here because
+        # refinement rounds parse responses directly without that gate).
+        valid_doc_ids = {
+            (s.metadata or {}).get("document_id", "")
+            for s in all_snippets
+        }
+        valid_doc_ids.discard("")
+        if final_parsed.ref_id:
+            validated = [rid for rid in final_parsed.ref_id if rid in valid_doc_ids]
+            if len(validated) < len(final_parsed.ref_id):
+                dropped = set(final_parsed.ref_id) - set(validated)
+                logger.debug("Dropped hallucinated ref_ids from feedback result: %s", dropped)
+            final_parsed = StructuredAnswer(
+                answer=final_parsed.answer,
+                answer_value=final_parsed.answer_value,
+                ref_id=validated,
+                explanation=final_parsed.explanation,
+                ref_url=final_parsed.ref_url,
+                supporting_materials=final_parsed.supporting_materials,
+            )
+
         return StructuredAnswerResult(
             answer=final_parsed,
             retrieval=final_retrieval,
@@ -1774,8 +1796,17 @@ class RAGPipeline:
             flagged_explanation = flagged_explanation.replace(
                 f"[{cite}]", ""
             )
-        # Clean up any double spaces from removed citations
+        # Clean up broken text left by removed citations:
+        #   "According to , ..."  → "According to ..."
+        #   "According to  and [X]" → "According to [X]"
+        #   "rapidly ."  → "rapidly."
         flagged_explanation = re.sub(r"  +", " ", flagged_explanation)
+        flagged_explanation = re.sub(r"(?i)\baccording to\s+and\b", "According to", flagged_explanation)
+        flagged_explanation = re.sub(r"(?i)\baccording to\s*,", "According to", flagged_explanation)
+        flagged_explanation = re.sub(r"\s+\.", ".", flagged_explanation)
+        flagged_explanation = re.sub(r"\s+,", ",", flagged_explanation)
+        flagged_explanation = re.sub(r",\s*and\s*,", ",", flagged_explanation)
+        flagged_explanation = re.sub(r"\band\s*\.", ".", flagged_explanation)
 
         updated_answer = StructuredAnswer(
             answer=result.answer.answer,

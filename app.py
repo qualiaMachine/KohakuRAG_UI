@@ -2555,6 +2555,13 @@ def _linkify_citations(
     if not text:
         return text
 
+    # --- Pre-normalise common LLM citation quirks ---
+    # Fix "et al ." → "et al." (OpenScholar-8B adds a space before the period)
+    text = text.replace("et al .", "et al.")
+    # Strip stray tags the LLM injects next to citations: [S2], [L1], etc.
+    # These are NOT real ref_ids — they're shorthand labels the LLM invents.
+    text = re.sub(r"\s*\[(?:S2|L\d+)\]", "", text)
+
     # Build URL map from verified sources only (snippet metadata, NOT LLM ref_urls)
     answer_urls: dict[str, str] = {}
     if snippet_urls:
@@ -2572,6 +2579,10 @@ def _linkify_citations(
         label = _humanize_ref_id(rid)
         if label != rid and label not in humanized_to_rid:
             humanized_to_rid[label] = rid
+            # Also map without [S2] suffix so S2 citations match
+            bare = label.removesuffix(" [S2]")
+            if bare != label and bare not in humanized_to_rid:
+                humanized_to_rid[bare] = rid
 
     def _replace_bracket(match: re.Match) -> str:
         inner = match.group(1)
@@ -2582,8 +2593,8 @@ def _linkify_citations(
         if url:
             return f"[{label}]({url})"
         if label != inner:
-            # No URL but we can humanize — check if it's already humanized
-            return f"({label})"
+            # No URL but we can humanize — keep in brackets (not parens)
+            return f"[{label}]"
 
         # Case 2: already-humanized "Author et al., Year" — resolve via reverse map
         rid = humanized_to_rid.get(inner)
@@ -2591,7 +2602,7 @@ def _linkify_citations(
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
             if url:
                 return f"[{inner}]({url})"
-            return f"({inner})"
+            return f"[{inner}]"
 
         return match.group(0)
 
@@ -2955,19 +2966,18 @@ def _display_ensemble_result(
                 ))
             st.divider()
 
-    # Clickable reference links (verified URLs only)
+    # Clickable reference links (verified URLs only — skip sources without URLs)
     if agg["ref_id"]:
         links = []
         for rid in agg["ref_id"]:
             url = METADATA_URLS.get(rid)
             if not url:
                 url = _ensemble_snippet_urls.get(rid)
-            label = _humanize_ref_id(rid)
             if url:
+                label = _humanize_ref_id(rid)
                 links.append(f"[{label}]({url})")
-            else:
-                links.append(label)
-        st.markdown("Sources: " + " · ".join(links))
+        if links:
+            st.markdown("Sources: " + " · ".join(links))
     snippets = _first.retrieval.snippets
     if snippets:
         display_snippets = snippets[:5]
@@ -3073,9 +3083,9 @@ def _render_details(details: dict, *, image_store=None):
             label = _humanize_ref_id(rid)
             if url and url != "is_blank":
                 links.append(f"[{label}]({url})")
-            else:
-                links.append(label)
-        st.markdown("Sources: " + " · ".join(links))
+            # Skip sources without a verifiable URL — they can't be checked
+        if links:
+            st.markdown("Sources: " + " · ".join(links))
         sm = details.get("supporting_materials", "")
         if sm and sm != "is_blank":
             st.caption(f"Supporting: {sm}")
