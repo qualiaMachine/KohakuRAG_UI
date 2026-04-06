@@ -768,7 +768,7 @@ You must answer strictly based on the provided context snippets.
 Do NOT use external knowledge or assumptions.
 If the context does not clearly support an answer, you must output the literal string "is_blank" for both answer_value and ref_id.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
-IMPORTANT: When you use information from a context snippet, you MUST cite it using the cite_as label from the context header in [Author et al., Year] format (e.g., [Luccioni et al., 2025]). Do NOT use raw ref_ids or numeric citations like [1]. Include every cited ref_id in the ref_id list. Never give an answer without citing the source.
+IMPORTANT: When you use information from a context snippet, you MUST cite it using the exact cite_as label from the context header in square brackets (e.g., [Luccioni et al., 2025] or [AI Hardware Comparison, 2025]). Do NOT use raw ref_ids or numeric citations like [1]. Include every cited ref_id in the ref_id list. Never give an answer without citing the source.
 
 """ + METRIC_COMPARISONS).strip()
 
@@ -778,7 +778,7 @@ If the context strongly supports an answer, answer normally.
 If the context only partially or weakly supports an answer, still provide your best guess but set confidence to "low".
 Set confidence to "high" when the context clearly and directly answers the question.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
-IMPORTANT: Cite sources using the cite_as label from the context header in [Author et al., Year] format (e.g., [Luccioni et al., 2025]). Do NOT use raw ref_ids or numeric citations like [1].
+IMPORTANT: Cite sources using the exact cite_as label from the context header in square brackets (e.g., [Luccioni et al., 2025] or [AI Hardware Comparison, 2025]). Do NOT use raw ref_ids or numeric citations like [1].
 
 """ + METRIC_COMPARISONS).strip()
 
@@ -2483,12 +2483,18 @@ def _extract_confidence(raw_response: str) -> str:
 def _humanize_ref_id(rid: str) -> str:
     """Convert a ref_id like ``luccioni2025c`` to ``Luccioni et al., 2025``.
 
-    Expects the common ``<surname><4-digit-year>[suffix]`` pattern.
-    Handles ``s2_`` prefix for Semantic Scholar references.
-    Falls back to the raw id if the pattern doesn't match.
+    Handles several naming conventions:
+      * ``luccioni2025c``              → ``Luccioni et al., 2025c``
+      * ``s2_smith2024``               → ``Smith et al., 2024 [S2]``
+      * ``li2024_water``               → ``Li et al., 2024``
+      * ``ai_hardware_comparison_2025`` → ``AI Hardware Comparison, 2025``
+
+    Falls back to the raw id if no year can be extracted.
     """
     # Strip Semantic Scholar prefix for display
     display_rid = rid.removeprefix("s2_")
+
+    # Standard author-year: luccioni2025c or li2024_topic
     m = re.match(r"([a-zA-Z]+)(\d{4})([a-z]?)", display_rid)
     if m:
         author = m.group(1).capitalize()
@@ -2498,6 +2504,22 @@ def _humanize_ref_id(rid: str) -> str:
         if rid.startswith("s2_"):
             label += " [S2]"
         return label
+
+    # Underscore-separated descriptive ID with trailing year: some_name_2025
+    m = re.match(r"(.+?)_(\d{4})$", display_rid)
+    if m:
+        name_part = m.group(1).replace("_", " ").title()
+        # Fix common acronyms/brands that .title() lowercases
+        for wrong, right in (("Ai ", "AI "), ("Gpu", "GPU"), ("Tpu", "TPU"),
+                             ("Cpu", "CPU"), ("Amd", "AMD"), ("Llm", "LLM"),
+                             ("Nvidia", "NVIDIA")):
+            name_part = name_part.replace(wrong, right)
+        year = m.group(2)
+        label = f"{name_part}, {year}"
+        if rid.startswith("s2_"):
+            label += " [S2]"
+        return label
+
     return rid
 
 
@@ -2587,11 +2609,10 @@ def _linkify_citations(
     # Insert ", " between adjacent markdown links: ...](url)[... → ...](url), [...
     text = re.sub(r"\]\(([^)]+)\)\[", r"](\1), [", text)
 
-    # Match parenthetical citations: (Author et al., Year)
-    # Pattern: (Capitalized-word et al., 4-digit-year)
+    # Match parenthetical citations: (Author et al., Year) or (Title, Year)
     def _replace_paren(match: re.Match) -> str:
-        full = match.group(0)  # e.g. "(Luccioni et al., 2025)"
-        inner = match.group(1)  # e.g. "Luccioni et al., 2025"
+        full = match.group(0)
+        inner = match.group(1)
         rid = humanized_to_rid.get(inner)
         if rid:
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
@@ -2600,7 +2621,7 @@ def _linkify_citations(
         return full
 
     text = re.sub(
-        r"\(([A-Z][a-z]+ et al\., \d{4}[a-z]?)\)",
+        r"\(([A-Z][A-Za-z ]+(?:et al\.)?,? \d{4}[a-z]?)\)",
         _replace_paren,
         text,
     )
