@@ -142,10 +142,17 @@ class PromptTemplate:
 def humanize_ref_id(rid: str) -> str:
     """Convert ``luccioni2025c`` → ``Luccioni et al., 2025``.
 
-    Handles ``s2_`` prefix for Semantic Scholar references.
-    Falls back to the raw id if the pattern doesn't match.
+    Handles several naming conventions:
+      * ``luccioni2025c``              → ``Luccioni et al., 2025``
+      * ``s2_smith2024``               → ``Smith et al., 2024 [S2]``
+      * ``li2024_water``               → ``Li et al., 2024``
+      * ``ai_hardware_comparison_2025`` → ``AI Hardware Comparison, 2025``
+
+    Falls back to the raw id if no year can be extracted.
     """
     display_rid = rid.removeprefix("s2_")
+
+    # Standard author-year: luccioni2025c or li2024_topic
     m = re.match(r"([a-zA-Z]+)(\d{4})", display_rid)
     if m:
         author = m.group(1).capitalize()
@@ -154,17 +161,36 @@ def humanize_ref_id(rid: str) -> str:
         if rid.startswith("s2_"):
             label += " [S2]"
         return label
+
+    # Underscore-separated descriptive ID with trailing year: some_name_2025
+    m = re.match(r"(.+?)_(\d{4})$", display_rid)
+    if m:
+        name_part = m.group(1).replace("_", " ").title()
+        # Fix common acronyms/brands that .title() lowercases
+        for wrong, right in (("Ai ", "AI "), ("Gpu", "GPU"), ("Tpu", "TPU"),
+                             ("Cpu", "CPU"), ("Amd", "AMD"), ("Llm", "LLM"),
+                             ("Nvidia", "NVIDIA")):
+            name_part = name_part.replace(wrong, right)
+        year = m.group(2)
+        label = f"{name_part}, {year}"
+        if rid.startswith("s2_"):
+            label += " [S2]"
+        return label
+
     return rid
 
 
-# Regex matching either format of inline citation:
-#   [luccioni2025c]          — raw ref_id
-#   [Luccioni et al., 2025]  — humanized author-year
+# Regex matching any format of inline citation:
+#   [luccioni2025c]                  — raw ref_id
+#   [Luccioni et al., 2025]         — humanized author-year
+#   [AI Hardware Comparison, 2025]  — humanized descriptive title
 _RE_ANY_CITATION = re.compile(
     r"(?:"
     r"\[[a-z][a-z0-9_]+\d{4}"          # raw ref_id
     r"|"
     r"\[[A-Z][a-z]+ et al\., \d{4}"    # humanized Author et al., Year
+    r"|"
+    r"\[[A-Z][A-Za-z ]+, \d{4}"        # humanized Title, Year
     r")"
 )
 
@@ -1472,7 +1498,7 @@ class RAGPipeline:
         # Only add ref_ids that are actually in the retrieved snippets to
         # prevent hallucinated citations from leaking into the Sources list.
         raw_cited = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", rewritten)
-        humanized_cited = re.findall(r"\[([A-Z][a-z]+ et al\., \d{4}(?:\s*\[S2\])?)\]", rewritten)
+        humanized_cited = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?, \d{4}(?:\s*\[S2\])?)\]", rewritten)
         # Build reverse map from humanized → raw ref_id
         label_to_rid: dict[str, str] = {}
         valid_doc_ids: set[str] = set()
@@ -1665,7 +1691,7 @@ class RAGPipeline:
                 continue
             # Find all citations in this sentence (both formats)
             raw_cites = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", sent)
-            human_cites = re.findall(r"\[([A-Z][a-z]+ et al\., \d{4}(?:\s*\[S2\])?)\]", sent)
+            human_cites = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?, \d{4}(?:\s*\[S2\])?)\]", sent)
             all_cites = raw_cites + human_cites
             if not all_cites:
                 continue
