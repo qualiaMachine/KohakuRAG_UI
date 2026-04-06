@@ -1077,6 +1077,27 @@ class RAGPipeline:
         # Parse JSON structure
         parsed = self._parse_structured_response(raw)
 
+        # Validate ref_ids: only keep those actually present in retrieved snippets.
+        # LLMs sometimes hallucinate ref_ids that weren't in the context.
+        valid_doc_ids = {
+            (s.metadata or {}).get("document_id", "")
+            for s in retrieval.snippets
+        }
+        valid_doc_ids.discard("")
+        if parsed.ref_id:
+            validated = [rid for rid in parsed.ref_id if rid in valid_doc_ids]
+            if len(validated) < len(parsed.ref_id):
+                dropped = set(parsed.ref_id) - set(validated)
+                logger.debug("Dropped hallucinated ref_ids not in retrieval: %s", dropped)
+            parsed = StructuredAnswer(
+                answer=parsed.answer,
+                answer_value=parsed.answer_value,
+                ref_id=validated,
+                explanation=parsed.explanation,
+                ref_url=parsed.ref_url,
+                supporting_materials=parsed.supporting_materials,
+            )
+
         # Collect per-component energy reported by remote services
         embed_energy_wh = getattr(self._embedder, "last_energy_wh", 0.0)
         reranker_energy_wh = 0.0
@@ -1448,23 +1469,27 @@ class RAGPipeline:
         # Extract all citations from the final text and merge with the
         # original ref_id list so the Sources footer stays in sync.
         # Handle both raw [luccioni2025c] and humanized [Luccioni et al., 2025].
+        # Only add ref_ids that are actually in the retrieved snippets to
+        # prevent hallucinated citations from leaking into the Sources list.
         raw_cited = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", rewritten)
         humanized_cited = re.findall(r"\[([A-Z][a-z]+ et al\., \d{4}(?:\s*\[S2\])?)\]", rewritten)
         # Build reverse map from humanized → raw ref_id
         label_to_rid: dict[str, str] = {}
-        for s in result.retrieval.snippets[:10]:
+        valid_doc_ids: set[str] = set()
+        for s in result.retrieval.snippets:
             doc_id = (s.metadata or {}).get("document_id", "unknown")
             label_to_rid[humanize_ref_id(doc_id)] = doc_id
+            valid_doc_ids.add(doc_id)
         original_ids = result.answer.ref_id if isinstance(result.answer.ref_id, list) else (
             [result.answer.ref_id] if result.answer.ref_id else []
         )
         merged_ids: list[str] = list(original_ids)
         for rid in raw_cited:
-            if rid not in merged_ids:
+            if rid not in merged_ids and rid in valid_doc_ids:
                 merged_ids.append(rid)
         for label in humanized_cited:
             rid = label_to_rid.get(label, "")
-            if rid and rid not in merged_ids:
+            if rid and rid not in merged_ids and rid in valid_doc_ids:
                 merged_ids.append(rid)
 
         # Update the answer with the citation-enhanced explanation

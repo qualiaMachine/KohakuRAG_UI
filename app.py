@@ -2881,8 +2881,19 @@ def _display_ensemble_result(
     chat_settings: dict | None = None,
 ):
     """Display aggregated ensemble answer + per-model breakdown."""
+    # Build snippet URL map early so _linkify_citations can use it
+    _first = next(iter(model_results.values()))["result"]
+    _ensemble_snippet_urls: dict[str, str] = {}
+    for s in _first.retrieval.snippets:
+        meta = s.metadata or {}
+        doc_id = meta.get("document_id", "")
+        url = meta.get("url", "")
+        if doc_id and url and doc_id not in _ensemble_snippet_urls:
+            _ensemble_snippet_urls[doc_id] = url
+
     linked_explanation = _linkify_citations(
         agg["explanation"], ref_ids=agg.get("ref_id"),
+        snippet_urls=_ensemble_snippet_urls,
     )
 
     if linked_explanation and linked_explanation != "is_blank":
@@ -2923,21 +2934,20 @@ def _display_ensemble_result(
                 ))
             st.divider()
 
-    # Clickable reference links
+    # Clickable reference links (verified URLs only)
     if agg["ref_id"]:
         links = []
         for rid in agg["ref_id"]:
             url = METADATA_URLS.get(rid)
+            if not url:
+                url = _ensemble_snippet_urls.get(rid)
             label = _humanize_ref_id(rid)
             if url:
                 links.append(f"[{label}]({url})")
             else:
                 links.append(label)
         st.markdown("Sources: " + " · ".join(links))
-
-    # First model's retrieval context (shared across models since same embedder+store)
-    first_result = next(iter(model_results.values()))["result"]
-    snippets = first_result.retrieval.snippets
+    snippets = _first.retrieval.snippets
     if snippets:
         display_snippets = snippets[:5]
         label = f"Retrieved context ({len(display_snippets)} of {len(snippets)} chunks)"
@@ -2949,7 +2959,7 @@ def _display_ensemble_result(
                 st.divider()
 
     # Show retrieved figures from first model's retrieval
-    image_nodes = first_result.retrieval.image_nodes
+    image_nodes = _first.retrieval.image_nodes
     _display_retrieved_images(image_nodes[:5] if image_nodes else None)
 
     # Raw responses available via debug logging (removed from UI for cleanliness)
