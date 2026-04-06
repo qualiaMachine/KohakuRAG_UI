@@ -1,0 +1,36 @@
+# ============================================================================
+# OCR Streamlit UI — CPU only, connects to remote OCR server
+#
+# Build:
+#   docker build -f ocr_app/deploy/Dockerfile.ocr_ui -t vlm-ocr-ui .
+#
+# Run:
+#   docker run -p 8501:8501 \
+#     -e OCR_SERVICE_URL=http://ocr-server:8090 \
+#     vlm-ocr-ui
+# ============================================================================
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install UI dependencies (no torch/GPU libs)
+COPY ocr_app/requirements_ui.txt .
+RUN pip install --no-cache-dir -r requirements_ui.txt
+
+# Copy app code
+COPY ocr_app/app.py /app/app.py
+COPY ocr_app/pages/ /app/pages/
+
+# Default env vars
+ENV OCR_SERVICE_URL=http://localhost:8090
+ENV STREAMLIT_PORT=8501
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--server.enableCORS=false", \
+     "--server.enableXsrfProtection=false", \
+     "--browser.gatherUsageStats=false"]

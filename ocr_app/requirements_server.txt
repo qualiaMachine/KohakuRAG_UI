@@ -1,0 +1,29 @@
+# OCR Server — GPU dependencies
+# Install: pip install -r ocr_app/requirements_server.txt
+#
+# For CUDA 12.4 (PowerEdge / RunAI):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r ocr_app/requirements_server.txt
+
+# --- Core VLM ---
+transformers>=4.45.0
+accelerate>=0.34.0
+qwen-vl-utils>=0.0.8
+
+# --- Server ---
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+httpx>=0.27.0
+pydantic>=2.0
+
+# --- Image handling ---
+Pillow>=10.0.0
+pymupdf>=1.24.0
+
+# --- GPU ---
+# torch and torchvision should be installed separately for your CUDA version
+# See: https://pytorch.org/get-started/locally/
+
+# --- Optional: flash attention (2x faster on A100/H100) ---
+# pip install flash-attn --no-build-isolation
