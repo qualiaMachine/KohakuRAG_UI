@@ -2637,6 +2637,12 @@ def _linkify_citations(
         text,
     )
 
+    # Final cleanup: fix orphaned text from stripped/empty citations
+    text = re.sub(r"(?i)\baccording to\s*,", "According to the sources,", text)
+    text = re.sub(r"(?i)\baccording to\s+the\b\s+(?=[,.])", "According to the sources", text)
+    text = re.sub(r"\s+\.", ".", text)
+    text = re.sub(r"\s+,", ",", text)
+
     return text
 
 

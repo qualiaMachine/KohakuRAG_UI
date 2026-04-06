@@ -1500,13 +1500,29 @@ class RAGPipeline:
         except Exception:
             pass
 
+        # Detect prompt echo: if the LLM returned the prompt template
+        # instead of a rewritten explanation, reject it and fall back.
+        _PROMPT_ECHO_MARKERS = (
+            "Available sources",
+            "cite_as labels",
+            "citation verification",
+            "IMPORTANT RULES",
+            "Return ONLY the rewritten",
+            "Do NOT use numeric citations",
+        )
+        is_prompt_echo = any(marker in rewritten for marker in _PROMPT_ECHO_MARKERS)
+
+        # Length sanity: if the rewrite is >2x the original, the LLM likely
+        # dumped source text or prompt fragments into the answer.
+        is_bloated = len(rewritten) > 2 * len(clean_explanation) + 200
+
         # Strip any stray numeric citations from the rewritten text
         rewritten = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", rewritten)
 
-        # Validate: only use if it actually has citations now
-        if not _RE_ANY_CITATION.search(rewritten):
-            # LLM rewrite didn't produce proper citations.
-            # Fall through to heuristic sentence-level injection below.
+        # Validate: only use if it actually has citations, isn't a prompt echo,
+        # and isn't unreasonably bloated.
+        if is_prompt_echo or is_bloated or not _RE_ANY_CITATION.search(rewritten):
+            # LLM rewrite failed — fall back to original explanation.
             rewritten = clean_explanation
 
         # --- Sentence-level citation injection fallback ---
