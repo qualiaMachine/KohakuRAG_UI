@@ -2955,19 +2955,18 @@ def _display_ensemble_result(
                 ))
             st.divider()
 
-    # Clickable reference links (verified URLs only)
+    # Clickable reference links (verified URLs only — skip sources without URLs)
     if agg["ref_id"]:
         links = []
         for rid in agg["ref_id"]:
             url = METADATA_URLS.get(rid)
             if not url:
                 url = _ensemble_snippet_urls.get(rid)
-            label = _humanize_ref_id(rid)
             if url:
+                label = _humanize_ref_id(rid)
                 links.append(f"[{label}]({url})")
-            else:
-                links.append(label)
-        st.markdown("Sources: " + " · ".join(links))
+        if links:
+            st.markdown("Sources: " + " · ".join(links))
     snippets = _first.retrieval.snippets
     if snippets:
         display_snippets = snippets[:5]
@@ -3073,9 +3072,9 @@ def _render_details(details: dict, *, image_store=None):
             label = _humanize_ref_id(rid)
             if url and url != "is_blank":
                 links.append(f"[{label}]({url})")
-            else:
-                links.append(label)
-        st.markdown("Sources: " + " · ".join(links))
+            # Skip sources without a verifiable URL — they can't be checked
+        if links:
+            st.markdown("Sources: " + " · ".join(links))
         sm = details.get("supporting_materials", "")
         if sm and sm != "is_blank":
             st.caption(f"Supporting: {sm}")
