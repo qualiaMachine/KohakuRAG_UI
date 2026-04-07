@@ -806,7 +806,11 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use the Source labels from context headers in [brackets]. Do NOT use numeric citations like [1], [2].
+- EVERY sentence that states a fact, number, or claim MUST have an inline citation in [brackets] using the Source label from the context header. Do NOT write any factual claim without a citation.
+- Do NOT use numeric citations like [1], [2] — always use the Source labels.
+- If multiple sources support a claim, cite all of them.
+
+Example: "Training GPT-3 consumed approximately 1,287 MWh [Luccioni et al., 2025], while LLaMA-3 required ~2,700 MWh [Han et al., 2024]."
 
 Question: {question}
 
@@ -814,7 +818,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (1-3 sentences that directly answer the question with inline [Source label] citations on every factual claim. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
@@ -829,7 +833,11 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use the Source labels from context headers in [brackets]. Do NOT use numeric citations like [1], [2].
+- EVERY sentence that states a fact, number, or claim MUST have an inline citation in [brackets] using the Source label from the context header. Do NOT write any factual claim without a citation.
+- Do NOT use numeric citations like [1], [2] — always use the Source labels.
+- If multiple sources support a claim, cite all of them.
+
+Example: "Training GPT-3 consumed approximately 1,287 MWh [Luccioni et al., 2025], while LLaMA-3 required ~2,700 MWh [Han et al., 2024]."
 
 Question: {question}
 
@@ -837,7 +845,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (1-3 sentences that directly answer the question with inline [Source label] citations on every factual claim. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
@@ -854,11 +862,12 @@ Your task is to write a comprehensive, multi-paragraph answer that synthesizes i
 from the provided sources, similar to a literature review. Follow these rules:
 
 1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
-2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
-square brackets immediately after, using the Source label from the context header. \
+2. EVERY sentence that states a fact, number, or claim MUST end with an inline citation in \
+[square brackets] immediately before the period, using the Source label from the context header. \
 Example: "Training GPT-3 consumed approximately 1,287 MWh of energy [Luccioni et al., 2025]." \
-Do NOT write any factual claim without a citation.
-3. Do NOT use numeric citations like [1], [2], [5] — always use the Source labels.
+WRONG: "...1,287 MWh of energy Luccioni et al., 2025." (missing brackets!) \
+Do NOT write any factual claim without a [bracketed] citation.
+3. Do NOT use numeric citations like [1], [2], [5] — always use the Source labels in [brackets].
 4. Include specific numbers, statistics, and quantitative findings when available in context. \
 For key metrics, add a brief real-world comparison in parentheses so non-experts can grasp \
 the scale (e.g., "3,500 MWh (enough to power ~3,500 US homes for a month)").
@@ -1665,11 +1674,11 @@ def run_single_query(
     explanation = result.answer.explanation or ""
     explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", explanation)
 
-    # Extract inline citations from the explanation text.
-    # Match both [Author et al., Year] and bare Author et al., Year
-    bracket_cites = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?,? \d{4}[a-z]?)\]", explanation)
-    bare_cites = re.findall(r"(?<!\[)([A-Z][a-z]+ et al\.,? \d{4}[a-z]?)(?!\])", explanation)
-    all_cited_labels = list(dict.fromkeys(bracket_cites + bare_cites))  # dedupe, preserve order
+    # Extract inline [bracketed] citations from the explanation text.
+    # Only match proper [Author et al., Year] format — bare citations are
+    # the model's problem, not ours.
+    cited_labels = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?,? \d{4}[a-z]?)\]", explanation)
+    all_cited_labels = list(dict.fromkeys(cited_labels))  # dedupe, preserve order
 
     # Map cited labels back to document_ids via retrieval metadata
     cited_ref_ids: list[str] = []
@@ -2647,21 +2656,6 @@ def _linkify_citations(
     text = re.sub(
         r"__([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4}[a-z]?))__",
         r"[\1]",
-        text,
-    )
-
-    # Wrap bare citations (no brackets/parens) in brackets so they get linkified.
-    # Matches "Author et al., 2025" or "Author et al. 2025" not already in []()
-    # Only wrap if the label matches a known source to avoid false positives.
-    def _wrap_bare(match: re.Match) -> str:
-        label = match.group(0)
-        if label in humanized_to_rid:
-            return f"[{label}]"
-        return label
-
-    text = re.sub(
-        r"(?<!\[)([A-Z][a-z]+ et al\.,? \d{4}[a-z]?)(?!\]|\))",
-        _wrap_bare,
         text,
     )
 

@@ -1244,6 +1244,10 @@ class RAGPipeline:
         )
 
         # --- Step 2: Self-feedback loop ---
+        # Track cumulative token usage across all LLM calls
+        total_prompt_tokens = initial_result.timing.get("llm_prompt_tokens", 0)
+        total_completion_tokens = initial_result.timing.get("llm_completion_tokens", 0)
+
         feedback_log: list[dict] = []
         for round_num in range(max_feedback_rounds):
             _status(f"Generating self-feedback (round {round_num + 1}/{max_feedback_rounds})...")
@@ -1259,6 +1263,8 @@ class RAGPipeline:
                 feedback_input, system_prompt=system_prompt,
             )
             t_generation += _time.time() - t_fb_start
+            total_prompt_tokens += getattr(self._chat, "last_prompt_tokens", 0)
+            total_completion_tokens += getattr(self._chat, "last_completion_tokens", 0)
 
             # Parse feedback — expect JSON with "feedback" list and optional "retrieval_query"
             feedback_items: list[str] = []
@@ -1332,6 +1338,8 @@ class RAGPipeline:
                 refinement_input, system_prompt=system_prompt,
             )
             t_generation += _time.time() - t_ref_start
+            total_prompt_tokens += getattr(self._chat, "last_prompt_tokens", 0)
+            total_completion_tokens += getattr(self._chat, "last_completion_tokens", 0)
 
             # Parse the refined response
             refined_parsed = self._parse_structured_response(refined_raw)
@@ -1387,8 +1395,8 @@ class RAGPipeline:
                 "feedback_rounds": len(feedback_log),
                 "embed_energy_wh": initial_result.timing.get("embed_energy_wh", 0.0),
                 "reranker_energy_wh": initial_result.timing.get("reranker_energy_wh", 0.0),
-                "llm_prompt_tokens": getattr(self._chat, "last_prompt_tokens", 0),
-                "llm_completion_tokens": getattr(self._chat, "last_completion_tokens", 0),
+                "llm_prompt_tokens": total_prompt_tokens,
+                "llm_completion_tokens": total_completion_tokens,
             },
         )
 
