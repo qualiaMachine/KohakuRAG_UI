@@ -2742,17 +2742,14 @@ def _display_retrieved_images(image_nodes, image_store=None):
                     "", caption,
                 ).strip()
 
-            short_label = f"{doc_id} p.{page}"
-            if figure_type:
-                short_label += f" ({figure_type})"
-
-            img_bytes = None
-            if storage_key and image_store:
-                img_bytes = image_store._sync_get(storage_key)
+            short_label = _humanize_ref_id(doc_id)
+            # Build source link from metadata
+            if not source_url:
+                source_url = METADATA_URLS.get(doc_id, "")
 
             images.append({
                 "bytes": img_bytes,
-                "short_label": short_label,
+                "short_label": f"{short_label} p.{page}",
                 "display_caption": display_caption,
                 "vlm_description": vlm_description,
                 "source_url": source_url,
@@ -2760,6 +2757,7 @@ def _display_retrieved_images(image_nodes, image_store=None):
                 "caption": caption,
                 "doc_id": doc_id,
                 "page": page,
+                "humanized_label": short_label,
             })
 
         # Render as a thumbnail grid (3 columns)
@@ -2767,34 +2765,31 @@ def _display_retrieved_images(image_nodes, image_store=None):
         text_only = [img for img in images if not img["bytes"] and img["caption"]]
 
         if has_images:
-            n_cols = min(3, len(has_images))
+            n_cols = min(2, len(has_images))
             cols = st.columns(n_cols)
             for idx, img in enumerate(has_images):
                 col = cols[idx % n_cols]
                 with col:
-                    st.image(img["bytes"], caption=img["short_label"], width=200)
+                    # Source link as label (humanized, linked if URL available)
+                    if img["source_url"]:
+                        st.markdown(f"[{img['short_label']}]({img['source_url']})")
+                    else:
+                        st.caption(img["short_label"])
+
+                    st.image(img["bytes"], width=350)
 
                     # Show caption underneath the figure
                     if img["display_caption"]:
-                        st.caption(img["display_caption"][:200])
-                    if img["vlm_description"]:
-                        st.caption(f"*{img['vlm_description'][:200]}*")
-
-                    # Source link
-                    if img["source_url"]:
-                        link_text = img["source_title"] or img["doc_id"]
-                        st.markdown(
-                            f"[{link_text}]({img['source_url']})",
-                            help="View source paper",
-                        )
+                        st.caption(img["display_caption"][:300])
 
                     with st.popover(f"Expand: {img['short_label']}"):
-                        st.image(img["bytes"], caption=img["display_caption"] or img["short_label"])
+                        st.image(img["bytes"], use_container_width=True)
+                        if img["display_caption"]:
+                            st.write(img["display_caption"])
                         if img["vlm_description"]:
                             st.write(img["vlm_description"])
                         if img["source_url"]:
-                            link_text = img["source_title"] or img["doc_id"]
-                            st.markdown(f"Source: [{link_text}]({img['source_url']})")
+                            st.markdown(f"Source: [{img['humanized_label']}]({img['source_url']})")
 
         # Show text-only fallbacks for images not found in store
         if text_only:
