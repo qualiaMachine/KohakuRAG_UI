@@ -141,10 +141,16 @@ See the full command in `ocr_app/deploy/runai_jobs.yaml` (Option B section).
 
 | Format | Use case | Example |
 |--------|----------|---------|
-| `text` | Plain text extraction | Letters, articles, receipts |
-| `markdown` | Structured documents | Papers, reports with headings |
+| `financial` | Financial statements, earnings reports | Balance sheets, P&L, cash flow |
+| `table` | Tabular data with exact numbers | Spreadsheets, data tables |
+| `key_values` | Labeled metrics and KPIs | Dashboards, summary pages |
+| `markdown` | Structured documents | Reports with headings and sections |
 | `json` | Forms and structured data | Invoices, applications |
-| `table` | Tabular data | Spreadsheets, data tables |
+| `text` | Plain text extraction | Letters, articles, memos |
+
+The `financial` and `table` formats are tuned for numeric precision — they
+preserve exact values, currency symbols, commas, parentheses for negatives,
+trailing zeros, and percentages as printed.
 
 ## API Endpoints
 

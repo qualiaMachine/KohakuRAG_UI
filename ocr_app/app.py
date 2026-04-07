@@ -92,6 +92,16 @@ def _format_elapsed(ms: float) -> str:
     return f"{ms / 1000:.1f}s"
 
 
+def _render_result(text: str, fmt: str):
+    """Render OCR result based on the output format."""
+    if fmt in ("json", "financial", "key_values"):
+        st.code(text, language="json")
+    elif fmt in ("markdown", "table"):
+        st.markdown(text)
+    else:
+        st.text(text)
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -111,10 +121,19 @@ with st.sidebar:
     st.divider()
 
     # Output format
+    FORMAT_OPTIONS = {
+        "financial": "Financial Data (structured JSON)",
+        "table": "Tables (Markdown)",
+        "key_values": "Key-Value Pairs (JSON)",
+        "markdown": "Markdown",
+        "json": "JSON",
+        "text": "Plain Text",
+    }
     output_format = st.selectbox(
         "Output format",
-        ["text", "markdown", "json", "table"],
+        list(FORMAT_OPTIONS.keys()),
         index=0,
+        format_func=lambda x: FORMAT_OPTIONS[x],
         help="How to structure the extracted text",
     )
 
@@ -215,12 +234,7 @@ for uploaded_file in uploaded_files:
 
                     for i, page_result in enumerate(result.get("results", [])):
                         with st.expander(f"Page {i + 1} ({_format_elapsed(page_result['elapsed_ms'])})", expanded=(i == 0)):
-                            if output_format == "markdown":
-                                st.markdown(page_result["text"])
-                            elif output_format == "json":
-                                st.code(page_result["text"], language="json")
-                            else:
-                                st.text(page_result["text"])
+                            _render_result(page_result["text"], output_format)
             else:
                 result = _ocr_upload(
                     file_bytes, uploaded_file.name, output_format,
@@ -230,25 +244,20 @@ for uploaded_file in uploaded_files:
                 with col_result:
                     elapsed = result.get("elapsed_ms", 0)
                     st.caption(f"Extracted in {_format_elapsed(elapsed)}")
+                    _render_result(result["text"], output_format)
 
-                    if output_format == "markdown":
-                        st.markdown(result["text"])
-                    elif output_format == "json":
-                        st.code(result["text"], language="json")
-                    elif output_format == "table":
-                        st.markdown(result["text"])
-                    else:
-                        st.text(result["text"])
-
-            # Copy button
+            # Download button
             all_text = result.get("text", "") or "\n\n---\n\n".join(
                 r["text"] for r in result.get("results", [])
             )
+            ext = {"json": "json", "financial": "json", "key_values": "json",
+                   "markdown": "md", "table": "md"}.get(output_format, "txt")
+            mime = "application/json" if ext == "json" else "text/plain"
             st.download_button(
                 f"Download {uploaded_file.name} result",
                 data=all_text,
-                file_name=f"{Path(uploaded_file.name).stem}_ocr.{'md' if output_format == 'markdown' else 'txt'}",
-                mime="text/plain",
+                file_name=f"{Path(uploaded_file.name).stem}_ocr.{ext}",
+                mime=mime,
             )
 
         except httpx.HTTPStatusError as e:

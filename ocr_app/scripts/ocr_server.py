@@ -198,6 +198,8 @@ class OutputFormat(str, Enum):
     markdown = "markdown"
     json = "json"
     table = "table"
+    financial = "financial"
+    key_values = "key_values"
 
 
 PROMPTS = {
@@ -220,7 +222,37 @@ PROMPTS = {
     OutputFormat.table: (
         "Extract the table(s) from this image. Return each table as a "
         "Markdown table with proper column alignment. If there are multiple "
-        "tables, separate them with a blank line. Output only the table(s)."
+        "tables, separate them with a blank line. "
+        "Preserve ALL numeric values exactly — do not round, truncate, or "
+        "reformat numbers. Include currency symbols, percentages, and units. "
+        "Output only the table(s)."
+    ),
+    OutputFormat.financial: (
+        "Extract all financial data from this image. This may be a financial "
+        "statement, earnings report, balance sheet, income statement, cash flow "
+        "statement, invoice, or similar financial document.\n\n"
+        "Return a JSON object with these fields:\n"
+        '  "title": document/table title if visible,\n'
+        '  "period": reporting period or date if shown,\n'
+        '  "currency": currency used (e.g. "USD", "EUR") if indicated,\n'
+        '  "tables": array of objects, each with:\n'
+        '    "name": table/section heading,\n'
+        '    "headers": column headers as array,\n'
+        '    "rows": array of arrays with cell values\n'
+        '  "notes": any footnotes or annotations\n\n'
+        "CRITICAL: Preserve ALL numeric values exactly as printed — do not "
+        "round, truncate, drop trailing zeros, or omit parentheses for "
+        "negative numbers. Include dollar signs, commas, percentages, and "
+        "units exactly as shown. Output only valid JSON."
+    ),
+    OutputFormat.key_values: (
+        "Extract all labeled data points from this image as key-value pairs. "
+        "Look for field labels, line items, metrics, KPIs, and their values. "
+        "Return a JSON object where keys are the field/metric names and "
+        "values are their corresponding values.\n\n"
+        "Preserve ALL numeric values exactly — do not round or reformat. "
+        "Include units, currency symbols, and percentages. "
+        "For nested sections, use nested objects. Output only valid JSON."
     ),
 }
 
