@@ -1,40 +1,40 @@
 # ============================================================================
-# RunAI Job Definitions for VLM OCR System
+# RunAI Job Definitions for Document Extraction System
 #
 # Architecture:
 #   ┌─────────────────────┐
-#   │   Streamlit OCR UI  │  (Workspace, CPU only)
+#   │   Streamlit UI      │  (Workspace, CPU only)
 #   │   Port 8501         │
 #   └──────────┬──────────┘
-#              │ HTTP (internal cluster DNS)
+#              │ HTTP
 #              ▼
-#   ┌─────────────────────┐
-#   │   OCR Server        │  (Inference, GPU)
-#   │   Qwen2.5-VL-7B    │
-#   │   Port 8090         │
-#   │   GPU: 0.80         │
-#   └─────────────────────┘
+#   ┌─────────────────────┐     ┌─────────────────────┐
+#   │   Extraction Server │────▶│   vLLM Server       │
+#   │   FastAPI (CPU)     │     │   Qwen2.5-VL-7B     │
+#   │   Port 8090         │     │   Port 8000          │
+#   │                     │     │   GPU: 0.80          │
+#   └─────────────────────┘     └─────────────────────┘
 #
-# 2 services on ~0.80 GPU (fractional allocation).
-# The OCR server handles all VLM inference.
+# Pipeline:
+#   Digital PDF → text extract (PyMuPDF, CPU) → LLM parse (vLLM) → JSON
+#   Scan / TIFF → VLM OCR (vLLM with Qwen2.5-VL) → JSON
 #
-# NOTE: These are reference configs. Adapt image names, PVC names, and
-# resource fractions to your cluster.
+# The extraction server is CPU-only — all GPU work is in vLLM.
 # ============================================================================
 
 # ---------------------------------------------------------------------------
-# Option A: OCR Server via vLLM (recommended for production)
+# Job 1: vLLM Server (Inference workload, GPU)
 # ---------------------------------------------------------------------------
-# Uses vLLM's built-in vision model support for Qwen2.5-VL.
-# Higher throughput, continuous batching, PagedAttention.
+# Serves Qwen2.5-VL-7B for both text parsing and VLM OCR.
+# Uses a vision model so it can handle scanned pages too.
 #
 # RunAI UI settings:
 #   Inference type:  Custom
 #   Name:            ocr-vllm
 #   Image:           vllm/vllm-openai:latest
-#   Container port:  8090
-#   Command:         (leave empty)
-#   Arguments:       --model Qwen/Qwen2.5-VL-7B-Instruct --dtype bfloat16 --port 8090 --max-model-len 8192 --limit-mm-per-prompt image=1
+#   Container port:  8000
+#   Command:         (leave empty — image default)
+#   Arguments:       --model Qwen/Qwen2.5-VL-7B-Instruct --dtype bfloat16 --max-model-len 8192 --limit-mm-per-prompt image=1
 #   Env:             HF_HOME=/models/.cache/huggingface
 #                    HF_HUB_CACHE=/models/.cache/huggingface
 #                    HF_HUB_OFFLINE=1
@@ -54,61 +54,56 @@
 #     --env HF_HOME=/models/.cache/huggingface \
 #     --env HF_HUB_CACHE=/models/.cache/huggingface \
 #     --env HF_HUB_OFFLINE=1 \
-#     --port 8090 \
+#     --port 8000 \
 #     -- --model Qwen/Qwen2.5-VL-7B-Instruct \
 #       --dtype bfloat16 \
-#       --port 8090 \
 #       --max-model-len 8192 \
 #       --limit-mm-per-prompt image=1
-#
-# When using vLLM backend, the Streamlit UI talks directly to vLLM's
-# OpenAI-compatible API. Set OCR_SERVICE_URL to the vLLM endpoint and
-# VLLM_BASE_URL in the ocr_server to point to vLLM.
-#
-# VRAM requirements:
-#   - 80GB (A100): --dtype bfloat16 (no quantization needed)
-#   - 40GB (A6000): --dtype bfloat16 (tight fit, may need --max-model-len 4096)
-#   - 24GB (L4/4090): --quantization awq --max-model-len 4096
 #
 # Pre-requisite: Download model to shared PVC:
 #   python3 -c "from huggingface_hub import snapshot_download; \
 #     snapshot_download('Qwen/Qwen2.5-VL-7B-Instruct', \
 #     cache_dir='/models/.cache/huggingface')"
+#
+# NOTE: If most of your docs are digital PDFs, you could use a text-only
+# LLM here (e.g. Qwen2.5-7B-Instruct) for faster text parsing and run
+# a separate VLM job only for scans. But the VL model handles both.
+#
+# ALTERNATIVE: Use Ollama instead of vLLM if already available.
+#   Set LLM_BASE_URL=http://ollama-host:11434/v1 in the extraction server.
 
 # ---------------------------------------------------------------------------
-# Option B: OCR Server via FastAPI + Transformers
+# Job 2: Extraction Server (Inference workload, CPU only)
 # ---------------------------------------------------------------------------
-# Uses the custom ocr_server.py with HuggingFace transformers directly.
-# Simpler setup, good for development and smaller workloads.
+# Lightweight FastAPI server that:
+#   1. Extracts text from digital PDFs (PyMuPDF, no GPU)
+#   2. Sends text to vLLM for structured parsing
+#   3. Falls back to VLM OCR for scanned pages / TIFFs
 #
 # RunAI UI settings:
 #   Inference type:  Custom
-#   Name:            ocr-server
-#   Image:           vllm/vllm-openai:latest  (has PyTorch + CUDA)
+#   Name:            ocr-extract
+#   Image:           vllm/vllm-openai:latest  (has Python 3, pip)
 #   Container port:  8090
 #   Command:         bash
-#   Arguments:       -c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn python-multipart httpx pymupdf Pillow 'transformers>=4.45' accelerate qwen-vl-utils && python3 ocr_app/scripts/ocr_server.py"
-#   Env:             HF_HOME=/models/.cache/huggingface
-#                    HF_HUB_CACHE=/models/.cache/huggingface
-#                    HF_HUB_OFFLINE=1
-#                    OCR_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
-#   GPU:             0.80 (fractional)
-#   CPU:             4
-#   Memory:          24Gi
-#   Data volume:     shared-models -> /models
+#   Arguments:       -c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn python-multipart httpx pymupdf Pillow && python3 ocr_app/scripts/ocr_server.py"
+#   Env:             LLM_BASE_URL=http://ocr-vllm.runai-<project>.svc.cluster.local/v1
+#                    VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+#                    OCR_PORT=8090
+#   GPU:             0 (none — CPU only)
+#   CPU:             2
+#   Memory:          4Gi
 #
 # CLI equivalent:
-#   runai submit ocr-server \
+#   runai submit ocr-extract \
 #     --type inference \
 #     --image vllm/vllm-openai:latest \
-#     --gpu 0.80 \
-#     --cpu 4 \
-#     --memory 24Gi \
-#     --pvc shared-models:/models \
-#     --env HF_HOME=/models/.cache/huggingface \
-#     --env HF_HUB_CACHE=/models/.cache/huggingface \
-#     --env HF_HUB_OFFLINE=1 \
-#     --env OCR_MODEL=Qwen/Qwen2.5-VL-7B-Instruct \
+#     --gpu 0 \
+#     --cpu 2 \
+#     --memory 4Gi \
+#     --env LLM_BASE_URL=http://ocr-vllm.runai-<project>.svc.cluster.local/v1 \
+#     --env VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct \
+#     --env OCR_PORT=8090 \
 #     --port 8090 \
 #     --command -- /bin/bash -c \
 #       "pip install uv && \
@@ -116,15 +111,12 @@
 #          | tar xz -C /tmp && \
 #        mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && \
 #        cd /tmp/KohakuRAG_UI && \
-#        uv pip install --system fastapi uvicorn python-multipart httpx pymupdf Pillow \
-#          'transformers>=4.45' accelerate qwen-vl-utils && \
+#        uv pip install --system fastapi uvicorn python-multipart httpx pymupdf Pillow && \
 #        python3 ocr_app/scripts/ocr_server.py"
 
 # ---------------------------------------------------------------------------
-# Job: Streamlit OCR UI (Workspace, CPU only)
+# Job 3: Streamlit UI (Workspace, CPU only)
 # ---------------------------------------------------------------------------
-# The UI layer. Connects to the OCR server via internal DNS.
-#
 # RunAI UI settings:
 #   Workload type:   Workspace
 #   Name:            ocr-app
@@ -132,13 +124,10 @@
 #   Tool:            Custom URL -> "streamlit" -> port 8501
 #   Command:         bash
 #   Arguments:       -c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system streamlit httpx Pillow python-dotenv && python -m streamlit run ocr_app/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=$STREAMLIT_BASE_PATH"
-#   Env:             OCR_SERVICE_URL=http://ocr-server.runai-<project>.svc.cluster.local
+#   Env:             OCR_SERVICE_URL=http://ocr-extract.runai-<project>.svc.cluster.local
 #                    STREAMLIT_BASE_PATH=/<project>/<workspace-name>/proxy/8501
 #   GPU:             0 (none)
 #   CPU:             1
 #   Memory:          2Gi
-#
-# NOTE: Use FQDN for service URLs (workload.runai-project.svc.cluster.local)
-#       on port 80 (no port number). Knative envoy requires this.
 #
 # Access URL: https://<cluster-host>/<project>/<workspace-name>/proxy/8501/

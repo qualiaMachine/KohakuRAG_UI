@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""FastAPI OCR server using Vision Language Models.
+"""Document extraction server — hybrid text + VLM pipeline.
 
-Serves OCR over HTTP using Qwen2.5-VL (primary) or GOT-OCR2.0 (lightweight).
-Accepts images via multipart upload or base64, returns extracted text with
-optional structured output (JSON, markdown tables).
+For digital PDFs: extracts text directly (PyMuPDF), then uses an LLM to
+parse it into structured JSON.
+
+For scanned PDFs / TIFFs / images: uses a Vision Language Model (Qwen2.5-VL)
+to OCR and structure in one shot.
+
+This hybrid approach is much faster and cheaper for digital documents
+(no GPU needed for text extraction), while still handling scans correctly.
 
 Launch:
     python ocr_app/scripts/ocr_server.py
-    # or with uvicorn directly:
-    uvicorn ocr_app.scripts.ocr_server:app --host 0.0.0.0 --port 8090
 
 Environment variables:
-    OCR_MODEL       - Model ID (default: Qwen/Qwen2.5-VL-7B-Instruct)
+    LLM_BASE_URL    - vLLM / Ollama OpenAI-compatible endpoint for text parsing
+                      (default: http://localhost:8000/v1)
+    LLM_MODEL       - Model name for text parsing (default: auto-detected from endpoint)
+    VLM_BASE_URL    - vLLM endpoint for vision model (scans/images only)
+                      (default: same as LLM_BASE_URL)
+    VLM_MODEL       - Vision model for scans (default: Qwen/Qwen2.5-VL-7B-Instruct)
     OCR_PORT        - Server port (default: 8090)
     OCR_HOST        - Server host (default: 0.0.0.0)
-    OCR_MAX_PIXELS  - Max image pixels before resize (default: 1280*28*28)
-    OCR_DEVICE      - Device: cuda, cpu, auto (default: auto)
-    VLLM_BASE_URL   - If set, use vLLM backend instead of local transformers
 """
 
 import base64
@@ -25,10 +30,9 @@ import os
 import time
 from contextlib import asynccontextmanager
 from enum import Enum
-from pathlib import Path
 from typing import Optional
 
-import torch
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from PIL import Image
 from pydantic import BaseModel
@@ -36,127 +40,65 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-MODEL_NAME = os.environ.get("OCR_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
+LLM_MODEL = os.environ.get("LLM_MODEL", "")  # auto-detect if empty
+VLM_BASE_URL = os.environ.get("VLM_BASE_URL", "")  # defaults to LLM_BASE_URL
+VLM_MODEL = os.environ.get("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
 HOST = os.environ.get("OCR_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OCR_PORT", "8090"))
-MAX_PIXELS = int(os.environ.get("OCR_MAX_PIXELS", str(1280 * 28 * 28)))
-MIN_PIXELS = 256 * 28 * 28
-DEVICE = os.environ.get("OCR_DEVICE", "auto")
-VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "")
 
-# ---------------------------------------------------------------------------
-# Model backends
-# ---------------------------------------------------------------------------
-
-_model = None
-_processor = None
-_backend = None  # "transformers" or "vllm"
-
-
-def _load_transformers_model():
-    """Load Qwen2.5-VL via HuggingFace transformers."""
-    global _model, _processor, _backend
-    from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-
-    device = DEVICE
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    print(f"[ocr_server] Loading {MODEL_NAME} on {device}...", flush=True)
-    t0 = time.time()
-
-    _processor = AutoProcessor.from_pretrained(
-        MODEL_NAME,
-        min_pixels=MIN_PIXELS,
-        max_pixels=MAX_PIXELS,
-    )
-
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    _model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        MODEL_NAME,
-        torch_dtype=dtype,
-        device_map=device if device == "auto" else {"": device},
-        attn_implementation="flash_attention_2" if device == "cuda" else "sdpa",
-    )
-
-    elapsed = time.time() - t0
-    print(f"[ocr_server] Model loaded in {elapsed:.1f}s", flush=True)
-    _backend = "transformers"
-
-
-def _init_vllm_backend():
-    """Configure vLLM remote backend (no local model loading)."""
-    global _backend
-    print(f"[ocr_server] Using vLLM backend at {VLLM_BASE_URL}", flush=True)
-    _backend = "vllm"
+# Minimum characters of extracted text to consider a page "digital"
+# (vs. a scanned page that happens to have a tiny watermark or header)
+MIN_TEXT_LENGTH = int(os.environ.get("MIN_TEXT_LENGTH", "50"))
 
 
 # ---------------------------------------------------------------------------
-# Inference functions
+# LLM / VLM inference via OpenAI-compatible API
 # ---------------------------------------------------------------------------
 
-def _build_messages(image: Image.Image, prompt: str) -> list[dict]:
-    """Build Qwen2.5-VL chat messages with an image."""
-    # Convert image to base64 for the message
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
-
-    return [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": f"data:image/png;base64,{b64}"},
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
+async def _detect_model(base_url: str) -> str:
+    """Auto-detect the model name from a vLLM/Ollama endpoint."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{base_url}/models")
+            resp.raise_for_status()
+            models = resp.json().get("data", [])
+            if models:
+                return models[0]["id"]
+    except Exception:
+        pass
+    return ""
 
 
-async def _infer_transformers(image: Image.Image, prompt: str, max_tokens: int) -> str:
-    """Run inference using local transformers model."""
-    from qwen_vl_utils import process_vision_info
-
-    messages = _build_messages(image, prompt)
-
-    text_input = _processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    image_inputs, video_inputs = process_vision_info(messages)
-    inputs = _processor(
-        text=[text_input],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    ).to(_model.device)
-
-    with torch.no_grad():
-        generated_ids = _model.generate(**inputs, max_new_tokens=max_tokens)
-
-    # Trim input tokens from output
-    generated_ids_trimmed = [
-        out_ids[len(in_ids):]
-        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-    ]
-    result = _processor.batch_decode(
-        generated_ids_trimmed,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
-    )
-    return result[0]
-
-
-async def _infer_vllm(image: Image.Image, prompt: str, max_tokens: int) -> str:
-    """Run inference via remote vLLM OpenAI-compatible API."""
-    import httpx
-
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode()
+async def _llm_parse(text: str, prompt: str, max_tokens: int) -> str:
+    """Send extracted text to an LLM for structured parsing."""
+    full_prompt = f"{prompt}\n\n---\nDOCUMENT TEXT:\n---\n{text}"
 
     payload = {
-        "model": MODEL_NAME,
+        "model": LLM_MODEL,
+        "messages": [{"role": "user", "content": full_prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+    }
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{LLM_BASE_URL}/chat/completions", json=payload
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+
+async def _vlm_ocr(image: Image.Image, prompt: str, max_tokens: int) -> str:
+    """Send an image to a VLM for OCR + structured extraction in one shot."""
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+
+    base_url = VLM_BASE_URL or LLM_BASE_URL
+    payload = {
+        "model": VLM_MODEL,
         "messages": [
             {
                 "role": "user",
@@ -175,18 +117,57 @@ async def _infer_vllm(image: Image.Image, prompt: str, max_tokens: int) -> str:
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
-            f"{VLLM_BASE_URL}/chat/completions", json=payload
+            f"{base_url}/chat/completions", json=payload
         )
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
 
-async def _run_ocr(image: Image.Image, prompt: str, max_tokens: int) -> str:
-    """Route to the active backend."""
-    if _backend == "vllm":
-        return await _infer_vllm(image, prompt, max_tokens)
-    return await _infer_transformers(image, prompt, max_tokens)
+# ---------------------------------------------------------------------------
+# Text extraction (digital PDFs)
+# ---------------------------------------------------------------------------
+
+def _extract_pdf_text(pdf_bytes: bytes, page_indices: list[int]) -> list[dict]:
+    """Extract text from PDF pages. Returns list of {page, text, has_text}."""
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    results = []
+
+    for page_idx in page_indices:
+        page = doc[page_idx]
+        text = page.get_text("text").strip()
+        results.append({
+            "page": page_idx,
+            "text": text,
+            "has_text": len(text) >= MIN_TEXT_LENGTH,
+        })
+
+    doc.close()
+    return results
+
+
+def _render_pdf_page(pdf_bytes: bytes, page_idx: int) -> Image.Image:
+    """Render a single PDF page to an image at 2x resolution."""
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_idx]
+    mat = fitz.Matrix(2.0, 2.0)
+    pix = page.get_pixmap(matrix=mat)
+    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    doc.close()
+    return img
+
+
+def _get_pdf_page_count(pdf_bytes: bytes) -> int:
+    """Get total page count of a PDF."""
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    count = len(doc)
+    doc.close()
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +185,11 @@ class OutputFormat(str, Enum):
     text = "text"
 
 
-PROMPTS = {
+# Prompts for LLM text parsing (text already extracted, no image)
+TEXT_PROMPTS = {
     OutputFormat.award: (
-        "Extract all information from this grant award notice / notice of award. "
-        "This is a research and sponsored programs document.\n\n"
+        "Parse the following document text from a grant award notice / notice of award "
+        "(research and sponsored programs).\n\n"
         "Return a JSON object with these fields (omit any that are not present):\n"
         '  "document_type": type of document (e.g. "Notice of Award", "Award Letter", "Subaward Agreement"),\n'
         '  "award_number": grant/award/contract number,\n'
@@ -228,13 +210,12 @@ PROMPTS = {
         '  "special_conditions": array of any special terms or conditions,\n'
         '  "contacts": array of {role, name, email, phone} for program officers or admin contacts,\n'
         '  "additional_fields": object with any other labeled fields not covered above\n\n'
-        "Preserve ALL dollar amounts, dates, and reference numbers exactly as printed. "
+        "Preserve ALL dollar amounts, dates, and reference numbers exactly as they appear. "
         "Output only valid JSON."
     ),
     OutputFormat.budget: (
-        "Extract the budget information from this research grant document. "
-        "This may be a budget page, budget justification, or financial summary "
-        "from a grant award, proposal, or sponsored program.\n\n"
+        "Parse the following document text from a research grant budget page, "
+        "budget justification, or financial summary.\n\n"
         "Return a JSON object with:\n"
         '  "award_number": grant/award number if shown,\n'
         '  "budget_period": period or fiscal year if shown,\n'
@@ -250,13 +231,12 @@ PROMPTS = {
         '  "total": total project costs,\n'
         '  "cost_sharing": cost sharing amount if any,\n'
         '  "notes": any footnotes or annotations\n\n'
-        "CRITICAL: Preserve ALL dollar amounts exactly as printed — do not "
-        "round, drop commas, or reformat. Output only valid JSON."
+        "CRITICAL: Preserve ALL dollar amounts exactly — do not round, drop commas, "
+        "or reformat. Output only valid JSON."
     ),
     OutputFormat.terms: (
-        "Extract the terms and conditions from this research and sponsored "
-        "programs document. This may be award terms, RSP policies, compliance "
-        "requirements, subaward terms, or similar.\n\n"
+        "Parse the following document text from research and sponsored programs "
+        "terms & conditions, award terms, RSP policies, or compliance requirements.\n\n"
         "Return a JSON object with:\n"
         '  "document_title": title of the document,\n'
         '  "effective_date": effective date if shown,\n'
@@ -272,38 +252,92 @@ PROMPTS = {
         "Output only valid JSON."
     ),
     OutputFormat.table: (
-        "Extract the table(s) from this image. Return each table as a "
-        "Markdown table with proper column alignment. If there are multiple "
-        "tables, separate them with a blank line. "
-        "Preserve ALL numeric values exactly — do not round, truncate, or "
-        "reformat numbers. Include currency symbols, percentages, and units. "
-        "Output only the table(s)."
+        "Extract the table(s) from the following document text. "
+        "Return each table as a Markdown table with proper column alignment. "
+        "If there are multiple tables, separate them with a blank line. "
+        "Preserve ALL numeric values exactly. Output only the table(s)."
     ),
     OutputFormat.key_values: (
-        "Extract all labeled data points from this image as key-value pairs. "
-        "Look for field labels, line items, metrics, reference numbers, dates, "
-        "names, and their corresponding values. "
-        "Return a JSON object where keys are the field/label names and "
-        "values are their corresponding values.\n\n"
-        "Preserve ALL values exactly as printed — do not round or reformat. "
-        "Include units, currency symbols, and percentages. "
-        "For nested sections, use nested objects. Output only valid JSON."
+        "Extract all labeled data points from the following document text as "
+        "key-value pairs. Look for field labels, line items, reference numbers, "
+        "dates, names, and their corresponding values.\n\n"
+        "Return a JSON object where keys are the field/label names and values "
+        "are their corresponding values. For nested sections, use nested objects. "
+        "Preserve ALL values exactly. Output only valid JSON."
     ),
     OutputFormat.markdown: (
-        "Extract all text from this image and format it as clean Markdown. "
+        "Format the following document text as clean Markdown. "
         "Use headings, lists, bold/italic, and code blocks where appropriate. "
         "Preserve tables as Markdown tables. Output only the Markdown."
     ),
     OutputFormat.json: (
-        "Extract all text from this image and return it as a JSON object. "
+        "Parse the following document text and return it as a JSON object. "
         "Structure the content logically with appropriate keys. "
         "For forms, use field names as keys and field values as values. "
         "For documents, use sections as keys. Output only valid JSON."
     ),
     OutputFormat.text: (
+        "Clean up and return the following document text, preserving the "
+        "original reading order and structure. Output only the text."
+    ),
+}
+
+# Prompts for VLM one-shot OCR (image input, for scans/TIFFs)
+VLM_PROMPTS = {
+    OutputFormat.award: (
+        "Extract all information from this scanned grant award notice / notice of award. "
+        "This is a research and sponsored programs document.\n\n"
+        "Return a JSON object with these fields (omit any that are not present):\n"
+        '  "document_type", "award_number", "sponsor", "pi", "co_pis", '
+        '"institution", "department", "project_title", "award_amount", '
+        '"current_period_amount", "project_start", "project_end", '
+        '"budget_periods" (array of {period, start, end, amount}), '
+        '"fa_rate", "cfda_number", "award_type", "special_conditions", '
+        '"contacts" (array of {role, name, email, phone}), "additional_fields"\n\n'
+        "Preserve ALL dollar amounts, dates, and reference numbers exactly as printed. "
+        "Output only valid JSON."
+    ),
+    OutputFormat.budget: (
+        "Extract the budget information from this scanned research grant document.\n\n"
+        "Return a JSON object with: "
+        '"award_number", "budget_period", '
+        '"categories" (array of {category, items: [{description, amount}], subtotal}), '
+        '"total_direct", "fa_rate", "fa_base", "total_indirect", "total", '
+        '"cost_sharing", "notes"\n\n'
+        "Preserve ALL dollar amounts exactly as printed. Output only valid JSON."
+    ),
+    OutputFormat.terms: (
+        "Extract the terms and conditions from this scanned research and sponsored "
+        "programs document.\n\n"
+        "Return a JSON object with: "
+        '"document_title", "effective_date", '
+        '"sections" (array of {number, title, text, subsections}), '
+        '"definitions", "references"\n\n'
+        "Preserve exact wording — do not paraphrase. Output only valid JSON."
+    ),
+    OutputFormat.table: (
+        "Extract the table(s) from this image. Return each table as a "
+        "Markdown table with proper column alignment. "
+        "Preserve ALL numeric values exactly. Output only the table(s)."
+    ),
+    OutputFormat.key_values: (
+        "Extract all labeled data points from this image as key-value pairs. "
+        "Return a JSON object where keys are field names and values are their values. "
+        "Preserve ALL values exactly. Output only valid JSON."
+    ),
+    OutputFormat.markdown: (
+        "Extract all text from this image and format it as clean Markdown. "
+        "Preserve tables as Markdown tables. Output only the Markdown."
+    ),
+    OutputFormat.json: (
+        "Extract all text from this image and return it as a JSON object. "
+        "Structure the content logically with appropriate keys. "
+        "Output only valid JSON."
+    ),
+    OutputFormat.text: (
         "Extract all text from this image exactly as it appears. "
         "Preserve the original reading order, line breaks, and structure. "
-        "Output only the extracted text, nothing else."
+        "Output only the extracted text."
     ),
 }
 
@@ -314,174 +348,217 @@ PROMPTS = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    if VLLM_BASE_URL:
-        _init_vllm_backend()
-    else:
-        _load_transformers_model()
+    global LLM_MODEL
+    # Auto-detect model name from endpoint
+    if not LLM_MODEL:
+        LLM_MODEL = await _detect_model(LLM_BASE_URL)
+        if LLM_MODEL:
+            print(f"[ocr_server] Auto-detected LLM model: {LLM_MODEL}", flush=True)
+        else:
+            print(f"[ocr_server] WARNING: Could not detect model at {LLM_BASE_URL}", flush=True)
+    print(f"[ocr_server] LLM: {LLM_MODEL} at {LLM_BASE_URL}", flush=True)
+    vlm_url = VLM_BASE_URL or LLM_BASE_URL
+    print(f"[ocr_server] VLM: {VLM_MODEL} at {vlm_url} (fallback for scans)", flush=True)
+    print(f"[ocr_server] Min text length for digital detection: {MIN_TEXT_LENGTH}", flush=True)
     yield
-    # Shutdown (nothing to clean up)
 
 
 app = FastAPI(
-    title="VLM OCR Server",
-    version="1.0.0",
-    description="OCR service powered by Qwen2.5-VL",
+    title="Document Extraction Server",
+    version="2.0.0",
+    description=(
+        "Hybrid document extraction: digital PDF text extraction + LLM parsing, "
+        "with VLM fallback for scans/TIFFs. Outputs structured JSON for "
+        "research and sponsored programs documents."
+    ),
     lifespan=lifespan,
 )
 
 
-class OCRRequest(BaseModel):
-    """Request body for base64 image OCR."""
-    image_base64: str
-    format: OutputFormat = OutputFormat.text
-    prompt: Optional[str] = None
-    max_tokens: int = 4096
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
 
-
-class OCRResponse(BaseModel):
-    """OCR result."""
+class PageResult(BaseModel):
+    """Result for a single page."""
+    page: int
     text: str
     format: str
-    model: str
+    method: str  # "text_extraction" or "vlm_ocr"
     elapsed_ms: float
+
+
+class DocumentResponse(BaseModel):
+    """Response for a document (single or multi-page)."""
+    filename: str
+    pages: list[PageResult]
+    total_pages: int
+    digital_pages: int
+    scanned_pages: int
+    total_elapsed_ms: float
+    llm_model: str
+    vlm_model: str
+
+
+class ImageResponse(BaseModel):
+    """Response for a single image."""
+    text: str
+    format: str
+    method: str
+    elapsed_ms: float
+    vlm_model: str
     image_width: int
     image_height: int
 
 
-class BatchOCRRequest(BaseModel):
-    """Request body for batch OCR of multiple base64 images."""
-    images_base64: list[str]
-    format: OutputFormat = OutputFormat.text
-    prompt: Optional[str] = None
-    max_tokens: int = 4096
-
-
-class BatchOCRResponse(BaseModel):
-    """Batch OCR results."""
-    results: list[OCRResponse]
-    total_elapsed_ms: float
-    count: int
-
-
-def _decode_image(data: bytes) -> Image.Image:
-    """Decode image bytes to PIL Image, converting to RGB."""
-    img = Image.open(io.BytesIO(data))
-    if img.mode != "RGB":
-        img = img.convert("RGB")
-    return img
-
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
-    if _backend is None:
-        return {"status": "loading"}
-    return {"status": "ok", "model": MODEL_NAME, "backend": _backend}
+    return {
+        "status": "ok",
+        "llm_model": LLM_MODEL,
+        "vlm_model": VLM_MODEL,
+        "llm_endpoint": LLM_BASE_URL,
+    }
 
 
 @app.get("/info")
 async def info():
-    if _backend is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
     return {
-        "model": MODEL_NAME,
-        "backend": _backend,
-        "device": DEVICE,
-        "max_pixels": MAX_PIXELS,
+        "llm_model": LLM_MODEL,
+        "vlm_model": VLM_MODEL,
+        "llm_endpoint": LLM_BASE_URL,
+        "vlm_endpoint": VLM_BASE_URL or LLM_BASE_URL,
+        "min_text_length": MIN_TEXT_LENGTH,
         "formats": [f.value for f in OutputFormat],
+        "pipeline": "hybrid: text extraction + LLM parse (digital) / VLM OCR (scans)",
     }
 
 
-@app.post("/ocr", response_model=OCRResponse)
-async def ocr_base64(request: OCRRequest):
-    """OCR from a base64-encoded image."""
-    if _backend is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
+@app.post("/extract/pdf", response_model=DocumentResponse)
+async def extract_pdf(
+    file: UploadFile = File(...),
+    format: OutputFormat = Form(OutputFormat.award),
+    prompt: Optional[str] = Form(None),
+    max_tokens: int = Form(4096),
+    pages: Optional[str] = Form(None),
+):
+    """Extract structured data from a PDF.
 
-    image_bytes = base64.b64decode(request.image_base64)
-    image = _decode_image(image_bytes)
-    prompt = request.prompt or PROMPTS[request.format]
+    Automatically detects digital vs. scanned pages:
+    - Digital pages: text extraction + LLM parsing (fast, no GPU)
+    - Scanned pages: VLM OCR + structuring (slower, needs GPU)
+    """
+    import fitz  # PyMuPDF
 
-    t0 = time.time()
-    text = await _run_ocr(image, prompt, request.max_tokens)
-    elapsed_ms = (time.time() - t0) * 1000
+    contents = await file.read()
+    total_page_count = _get_pdf_page_count(contents)
+    page_indices = _parse_pages(pages, total_page_count)
 
-    return OCRResponse(
-        text=text,
-        format=request.format.value,
-        model=MODEL_NAME,
-        elapsed_ms=round(elapsed_ms, 2),
-        image_width=image.width,
-        image_height=image.height,
+    # Step 1: Try text extraction on all pages
+    extracted = _extract_pdf_text(contents, page_indices)
+
+    text_prompt = prompt or TEXT_PROMPTS[format]
+    vlm_prompt = prompt or VLM_PROMPTS[format]
+
+    results = []
+    digital_count = 0
+    scanned_count = 0
+    total_t0 = time.time()
+
+    for page_info in extracted:
+        t0 = time.time()
+
+        if page_info["has_text"]:
+            # Digital page — send extracted text to LLM for parsing
+            digital_count += 1
+            result_text = await _llm_parse(
+                page_info["text"], text_prompt, max_tokens
+            )
+            method = "text_extraction"
+        else:
+            # Scanned page — render to image and use VLM
+            scanned_count += 1
+            img = _render_pdf_page(contents, page_info["page"])
+            result_text = await _vlm_ocr(img, vlm_prompt, max_tokens)
+            method = "vlm_ocr"
+
+        elapsed_ms = (time.time() - t0) * 1000
+
+        results.append(PageResult(
+            page=page_info["page"] + 1,  # 1-indexed for display
+            text=result_text,
+            format=format.value,
+            method=method,
+            elapsed_ms=round(elapsed_ms, 2),
+        ))
+
+    total_elapsed = (time.time() - total_t0) * 1000
+
+    return DocumentResponse(
+        filename=file.filename or "unknown.pdf",
+        pages=results,
+        total_pages=len(results),
+        digital_pages=digital_count,
+        scanned_pages=scanned_count,
+        total_elapsed_ms=round(total_elapsed, 2),
+        llm_model=LLM_MODEL,
+        vlm_model=VLM_MODEL,
     )
 
 
-@app.post("/ocr/upload", response_model=OCRResponse)
+@app.post("/extract/image", response_model=ImageResponse)
+async def extract_image(
+    file: UploadFile = File(...),
+    format: OutputFormat = Form(OutputFormat.award),
+    prompt: Optional[str] = Form(None),
+    max_tokens: int = Form(4096),
+):
+    """Extract structured data from an image (TIFF, PNG, JPG, etc.).
+
+    Always uses VLM since images have no extractable text layer.
+    """
+    contents = await file.read()
+    img = Image.open(io.BytesIO(contents))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    vlm_prompt = prompt or VLM_PROMPTS[format]
+
+    t0 = time.time()
+    result_text = await _vlm_ocr(img, vlm_prompt, max_tokens)
+    elapsed_ms = (time.time() - t0) * 1000
+
+    return ImageResponse(
+        text=result_text,
+        format=format.value,
+        method="vlm_ocr",
+        elapsed_ms=round(elapsed_ms, 2),
+        vlm_model=VLM_MODEL,
+        image_width=img.width,
+        image_height=img.height,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Legacy OCR endpoints (kept for backwards compat)
+# ---------------------------------------------------------------------------
+
+@app.post("/ocr/upload")
 async def ocr_upload(
     file: UploadFile = File(...),
     format: OutputFormat = Form(OutputFormat.text),
     prompt: Optional[str] = Form(None),
     max_tokens: int = Form(4096),
 ):
-    """OCR from an uploaded image file."""
-    if _backend is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    contents = await file.read()
-    image = _decode_image(contents)
-    actual_prompt = prompt or PROMPTS[format]
-
-    t0 = time.time()
-    text = await _run_ocr(image, actual_prompt, max_tokens)
-    elapsed_ms = (time.time() - t0) * 1000
-
-    return OCRResponse(
-        text=text,
-        format=format.value,
-        model=MODEL_NAME,
-        elapsed_ms=round(elapsed_ms, 2),
-        image_width=image.width,
-        image_height=image.height,
-    )
+    """Legacy endpoint — routes to extract/image."""
+    return await extract_image(file=file, format=format, prompt=prompt, max_tokens=max_tokens)
 
 
-@app.post("/ocr/batch", response_model=BatchOCRResponse)
-async def ocr_batch(request: BatchOCRRequest):
-    """OCR multiple base64-encoded images sequentially."""
-    if _backend is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    prompt = request.prompt or PROMPTS[request.format]
-    results = []
-    total_t0 = time.time()
-
-    for b64 in request.images_base64:
-        image_bytes = base64.b64decode(b64)
-        image = _decode_image(image_bytes)
-
-        t0 = time.time()
-        text = await _run_ocr(image, prompt, request.max_tokens)
-        elapsed_ms = (time.time() - t0) * 1000
-
-        results.append(OCRResponse(
-            text=text,
-            format=request.format.value,
-            model=MODEL_NAME,
-            elapsed_ms=round(elapsed_ms, 2),
-            image_width=image.width,
-            image_height=image.height,
-        ))
-
-    total_elapsed = (time.time() - total_t0) * 1000
-
-    return BatchOCRResponse(
-        results=results,
-        total_elapsed_ms=round(total_elapsed, 2),
-        count=len(results),
-    )
-
-
-@app.post("/ocr/pdf", response_model=BatchOCRResponse)
+@app.post("/ocr/pdf")
 async def ocr_pdf(
     file: UploadFile = File(...),
     format: OutputFormat = Form(OutputFormat.text),
@@ -489,61 +566,13 @@ async def ocr_pdf(
     max_tokens: int = Form(4096),
     pages: Optional[str] = Form(None),
 ):
-    """OCR a PDF by rendering each page as an image.
+    """Legacy endpoint — routes to extract/pdf."""
+    return await extract_pdf(file=file, format=format, prompt=prompt, max_tokens=max_tokens, pages=pages)
 
-    Args:
-        pages: Page range like "1-5", "1,3,5", or None for all pages.
-    """
-    if _backend is None:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
 
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail="PyMuPDF not installed. Install with: pip install pymupdf",
-        )
-
-    contents = await file.read()
-    doc = fitz.open(stream=contents, filetype="pdf")
-
-    # Parse page selection
-    page_indices = _parse_pages(pages, len(doc))
-
-    actual_prompt = prompt or PROMPTS[format]
-    results = []
-    total_t0 = time.time()
-
-    for page_idx in page_indices:
-        page = doc[page_idx]
-        # Render at 2x for better OCR quality
-        mat = fitz.Matrix(2.0, 2.0)
-        pix = page.get_pixmap(matrix=mat)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-        t0 = time.time()
-        text = await _run_ocr(img, actual_prompt, max_tokens)
-        elapsed_ms = (time.time() - t0) * 1000
-
-        results.append(OCRResponse(
-            text=text,
-            format=format.value,
-            model=MODEL_NAME,
-            elapsed_ms=round(elapsed_ms, 2),
-            image_width=img.width,
-            image_height=img.height,
-        ))
-
-    doc.close()
-    total_elapsed = (time.time() - total_t0) * 1000
-
-    return BatchOCRResponse(
-        results=results,
-        total_elapsed_ms=round(total_elapsed, 2),
-        count=len(results),
-    )
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _parse_pages(pages_str: Optional[str], total_pages: int) -> list[int]:
     """Parse a page range string like '1-5' or '1,3,5' into 0-indexed list."""

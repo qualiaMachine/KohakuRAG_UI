@@ -1,63 +1,74 @@
-# VLM OCR — Research & Sponsored Programs
+# Document Extraction — Research & Sponsored Programs
 
-Document OCR for grant award notices, budgets, terms & conditions, and other research administration documents. Powered by **Qwen2.5-VL-7B**, a state-of-the-art Vision Language Model that replaces traditional OCR (Tesseract) with structured understanding of complex document layouts.
+Structured data extraction from grant award notices, budgets, terms & conditions, and other research admin documents. Produces JSON for downstream systematic analysis.
 
-## Why VLMs over Tesseract?
+**Hybrid pipeline** — digital PDFs are processed instantly via text extraction; scanned pages and TIFFs fall back to VLM OCR automatically.
 
-| Feature | Tesseract | Qwen2.5-VL-7B |
-|---------|-----------|----------------|
-| Tables | Poor | Excellent — preserves structure |
-| Handwriting | Very poor | Good (77%+ across languages) |
-| Languages | Per-language models | 90+ languages, zero-shot |
-| Layout understanding | Rule-based | Semantic understanding |
-| Structured output | Text only | JSON, Markdown, LaTeX |
-| Context awareness | None | Understands document meaning |
+## Why this over Tesseract + regex?
+
+| | Tesseract + rules | This pipeline |
+|---|---|---|
+| Digital PDFs | Unnecessary OCR | Direct text extraction (instant) |
+| Scanned docs | OCR only, no structure | VLM: OCR + structuring in one shot |
+| Table extraction | Fragile heuristics | LLM understands layout semantically |
+| New doc formats | New rules each time | Zero-shot — just describe the format |
+| Structured output | Regex/rules per doc type | Structured JSON from any document |
+| Maintenance | High — rules break on layout changes | Low — prompts generalize |
 
 ## Architecture
 
 ```
 ┌─────────────────────┐
-│   Streamlit OCR UI  │  (CPU only, port 8501)
+│   Streamlit UI      │  (CPU, port 8501)
 │   Upload & preview  │
 └──────────┬──────────┘
            │ HTTP
            ▼
-┌─────────────────────┐
-│   OCR Server        │  (GPU, port 8090)
-│   Qwen2.5-VL-7B    │
-│   FastAPI           │
-└─────────────────────┘
+┌─────────────────────┐     ┌─────────────────────┐
+│   Extraction Server │────▶│   vLLM / Ollama      │
+│   FastAPI (CPU)     │     │   Qwen2.5-VL-7B     │
+│   Port 8090         │     │   Port 8000 (GPU)    │
+│                     │     │                      │
+│   PDF → text extract│     │   Text → JSON parse  │
+│   TIFF → send image │     │   Image → VLM OCR    │
+└─────────────────────┘     └─────────────────────┘
 ```
 
-**Two deployment options for the OCR server:**
-- **Option A: vLLM** (recommended) — Higher throughput, continuous batching, PagedAttention
-- **Option B: Transformers** — Simpler setup, good for development
+**Digital PDF path** (fast, most docs): PyMuPDF text extract → LLM parses text → JSON
+**Scan / TIFF path** (fallback): render page → VLM OCR + structuring → JSON
+
+The extraction server is CPU-only. All GPU work happens in vLLM/Ollama.
 
 ## Quick Start (Local)
 
-### 1. Install dependencies
+### 1. Start an LLM server
 
+Using vLLM:
 ```bash
-# GPU server (needs CUDA)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-pip install -r ocr_app/requirements_server.txt
-
-# Optional: flash attention for 2x speedup on A100/H100
-pip install flash-attn --no-build-isolation
+vllm serve Qwen/Qwen2.5-VL-7B-Instruct --dtype bfloat16 --max-model-len 8192
 ```
 
-### 2. Start the OCR server
+Or using Ollama (if already approved/available):
+```bash
+ollama serve
+ollama pull qwen2.5-vl:7b
+```
+
+### 2. Start the extraction server
 
 ```bash
-python ocr_app/scripts/ocr_server.py
-# Server starts at http://localhost:8090
-# First run downloads Qwen2.5-VL-7B (~15GB)
+pip install -r ocr_app/requirements_server.txt
+
+# For vLLM:
+LLM_BASE_URL=http://localhost:8000/v1 python ocr_app/scripts/ocr_server.py
+
+# For Ollama:
+LLM_BASE_URL=http://localhost:11434/v1 python ocr_app/scripts/ocr_server.py
 ```
 
 ### 3. Start the Streamlit UI
 
 ```bash
-# In a separate terminal
 pip install -r ocr_app/requirements_ui.txt
 streamlit run ocr_app/app.py
 # UI available at http://localhost:8501
@@ -69,26 +80,53 @@ streamlit run ocr_app/app.py
 # Health check
 curl http://localhost:8090/health
 
-# OCR an image (multipart upload)
-curl -X POST http://localhost:8090/ocr/upload \
-  -F "file=@document.png" \
-  -F "format=markdown"
+# Extract from PDF (auto-detects digital vs scanned)
+curl -X POST http://localhost:8090/extract/pdf \
+  -F "file=@award_notice.pdf" \
+  -F "format=award"
 
-# OCR a PDF
-curl -X POST http://localhost:8090/ocr/pdf \
-  -F "file=@paper.pdf" \
-  -F "format=text" \
+# Extract from TIFF/image (always uses VLM)
+curl -X POST http://localhost:8090/extract/image \
+  -F "file=@scanned_doc.tiff" \
+  -F "format=award"
+
+# Specific pages only
+curl -X POST http://localhost:8090/extract/pdf \
+  -F "file=@big_document.pdf" \
+  -F "format=budget" \
   -F "pages=1-5"
-
-# OCR with base64
-curl -X POST http://localhost:8090/ocr \
-  -H "Content-Type: application/json" \
-  -d '{"image_base64": "'$(base64 -w0 document.png)'", "format": "json"}'
 ```
+
+## Output Formats
+
+| Format | Use case | Output |
+|--------|----------|--------|
+| `award` | Grant award notices, NOAs, subaward agreements | JSON: PI, award #, amounts, dates, F&A rate, conditions |
+| `budget` | Budget pages, financial summaries, cost proposals | JSON: categories, line items, direct/indirect costs |
+| `terms` | Award terms, RSP policies, compliance docs | JSON: sections, regulatory citations, definitions |
+| `table` | Any tabular data | Markdown tables with exact numbers |
+| `key_values` | Forms, labeled fields, summary pages | Flat JSON key-value pairs |
+| `markdown` | General documents | Formatted Markdown |
+| `json` | Generic structured extraction | JSON |
+| `text` | Plain text | Raw text |
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Server health + model info |
+| `/info` | GET | Pipeline details and available formats |
+| `/extract/pdf` | POST | Extract from PDF (hybrid: text + VLM fallback) |
+| `/extract/image` | POST | Extract from image/TIFF (VLM OCR) |
 
 ## RunAI / PowerEdge Deployment
 
 See `ocr_app/deploy/runai_jobs.yaml` for complete RunAI job definitions.
+
+Three jobs:
+1. **ocr-vllm** — Qwen2.5-VL-7B via vLLM (GPU 0.80)
+2. **ocr-extract** — Extraction server (CPU only, calls vLLM over HTTP)
+3. **ocr-app** — Streamlit UI (CPU only)
 
 ### Pre-requisite: Download model to shared PVC
 
@@ -100,95 +138,32 @@ snapshot_download('Qwen/Qwen2.5-VL-7B-Instruct',
 "
 ```
 
-### Option A: vLLM backend (recommended)
+## Configuration
 
-```bash
-runai submit ocr-vllm \
-  --type inference \
-  --image vllm/vllm-openai:latest \
-  --gpu 0.80 --cpu 4 --memory 24Gi \
-  --pvc shared-models:/models \
-  --env HF_HOME=/models/.cache/huggingface \
-  --env HF_HUB_OFFLINE=1 \
-  --port 8090 \
-  -- --model Qwen/Qwen2.5-VL-7B-Instruct \
-    --dtype bfloat16 --port 8090 \
-    --max-model-len 8192 \
-    --limit-mm-per-prompt image=1
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_BASE_URL` | `http://localhost:8000/v1` | vLLM / Ollama endpoint |
+| `LLM_MODEL` | (auto-detected) | Model name for text parsing |
+| `VLM_BASE_URL` | (same as LLM) | Separate VLM endpoint (optional) |
+| `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` | Vision model for scans |
+| `OCR_PORT` | `8090` | Extraction server port |
+| `MIN_TEXT_LENGTH` | `50` | Min chars to consider a page "digital" |
+| `OCR_SERVICE_URL` | `http://localhost:8090` | UI → extraction server |
 
-### Option B: FastAPI + Transformers
-
-See the full command in `ocr_app/deploy/runai_jobs.yaml` (Option B section).
-
-### Deploy the UI
-
-```bash
-# Workspace (not Inference) for browser-accessible proxy URL
-# See runai_jobs.yaml for full UI deployment config
-```
-
-## GPU Requirements
+## GPU Requirements (vLLM server only)
 
 | GPU | Config | Notes |
 |-----|--------|-------|
-| A100 80GB | `--dtype bfloat16` | Best experience, no quantization |
+| A100 80GB | `--dtype bfloat16` | Best experience |
 | A100 40GB | `--dtype bfloat16 --max-model-len 4096` | Tight fit |
 | A6000 48GB | `--dtype bfloat16` | Works well |
 | L4/RTX 4090 24GB | `--quantization awq --max-model-len 4096` | Needs quantization |
 
-## Output Formats
+## Scaling for 20M+ documents
 
-| Format | Use case | Output |
-|--------|----------|--------|
-| `award` | Grant award notices, NOAs, subaward agreements | Structured JSON (PI, award #, amounts, dates, F&A rate, conditions) |
-| `budget` | Budget pages, financial summaries, cost proposals | Structured JSON (categories, line items, direct/indirect costs) |
-| `terms` | Award terms, RSP policies, compliance docs | Structured JSON (sections, regulatory citations, definitions) |
-| `table` | Any tabular data | Markdown tables with exact numbers |
-| `key_values` | Forms, labeled fields, summary pages | Flat JSON key-value pairs |
-| `markdown` | General documents | Formatted Markdown |
-| `json` | Generic structured extraction | JSON |
-| `text` | Plain text | Raw text |
-
-The `award`, `budget`, and `table` formats are tuned for exact numeric
-preservation — dollar amounts, F&A rates, CFDA numbers, and dates are
-extracted exactly as printed.
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Server health check |
-| `/info` | GET | Model info and capabilities |
-| `/ocr` | POST | OCR from base64 image |
-| `/ocr/upload` | POST | OCR from uploaded image file |
-| `/ocr/batch` | POST | OCR multiple base64 images |
-| `/ocr/pdf` | POST | OCR a PDF (renders pages as images) |
-
-## Configuration
-
-All settings via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OCR_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` | HuggingFace model ID |
-| `OCR_PORT` | `8090` | Server port |
-| `OCR_DEVICE` | `auto` | `cuda`, `cpu`, or `auto` |
-| `OCR_MAX_PIXELS` | `1003520` | Max image resolution |
-| `OCR_SERVICE_URL` | `http://localhost:8090` | UI -> server URL |
-| `VLLM_BASE_URL` | (empty) | Set to use vLLM backend |
-
-## Alternative Models
-
-The server supports any Qwen2.5-VL model. Swap via `OCR_MODEL`:
-
-| Model | VRAM | Best for |
-|-------|------|----------|
-| `Qwen/Qwen2.5-VL-7B-Instruct` | ~17GB | Default, great balance |
-| `Qwen/Qwen2.5-VL-3B-Instruct` | ~8GB | Lower VRAM, still good |
-| `Qwen/Qwen2.5-VL-72B-Instruct` | ~144GB | Maximum quality (multi-GPU) |
-
-Other VLMs worth considering (may require server code changes):
-- **GOT-OCR2.0** (580M) — Ultra-light, great for equations/LaTeX
-- **PaddleOCR-VL** (0.9B) — Fastest, Apache 2.0 licensed
-- **Chandra OCR 2** (9B) — Best for handwriting across 90 languages
+For high-volume batch processing:
+- The extraction server is stateless — run multiple replicas behind a load balancer
+- vLLM handles concurrent requests with continuous batching
+- Digital PDFs skip VLM entirely — throughput limited only by LLM text parsing speed
+- Consider a text-only LLM (e.g. Qwen2.5-7B-Instruct, smaller/faster) for the
+  text parsing path, with a separate VLM endpoint only for scans

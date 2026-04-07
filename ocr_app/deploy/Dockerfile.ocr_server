@@ -1,45 +1,22 @@
 # ============================================================================
-# OCR Server base environment — CUDA + Python + VLM deps (no app code)
+# Extraction Server base environment — CPU only (no GPU needed)
 #
-# This image provides the runtime environment only. App code is pulled
-# at container start via curl|tar in the RunAI job arguments.
+# The extraction server just does PDF text extraction (PyMuPDF) and
+# HTTP calls to vLLM/Ollama. All GPU work happens in the LLM/VLM server.
 #
 # Build:
-#   docker build -f ocr_app/deploy/Dockerfile.ocr_server -t vlm-ocr-server-env .
-#
-# Use in RunAI (app code pulled at runtime):
-#   Image: vlm-ocr-server-env
-#   Command: bash
-#   Arguments: -c "curl -sL <repo-tarball> | tar xz -C /tmp && cd /tmp/... && python3 ocr_app/scripts/ocr_server.py"
+#   docker build -f ocr_app/deploy/Dockerfile.ocr_server -t ocr-extract-env .
 # ============================================================================
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv python3-pip curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install PyTorch for CUDA 12.4
 RUN pip install --no-cache-dir \
-    torch torchvision --index-url https://download.pytorch.org/whl/cu124
+    fastapi uvicorn python-multipart httpx pymupdf Pillow
 
-# Install OCR server Python deps
-RUN pip install --no-cache-dir \
-    fastapi uvicorn python-multipart httpx pydantic \
-    'transformers>=4.45' accelerate qwen-vl-utils \
-    Pillow pymupdf
-
-# Optional: uncomment for 2x speedup on A100/H100
-# RUN pip install --no-cache-dir flash-attn --no-build-isolation
-
-ENV OCR_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
 ENV OCR_PORT=8090
 ENV OCR_HOST=0.0.0.0
-ENV OCR_DEVICE=auto
+ENV LLM_BASE_URL=http://localhost:8000/v1
+ENV VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
 
 EXPOSE 8090
