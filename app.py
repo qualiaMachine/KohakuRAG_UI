@@ -3129,9 +3129,6 @@ def _render_details(details: dict, *, image_store=None):
             # Skip sources without a verifiable URL — they can't be checked
         if links:
             st.markdown("Sources: " + " · ".join(links))
-        sm = details.get("supporting_materials", "")
-        if sm and sm != "is_blank":
-            st.caption(f"Supporting: {sm}")
 
     snippets = details.get("snippets", [])
     if snippets:
