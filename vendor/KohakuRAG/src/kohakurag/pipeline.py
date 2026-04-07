@@ -153,11 +153,12 @@ def humanize_ref_id(rid: str) -> str:
     display_rid = rid.removeprefix("s2_")
 
     # Standard author-year: luccioni2025c or li2024_topic
-    m = re.match(r"([a-zA-Z]+)(\d{4})", display_rid)
+    m = re.match(r"([a-zA-Z]+)(\d{4})([a-z]?)", display_rid)
     if m:
         author = m.group(1).capitalize()
         year = m.group(2)
-        label = f"{author} et al., {year}"
+        suffix = m.group(3)  # e.g. "c" in luccioni2025c
+        label = f"{author} et al., {year}{suffix}"
         if rid.startswith("s2_"):
             label += " [S2]"
         return label

@@ -816,7 +816,7 @@ Context:
 Return STRICT JSON with the following keys, in this order:
 - explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
-- answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
+- answer_value         (the numeric or categorical value; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438", "Water consumption", "1"; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
 JSON Answer:
@@ -839,7 +839,7 @@ Context:
 Return STRICT JSON with the following keys, in this order:
 - explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
-- answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
+- answer_value         (the numeric or categorical value; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
@@ -886,7 +886,7 @@ Context:
 Return STRICT JSON with the following keys:
 - explanation          (your multi-paragraph answer with inline [Author et al., Year] citations on EVERY factual sentence)
 - answer               (one-sentence summary of the key finding)
-- answer_value         (the most important numeric or categorical value, or "is_blank")
+- answer_value         (the key numeric or categorical value; use a range if sources report different values, e.g. "0.8–3,500 MWh"; or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -962,7 +962,7 @@ in parentheses so non-expert readers can grasp the scale. Use only these trusted
 Return STRICT JSON with the following keys:
 - explanation          (your improved multi-paragraph answer with inline [Author et al., Year] citations)
 - answer               (one-sentence summary of the key finding)
-- answer_value         (the most important numeric or categorical value, or "is_blank")
+- answer_value         (the key numeric or categorical value; use a range if sources report different values, e.g. "0.8–3,500 MWh"; or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -1638,30 +1638,55 @@ def run_single_query(
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
 
-    # Sources = unique document_ids from the retrieved chunks that were
-    # passed to the LLM.  These are the sources, derived entirely from
-    # retrieval metadata — never from the LLM response.
-    seen: set[str] = set()
-    ref_ids: list[str] = []
+    # Build reverse map: humanized label → document_id (for all retrieved chunks)
+    from kohakurag.pipeline import humanize_ref_id as _humanize
+    label_to_docid: dict[str, str] = {}
     for s in result.retrieval.snippets:
         doc_id = (s.metadata or {}).get("document_id", "")
-        if doc_id and doc_id not in seen:
-            seen.add(doc_id)
-            ref_ids.append(doc_id)
-
-    _debug(f"[CITE] ref_ids from retrieval: {ref_ids}")
-    _debug(f"[CITE] explanation preview: {(result.answer.explanation or '')[:200]!r}")
+        if doc_id:
+            label = _humanize(doc_id)
+            label_to_docid[label] = doc_id
+            # Also map without [S2] suffix
+            bare = label.removesuffix(" [S2]")
+            if bare != label:
+                label_to_docid[bare] = doc_id
 
     # Strip numeric citations copied from source text ([1], [5], etc.)
     explanation = result.answer.explanation or ""
     explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", explanation)
+
+    # Extract inline citations from the explanation text.
+    # Match both [Author et al., Year] and bare Author et al., Year
+    bracket_cites = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?,? \d{4}[a-z]?)\]", explanation)
+    bare_cites = re.findall(r"(?<!\[)([A-Z][a-z]+ et al\.,? \d{4}[a-z]?)(?!\])", explanation)
+    all_cited_labels = list(dict.fromkeys(bracket_cites + bare_cites))  # dedupe, preserve order
+
+    # Map cited labels back to document_ids via retrieval metadata
+    cited_ref_ids: list[str] = []
+    seen: set[str] = set()
+    for label in all_cited_labels:
+        doc_id = label_to_docid.get(label, "")
+        if doc_id and doc_id not in seen:
+            seen.add(doc_id)
+            cited_ref_ids.append(doc_id)
+
+    # Fallback: if LLM didn't cite anything inline, use top retrieved sources
+    if not cited_ref_ids:
+        for s in result.retrieval.snippets[:5]:
+            doc_id = (s.metadata or {}).get("document_id", "")
+            if doc_id and doc_id not in seen:
+                seen.add(doc_id)
+                cited_ref_ids.append(doc_id)
+
+    _debug(f"[CITE] inline citations found: {all_cited_labels}")
+    _debug(f"[CITE] ref_ids (from inline citations): {cited_ref_ids}")
 
     # Build updated result
     from kohakurag.pipeline import StructuredAnswer, StructuredAnswerResult
     updated_answer = StructuredAnswer(
         answer=result.answer.answer,
         answer_value=result.answer.answer_value,
-        ref_id=ref_ids,
+        ref_id=cited_ref_ids,
         explanation=explanation,
         ref_url=result.answer.ref_url,
         supporting_materials=result.answer.supporting_materials,
@@ -2612,6 +2637,21 @@ def _linkify_citations(
     text = re.sub(
         r"__([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4}[a-z]?))__",
         r"[\1]",
+        text,
+    )
+
+    # Wrap bare citations (no brackets/parens) in brackets so they get linkified.
+    # Matches "Author et al., 2025" or "Author et al. 2025" not already in []()
+    # Only wrap if the label matches a known source to avoid false positives.
+    def _wrap_bare(match: re.Match) -> str:
+        label = match.group(0)
+        if label in humanized_to_rid:
+            return f"[{label}]"
+        return label
+
+    text = re.sub(
+        r"(?<!\[)([A-Z][a-z]+ et al\.,? \d{4}[a-z]?)(?!\]|\))",
+        _wrap_bare,
         text,
     )
 
