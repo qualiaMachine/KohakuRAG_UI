@@ -809,6 +809,7 @@ You must follow these rules:
 - EVERY sentence that states a fact, number, or claim MUST have an inline citation in [brackets] using the Source label from the context header. Do NOT write any factual claim without a citation.
 - Do NOT use numeric citations like [1], [2] — always use the Source labels.
 - If multiple sources support a claim, cite all of them.
+- If sources report different values for the same metric, present the range and note the differences.
 
 Example: "Training GPT-3 consumed approximately 1,287 MWh [Luccioni et al., 2025], while LLaMA-3 required ~2,700 MWh [Han et al., 2024]."
 
@@ -818,7 +819,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question with inline [Source label] citations on every factual claim. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (2-5 sentences that directly answer the question with inline [Source label] citations on every factual claim. If multiple sources report different values, compare them — do not just pick one. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
@@ -836,6 +837,7 @@ You must follow these rules:
 - EVERY sentence that states a fact, number, or claim MUST have an inline citation in [brackets] using the Source label from the context header. Do NOT write any factual claim without a citation.
 - Do NOT use numeric citations like [1], [2] — always use the Source labels.
 - If multiple sources support a claim, cite all of them.
+- If sources report different values for the same metric, present the range and note the differences.
 
 Example: "Training GPT-3 consumed approximately 1,287 MWh [Luccioni et al., 2025], while LLaMA-3 required ~2,700 MWh [Han et al., 2024]."
 
@@ -845,7 +847,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question with inline [Source label] citations on every factual claim. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (2-5 sentences that directly answer the question with inline [Source label] citations on every factual claim. If multiple sources report different values, compare them — do not just pick one. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
