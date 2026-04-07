@@ -1633,7 +1633,7 @@ def run_single_query(
     send_images_to_llm: bool = False,
     research_mode: bool = False, max_tokens_override: int = 0,
 ):
-    """Run a single model query with retrieval-based citation injection."""
+    """Run a single model query with retrieval-driven source attribution."""
     result = _run_qa_sync(
         pipeline, question, top_k,
         best_guess=best_guess, max_retries=max_retries,
@@ -1642,61 +1642,41 @@ def run_single_query(
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
 
-    # --- Debug: initial LLM output ---
-    _debug(f"[CITE] Initial ref_ids from LLM: {result.answer.ref_id}")
-    _expl = result.answer.explanation or ""
-    _debug(f"[CITE] Initial explanation preview: {_expl[:200]!r}")
-
-    # Strip any numeric citations the LLM copied from source text ([1], [5], etc.)
-    explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", _expl)
-
-    # Deterministic citation injection: map each uncited sentence to its
-    # best-matching retrieved chunk via word overlap.  No LLM calls — this
-    # is purely driven by retrieval metadata.  Every chunk comes from the
-    # knowledge base with a known document_id, so the mapping is reliable.
-    injected = RAGPipeline._inject_missing_citations(
-        explanation, result.retrieval.snippets[:15]
-    )
-    _debug(f"[CITE] After injection preview: {injected[:200]!r}")
-
-    # Extract all cited ref_ids from the final text and merge with
-    # the LLM's original ref_id list for the Sources footer.
-    from kohakurag.pipeline import humanize_ref_id as _humanize
-    raw_cited = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", injected)
-    humanized_cited = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?, \d{4}(?:\s*\[S2\])?)\]", injected)
-
-    # Build reverse map: humanized label → raw ref_id
-    label_to_rid: dict[str, str] = {}
-    valid_doc_ids: set[str] = set()
+    # Sources = unique document_ids from retrieved chunks, period.
+    # These chunks were passed to the LLM, so they ARE the sources.
+    seen: set[str] = set()
+    retrieval_ref_ids: list[str] = []
     for s in result.retrieval.snippets:
         doc_id = (s.metadata or {}).get("document_id", "")
-        if doc_id:
-            label_to_rid[_humanize(doc_id)] = doc_id
-            # Also map without [S2] suffix
-            label = _humanize(doc_id)
-            bare = label.removesuffix(" [S2]")
-            if bare != label:
-                label_to_rid[bare] = doc_id
-            valid_doc_ids.add(doc_id)
+        if doc_id and doc_id not in seen:
+            seen.add(doc_id)
+            retrieval_ref_ids.append(doc_id)
 
-    merged_ids: list[str] = list(result.answer.ref_id or [])
-    for rid in raw_cited:
-        if rid not in merged_ids and rid in valid_doc_ids:
-            merged_ids.append(rid)
-    for label in humanized_cited:
-        rid = label_to_rid.get(label, "")
-        if rid and rid not in merged_ids and rid in valid_doc_ids:
-            merged_ids.append(rid)
+    # If the LLM returned ref_ids, keep only those that are in the
+    # retrieved set (already validated upstream). Otherwise use all
+    # retrieved sources.
+    llm_refs = result.answer.ref_id or []
+    if llm_refs:
+        # LLM told us which sources it used — trust that (already validated)
+        ref_ids = llm_refs
+    else:
+        # LLM didn't specify — use top retrieved sources
+        ref_ids = retrieval_ref_ids[:5]
 
-    _debug(f"[CITE] Final ref_ids: {merged_ids}")
+    _debug(f"[CITE] ref_ids: {ref_ids} (from {'LLM' if llm_refs else 'retrieval'})")
+    _debug(f"[CITE] explanation preview: {(result.answer.explanation or '')[:200]!r}")
 
-    # Build updated result with injected citations
+    # Strip numeric citations copied from source text ([1], [5], etc.)
+    explanation = result.answer.explanation or ""
+    explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", explanation)
+
+    # Build updated result
     from kohakurag.pipeline import StructuredAnswer, StructuredAnswerResult
     updated_answer = StructuredAnswer(
         answer=result.answer.answer,
         answer_value=result.answer.answer_value,
-        ref_id=merged_ids,
-        explanation=injected,
+        ref_id=ref_ids,
+        explanation=explanation,
         ref_url=result.answer.ref_url,
         supporting_materials=result.answer.supporting_materials,
     )
