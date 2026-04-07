@@ -198,7 +198,8 @@ _RE_ANY_CITATION = re.compile(
 def format_snippets(snippets: Sequence[ContextSnippet]) -> str:
     """Render snippets as formatted context string for LLM prompt.
 
-    Format: [cite_as="Author et al., Year" ref_id=doc] snippet text
+    Format: [Source: "Author et al., Year"] snippet text
+    Only shows the human-readable cite_as label — no raw ref_ids.
     Snippets separated by --- lines for readability.
     """
     blocks: list[str] = []
@@ -208,7 +209,7 @@ def format_snippets(snippets: Sequence[ContextSnippet]) -> str:
         doc_id = str(meta.get("document_id", "unknown"))
 
         cite_label = humanize_ref_id(doc_id)
-        header = f'[cite_as="{cite_label}" ref_id={doc_id}] '
+        header = f'[Source: "{cite_label}"] '
         text = snippet.text.strip()
         # Strip numeric bibliography citations from source text so the LLM
         # doesn't copy them instead of using [Author et al., Year] format.
