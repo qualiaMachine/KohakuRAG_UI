@@ -121,22 +121,41 @@ curl -X POST http://localhost:8090/extract/pdf \
 
 ## RunAI / PowerEdge Deployment
 
-See `ocr_app/deploy/runai_jobs.yaml` for complete RunAI job definitions.
+**Full step-by-step guide:** [docs/deploy-runai.md](docs/deploy-runai.md)
 
-Three jobs:
-1. **ocr-vllm** — Qwen2.5-VL-7B via vLLM (GPU 0.80)
-2. **ocr-extract** — Extraction server (CPU only, calls vLLM over HTTP)
-3. **ocr-app** — Streamlit UI (CPU only)
+Covers vLLM setup, extraction server, Streamlit UI, batch workspace,
+data volume setup, GPU sizing, troubleshooting.
 
-### Pre-requisite: Download model to shared PVC
+### Summary
+
+| Workload | Type | GPU | Purpose |
+|----------|------|-----|---------|
+| `ocr-vllm` | Inference | 0.80 | Qwen2.5-VL-7B (text parsing + VLM OCR) |
+| `ocr-extract` | Inference | 0 | Extraction server (optional, for API/UI) |
+| `ocr-app` | Workspace | 0 | Streamlit UI (optional, for PoC demos) |
+| `ocr-batch` | Workspace | 0 | Batch processing (for production runs) |
+
+## Batch Processing
+
+For processing large document collections (14TB+, millions of docs):
 
 ```bash
-python3 -c "
-from huggingface_hub import snapshot_download
-snapshot_download('Qwen/Qwen2.5-VL-7B-Instruct',
-                  cache_dir='/models/.cache/huggingface')
-"
+python ocr_app/scripts/batch_extract.py \
+    --input-dir /data/documents \
+    --output-dir /data/extracted \
+    --format award \
+    --concurrency 4 \
+    --resume
 ```
+
+Features:
+- Walks directories of PDFs/TIFFs, writes one JSON per document
+- Concurrent async requests to vLLM (configurable concurrency)
+- Resumable — tracks completed files, re-run with `--resume` after failures
+- Preserves subdirectory structure in output
+- Per-file progress logging with throughput stats
+
+See [docs/deploy-runai.md](docs/deploy-runai.md) for the batch workspace setup.
 
 ## Configuration
 
@@ -162,8 +181,35 @@ snapshot_download('Qwen/Qwen2.5-VL-7B-Instruct',
 ## Scaling for 20M+ documents
 
 For high-volume batch processing:
-- The extraction server is stateless — run multiple replicas behind a load balancer
-- vLLM handles concurrent requests with continuous batching
+- Use `batch_extract.py` with `--concurrency 4-16` depending on GPU headroom
 - Digital PDFs skip VLM entirely — throughput limited only by LLM text parsing speed
+- vLLM handles concurrent requests with continuous batching internally
+- Resumable — `--resume` skips already-completed files after failures
 - Consider a text-only LLM (e.g. Qwen2.5-7B-Instruct, smaller/faster) for the
   text parsing path, with a separate VLM endpoint only for scans
+
+## Documentation
+
+| Doc | Description |
+|-----|-------------|
+| [README.md](README.md) | This file — overview, quick start, API |
+| [docs/deploy-runai.md](docs/deploy-runai.md) | Full RunAI deployment guide (vLLM, extraction server, batch workspace, troubleshooting) |
+| [deploy/runai_jobs.yaml](deploy/runai_jobs.yaml) | RunAI job configs (copy-paste reference) |
+
+## Key Files
+
+```
+ocr_app/
+├── app.py                          # Streamlit UI (interactive PoC)
+├── scripts/
+│   ├── ocr_server.py               # FastAPI extraction server
+│   └── batch_extract.py            # Batch processing script
+├── deploy/
+│   └── runai_jobs.yaml             # RunAI job configs
+├── docs/
+│   └── deploy-runai.md             # Step-by-step RunAI deployment guide
+├── requirements_server.txt         # Server deps (lightweight, no GPU)
+├── requirements_ui.txt             # Streamlit UI deps
+├── .env.example                    # Environment variable template
+└── README.md                       # This file
+```
