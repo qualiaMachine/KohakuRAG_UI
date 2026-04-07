@@ -766,9 +766,9 @@ If a metric does not map to any comparison above, omit the parenthetical.
 SYSTEM_PROMPT = ("""
 You must answer strictly based on the provided context snippets.
 Do NOT use external knowledge or assumptions.
-If the context does not clearly support an answer, you must output the literal string "is_blank" for both answer_value and ref_id.
+If the context does not clearly support an answer, you must output the literal string "is_blank" for answer_value.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
-IMPORTANT: When you use information from a context snippet, you MUST cite it using the exact cite_as label from the context header in square brackets (e.g., [Luccioni et al., 2025] or [AI Hardware Comparison, 2025]). Do NOT use raw ref_ids or numeric citations like [1]. Include every cited ref_id in the ref_id list. Never give an answer without citing the source.
+IMPORTANT: When you use information from a context snippet, you MUST cite it using the Source label from the context header in square brackets (e.g., [Luccioni et al., 2025] or [AI Hardware Comparison, 2025]). Do NOT use numeric citations like [1]. Never give an answer without citing the source.
 
 """ + METRIC_COMPARISONS).strip()
 
@@ -778,7 +778,7 @@ If the context strongly supports an answer, answer normally.
 If the context only partially or weakly supports an answer, still provide your best guess but set confidence to "low".
 Set confidence to "high" when the context clearly and directly answers the question.
 For True/False questions, you MUST output "1" for True and "0" for False in answer_value. Do NOT output the words "True" or "False".
-IMPORTANT: Cite sources using the exact cite_as label from the context header in square brackets (e.g., [Luccioni et al., 2025] or [AI Hardware Comparison, 2025]). Do NOT use raw ref_ids or numeric citations like [1].
+IMPORTANT: Cite sources using the Source label from the context header in square brackets (e.g., [Luccioni et al., 2025] or [AI Hardware Comparison, 2025]). Do NOT use numeric citations like [1].
 
 """ + METRIC_COMPARISONS).strip()
 
@@ -806,7 +806,7 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use [Author et al., Year] format from the cite_as labels in context headers. Do NOT use raw ref_ids or numeric citations like [1], [2].
+- Cite ALL relevant sources, not just one. Use the Source labels from context headers in [brackets]. Do NOT use numeric citations like [1], [2].
 
 Question: {question}
 
@@ -814,10 +814,9 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
-- ref_id               (list of ALL document ids (ref_id values) from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
 JSON Answer:
@@ -830,7 +829,7 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use [Author et al., Year] format from the cite_as labels in context headers. Do NOT use raw ref_ids or numeric citations like [1], [2].
+- Cite ALL relevant sources, not just one. Use the Source labels from context headers in [brackets]. Do NOT use numeric citations like [1], [2].
 
 Question: {question}
 
@@ -838,11 +837,10 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (ONLY the numeric or categorical value, e.g. "1438", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
-- ref_id               (list of ALL document ids from the context used as evidence, e.g. ["wu2021a", "luccioni2025c"]; or "is_blank". Include every source that supports the answer.)
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
 JSON Answer:
@@ -850,17 +848,17 @@ JSON Answer:
 
 USER_TEMPLATE_RESEARCH = """
 You will be given a question and context snippets taken from academic papers and reports.
-Each snippet has a header with cite_as (the citation label to use) and ref_id (the document id).
+Each snippet has a header with the Source label (the citation label to use).
 
 Your task is to write a comprehensive, multi-paragraph answer that synthesizes information \
 from the provided sources, similar to a literature review. Follow these rules:
 
 1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
 2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
-square brackets immediately after, using the cite_as label from the context header. \
+square brackets immediately after, using the Source label from the context header. \
 Example: "Training GPT-3 consumed approximately 1,287 MWh of energy [Luccioni et al., 2025]." \
 Do NOT write any factual claim without a citation.
-3. Do NOT use numeric citations like [1], [2], [5] — always use [Author et al., Year] format.
+3. Do NOT use numeric citations like [1], [2], [5] — always use the Source labels.
 4. Include specific numbers, statistics, and quantitative findings when available in context. \
 For key metrics, add a brief real-world comparison in parentheses so non-experts can grasp \
 the scale (e.g., "3,500 MWh (enough to power ~3,500 US homes for a month)").
@@ -889,7 +887,6 @@ Return STRICT JSON with the following keys:
 - explanation          (your multi-paragraph answer with inline [Author et al., Year] citations on EVERY factual sentence)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
-- ref_id               (list of ALL document ref_ids cited in your answer, e.g. ["luccioni2025c", "islam2025"])
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -966,7 +963,6 @@ Return STRICT JSON with the following keys:
 - explanation          (your improved multi-paragraph answer with inline [Author et al., Year] citations)
 - answer               (one-sentence summary of the key finding)
 - answer_value         (the most important numeric or categorical value, or "is_blank")
-- ref_id               (list of ALL document ref_ids cited in your answer)
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -1642,28 +1638,18 @@ def run_single_query(
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
 
-    # Sources = unique document_ids from retrieved chunks, period.
-    # These chunks were passed to the LLM, so they ARE the sources.
+    # Sources = unique document_ids from the retrieved chunks that were
+    # passed to the LLM.  These are the sources, derived entirely from
+    # retrieval metadata — never from the LLM response.
     seen: set[str] = set()
-    retrieval_ref_ids: list[str] = []
+    ref_ids: list[str] = []
     for s in result.retrieval.snippets:
         doc_id = (s.metadata or {}).get("document_id", "")
         if doc_id and doc_id not in seen:
             seen.add(doc_id)
-            retrieval_ref_ids.append(doc_id)
+            ref_ids.append(doc_id)
 
-    # If the LLM returned ref_ids, keep only those that are in the
-    # retrieved set (already validated upstream). Otherwise use all
-    # retrieved sources.
-    llm_refs = result.answer.ref_id or []
-    if llm_refs:
-        # LLM told us which sources it used — trust that (already validated)
-        ref_ids = llm_refs
-    else:
-        # LLM didn't specify — use top retrieved sources
-        ref_ids = retrieval_ref_ids[:5]
-
-    _debug(f"[CITE] ref_ids: {ref_ids} (from {'LLM' if llm_refs else 'retrieval'})")
+    _debug(f"[CITE] ref_ids from retrieval: {ref_ids}")
     _debug(f"[CITE] explanation preview: {(result.answer.explanation or '')[:200]!r}")
 
     # Strip numeric citations copied from source text ([1], [5], etc.)
