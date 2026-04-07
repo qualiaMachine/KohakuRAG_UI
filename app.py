@@ -1674,11 +1674,11 @@ def run_single_query(
     explanation = result.answer.explanation or ""
     explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", explanation)
 
-    # Extract inline citations from the explanation text.
-    # Match both [Author et al., Year] and bare Author et al., Year
-    bracket_cites = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?,? \d{4}[a-z]?)\]", explanation)
-    bare_cites = re.findall(r"(?<!\[)([A-Z][a-z]+ et al\.,? \d{4}[a-z]?)(?!\])", explanation)
-    all_cited_labels = list(dict.fromkeys(bracket_cites + bare_cites))  # dedupe, preserve order
+    # Extract inline [bracketed] citations from the explanation text.
+    # Only match proper [Author et al., Year] format — bare citations are
+    # the model's problem, not ours.
+    cited_labels = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?,? \d{4}[a-z]?)\]", explanation)
+    all_cited_labels = list(dict.fromkeys(cited_labels))  # dedupe, preserve order
 
     # Map cited labels back to document_ids via retrieval metadata
     cited_ref_ids: list[str] = []
@@ -2656,21 +2656,6 @@ def _linkify_citations(
     text = re.sub(
         r"__([A-Z][a-z]+(?:\s+et\s+al\.)?(?:,?\s*\d{4}[a-z]?))__",
         r"[\1]",
-        text,
-    )
-
-    # Wrap bare citations (no brackets/parens) in brackets so they get linkified.
-    # Matches "Author et al., 2025" or "Author et al. 2025" not already in []()
-    # Only wrap if the label matches a known source to avoid false positives.
-    def _wrap_bare(match: re.Match) -> str:
-        label = match.group(0)
-        if label in humanized_to_rid:
-            return f"[{label}]"
-        return label
-
-    text = re.sub(
-        r"(?<!\[)([A-Z][a-z]+ et al\.,? \d{4}[a-z]?)(?!\]|\))",
-        _wrap_bare,
         text,
     )
 
