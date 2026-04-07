@@ -1418,6 +1418,8 @@ class RAGPipeline:
         # Matches both [luccioni2025c] and [Luccioni et al., 2025] formats.
         has_ref_citations = bool(_RE_ANY_CITATION.search(explanation))
         has_numeric_citations = bool(re.search(r"\[\d+\]", explanation))
+        logger.debug("[CITE:verify] has_ref=%s has_numeric=%s len=%d",
+                     has_ref_citations, has_numeric_citations, len(explanation))
 
         if has_ref_citations and not has_numeric_citations:
             # Check citation density — if fewer than 30% of factual sentences
@@ -1516,19 +1518,34 @@ class RAGPipeline:
         # dumped source text or prompt fragments into the answer.
         is_bloated = len(rewritten) > 2 * len(clean_explanation) + 200
 
+        logger.debug("[CITE:verify] LLM rewrite: echo=%s bloated=%s len=%d (orig=%d)",
+                     is_prompt_echo, is_bloated, len(rewritten), len(clean_explanation))
+        logger.debug("[CITE:verify] LLM rewrite preview: %.200s", rewritten[:200])
+
         # Strip any stray numeric citations from the rewritten text
         rewritten = re.sub(r"\[\d+(?:\s*,\s*\d+)*\]", "", rewritten)
 
+        has_citations = bool(_RE_ANY_CITATION.search(rewritten))
         # Validate: only use if it actually has citations, isn't a prompt echo,
         # and isn't unreasonably bloated.
-        if is_prompt_echo or is_bloated or not _RE_ANY_CITATION.search(rewritten):
+        if is_prompt_echo or is_bloated or not has_citations:
             # LLM rewrite failed — fall back to original explanation.
+            logger.debug("[CITE:verify] Rejecting LLM rewrite (echo=%s bloated=%s has_cite=%s), using fallback",
+                         is_prompt_echo, is_bloated, has_citations)
             rewritten = clean_explanation
+        else:
+            logger.debug("[CITE:verify] Accepted LLM rewrite with citations")
 
         # --- Sentence-level citation injection fallback ---
         # For any sentence that still lacks a [ref_id] citation, find the
         # best-matching source chunk via word overlap and inject its ref_id.
+        before_inject = rewritten
         rewritten = self._inject_missing_citations(rewritten, result.retrieval.snippets[:10])
+        if rewritten != before_inject:
+            logger.debug("[CITE:verify] Heuristic injection modified text")
+            logger.debug("[CITE:verify] After injection preview: %.200s", rewritten[:200])
+        else:
+            logger.debug("[CITE:verify] Heuristic injection: no changes (all sentences already cited or no match)")
 
         # Extract all citations from the final text and merge with the
         # original ref_id list so the Sources footer stays in sync.

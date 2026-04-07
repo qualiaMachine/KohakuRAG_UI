@@ -1642,9 +1642,18 @@ def run_single_query(
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
 
+    # --- Debug: initial LLM output ---
+    _debug(f"[CITE] Initial ref_ids from LLM: {result.answer.ref_id}")
+    _expl = result.answer.explanation or ""
+    _has_inline = bool(re.search(r"\[[A-Z]", _expl))
+    _debug(f"[CITE] Initial explanation has inline citations: {_has_inline}")
+    _debug(f"[CITE] Initial explanation preview: {_expl[:200]!r}")
+
     # Post-hoc citation verification: if the explanation lacks inline
     # [ref_id] citations, run a lightweight LLM pass to insert them.
-    # Conditional — skips the LLM call if citations are already present.
+    # Track whether citations were heuristically injected so we can skip
+    # attribution verification (which tends to strip them with weak models).
+    had_citations_before = _has_inline
     try:
         loop = asyncio.new_event_loop()
         try:
@@ -1653,24 +1662,34 @@ def run_single_query(
             )
         finally:
             loop.close()
+        _debug(f"[CITE] After verify_citations ref_ids: {result.answer.ref_id}")
+        _debug(f"[CITE] After verify_citations preview: {(result.answer.explanation or '')[:200]!r}")
     except Exception as e:
-        _debug(f"Citation verification skipped: {e}")
+        _debug(f"[CITE] Citation verification skipped: {e}")
 
-    # Claim-attribution verification (OpenScholar Section 2.2 step 3):
-    # Check that each cited statement is actually supported by its source.
-    # Runs in BOTH research and standard modes — removes unsupported citations
-    # rather than leaving misleading attributions.
-    try:
-        loop = asyncio.new_event_loop()
+    # Claim-attribution verification: ONLY run when the LLM originally
+    # produced inline citations — if they were heuristically injected,
+    # the word-overlap check is already conservative and the attribution
+    # verifier tends to incorrectly strip valid citations with weak models.
+    if had_citations_before:
         try:
-            result = loop.run_until_complete(
-                pipeline.verify_claim_attribution(result, ATTRIBUTION_VERIFY_PROMPT)
-            )
-        finally:
-            loop.close()
-    except Exception as e:
-        _debug(f"Claim attribution verification skipped: {e}")
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(
+                    pipeline.verify_claim_attribution(result, ATTRIBUTION_VERIFY_PROMPT)
+                )
+            finally:
+                loop.close()
+            _debug(f"[CITE] After claim_attribution ref_ids: {result.answer.ref_id}")
+            _attr_timing = result.timing.get("claims_checked", "?")
+            _attr_unsup = result.timing.get("claims_unsupported", "?")
+            _debug(f"[CITE] Attribution: {_attr_timing} claims checked, {_attr_unsup} unsupported")
+        except Exception as e:
+            _debug(f"[CITE] Claim attribution verification skipped: {e}")
+    else:
+        _debug("[CITE] Claim attribution skipped: citations were heuristically injected")
 
+    _debug(f"[CITE] Final explanation preview: {(result.answer.explanation or '')[:200]!r}")
     return result
 
 
