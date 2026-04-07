@@ -806,7 +806,11 @@ You must follow these rules:
 - If the context does not clearly support an answer, use "is_blank" for all fields except explanation.
 - For unanswerable questions, set answer to "Unable to answer with confidence based on the provided documents."
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use the Source labels from context headers in [brackets]. Do NOT use numeric citations like [1], [2].
+- EVERY sentence that states a fact, number, or claim MUST have an inline citation in [brackets] using the Source label from the context header. Do NOT write any factual claim without a citation.
+- Do NOT use numeric citations like [1], [2] — always use the Source labels.
+- If multiple sources support a claim, cite all of them.
+
+Example: "Training GPT-3 consumed approximately 1,287 MWh [Luccioni et al., 2025], while LLaMA-3 required ~2,700 MWh [Han et al., 2024]."
 
 Question: {question}
 
@@ -814,7 +818,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (1-3 sentences that directly answer the question with inline [Source label] citations on every factual claim. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
@@ -829,7 +833,11 @@ You must follow these rules:
 - If the context clearly answers the question, answer normally with confidence "high".
 - If the context only partially relates, provide your best-effort answer with confidence "low".
 - For True/False questions: answer_value must be "1" for True or "0" for False (not the words "True" or "False").
-- Cite ALL relevant sources, not just one. Use the Source labels from context headers in [brackets]. Do NOT use numeric citations like [1], [2].
+- EVERY sentence that states a fact, number, or claim MUST have an inline citation in [brackets] using the Source label from the context header. Do NOT write any factual claim without a citation.
+- Do NOT use numeric citations like [1], [2] — always use the Source labels.
+- If multiple sources support a claim, cite all of them.
+
+Example: "Training GPT-3 consumed approximately 1,287 MWh [Luccioni et al., 2025], while LLaMA-3 required ~2,700 MWh [Han et al., 2024]."
 
 Question: {question}
 
@@ -837,7 +845,7 @@ Context:
 {context}
 
 Return STRICT JSON with the following keys, in this order:
-- explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
+- explanation          (1-3 sentences that directly answer the question with inline [Source label] citations on every factual claim. When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
 - answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
