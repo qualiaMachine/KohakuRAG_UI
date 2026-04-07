@@ -2008,7 +2008,7 @@ def main():
 
             # -- Query settings (unchanged) --
             st.divider()
-            top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
+            top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=10)
             best_guess = st.toggle("Allow best-guess answers", value=True,
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
             research_mode = st.toggle(
@@ -2112,7 +2112,7 @@ def main():
             st.header("Settings")
             mode = st.radio("Mode", ["Single model", "Ensemble"], horizontal=True)
             precision = st.selectbox("Precision", ["4bit", "bf16", "fp16", "auto"], index=0)
-            top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=8)
+            top_k = st.slider("Retrieved chunks (top_k)", min_value=1, max_value=20, value=10)
             best_guess = st.toggle("Allow best-guess answers", value=True,
                                    help="When enabled, out-of-scope questions get a best-effort answer labelled as a guess.")
             research_mode = st.toggle(
