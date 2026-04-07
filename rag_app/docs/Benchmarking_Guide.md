@@ -1,5 +1,10 @@
 # Benchmarking Guide
 
+> **Note:** The benchmarking scripts (`run_experiment.py`, `run_full_benchmark.py`,
+> `plot_*.py`, etc.) were removed during the repo reorganization into a multi-app
+> layout. This guide is preserved as reference for the methodology and approach.
+> PowerEdge benchmark results are in `rag_app/artifacts/plots/`.
+
 How to run experiments, compare models, use multiple GPUs, and add new models
 to the WattBot RAG evaluation pipeline.
 

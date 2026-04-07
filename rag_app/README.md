@@ -91,9 +91,7 @@ rag_app/
 │   ├── add_papers.py               # Corpus management
 │   ├── run_app.sh / start_app.sh   # Launch helpers
 ├── deploy/
-│   ├── runai_jobs.yaml             # RunAI deployment configs
-│   ├── Dockerfile.streamlit        # Streamlit env (CPU only)
-│   └── Dockerfile.embedding        # Embedding env (GPU)
+│   └── runai_jobs.yaml             # RunAI deployment configs
 ├── data/
 │   ├── corpus/                     # Document chunks
 │   ├── embeddings/                 # Vector databases

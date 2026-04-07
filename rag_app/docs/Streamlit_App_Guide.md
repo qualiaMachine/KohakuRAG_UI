@@ -7,21 +7,16 @@ and how to deploy it on the PowerEdge via Run:ai.
 
 ## 1) Quick start
 
-The app supports three backends, selected via `--mode`:
+The app supports two backends for RunAI/PowerEdge deployment:
 
 ```bash
-# Bedrock mode (default — no GPU required, uses AWS API)
-streamlit run app.py -- --mode bedrock
+# Local mode (requires CUDA GPU)
+streamlit run rag_app/app.py -- --mode local
 
-# Local mode (requires CUDA GPU + local_requirements.txt)
-streamlit run app.py -- --mode local
-
-# Remote mode (connects to vLLM + embedding servers over HTTP)
+# Remote mode (connects to vLLM + embedding servers over HTTP — recommended for RunAI)
 RAG_MODE=remote VLLM_BASE_URL=http://... EMBEDDING_SERVICE_URL=http://... \
-  streamlit run app.py -- --mode remote
+  streamlit run rag_app/app.py -- --mode remote
 ```
-
-If `--mode` is omitted the app defaults to **bedrock**.
 
 The app opens at `http://localhost:8501` (or the next free port).
 On a remote server, forward the port:
@@ -33,29 +28,25 @@ ssh -L 8501:localhost:8501 user@poweredge
 
 ### Prerequisites
 
-**For local mode:** everything in `local_requirements.txt` must be
-installed — the same deps used for benchmarking.
+**For local mode:** everything in `requirements_local.txt` must be installed.
 
 ```bash
-uv pip install -r local_requirements.txt
+uv pip install -r rag_app/requirements_local.txt
 ```
 
-**For Bedrock mode:** install the torch-free dependencies instead:
+**For remote mode:** minimal deps only — no torch/GPU libraries needed.
 
 ```bash
-uv pip install -r bedrock_requirements.txt
+uv pip install -r rag_app/requirements_remote.txt
 ```
 
-If both requirement files are installed and a GPU is detected, the sidebar
-shows a toggle to switch between local and Bedrock models at runtime.
-
-You also need the vector database built (same as for experiments):
+You also need the vector database built:
 
 ```bash
-cd vendor/KohakuRAG
+cd rag_app/vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
-cd ../..
-ls -lh data/embeddings/wattbot_jinav4.db   # verify
+cd ../../..
+ls -lh rag_app/data/embeddings/wattbot_jinav4.db   # verify
 ```
 
 ---
