@@ -1633,7 +1633,7 @@ def run_single_query(
     send_images_to_llm: bool = False,
     research_mode: bool = False, max_tokens_override: int = 0,
 ):
-    """Run a single model query with post-hoc citation verification."""
+    """Run a single model query with retrieval-based citation injection."""
     result = _run_qa_sync(
         pipeline, question, top_k,
         best_guess=best_guess, max_retries=max_retries,
@@ -1645,52 +1645,68 @@ def run_single_query(
     # --- Debug: initial LLM output ---
     _debug(f"[CITE] Initial ref_ids from LLM: {result.answer.ref_id}")
     _expl = result.answer.explanation or ""
-    _has_inline = bool(re.search(r"\[[A-Z]", _expl))
-    _debug(f"[CITE] Initial explanation has inline citations: {_has_inline}")
     _debug(f"[CITE] Initial explanation preview: {_expl[:200]!r}")
 
-    # Post-hoc citation verification: if the explanation lacks inline
-    # [ref_id] citations, run a lightweight LLM pass to insert them.
-    # Track whether citations were heuristically injected so we can skip
-    # attribution verification (which tends to strip them with weak models).
-    had_citations_before = _has_inline
-    try:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(
-                pipeline.verify_citations(result, CITATION_VERIFY_PROMPT)
-            )
-        finally:
-            loop.close()
-        _debug(f"[CITE] After verify_citations ref_ids: {result.answer.ref_id}")
-        _debug(f"[CITE] After verify_citations preview: {(result.answer.explanation or '')[:200]!r}")
-    except Exception as e:
-        _debug(f"[CITE] Citation verification skipped: {e}")
+    # Strip any numeric citations the LLM copied from source text ([1], [5], etc.)
+    explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", _expl)
 
-    # Claim-attribution verification: ONLY run when the LLM originally
-    # produced inline citations — if they were heuristically injected,
-    # the word-overlap check is already conservative and the attribution
-    # verifier tends to incorrectly strip valid citations with weak models.
-    if had_citations_before:
-        try:
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(
-                    pipeline.verify_claim_attribution(result, ATTRIBUTION_VERIFY_PROMPT)
-                )
-            finally:
-                loop.close()
-            _debug(f"[CITE] After claim_attribution ref_ids: {result.answer.ref_id}")
-            _attr_timing = result.timing.get("claims_checked", "?")
-            _attr_unsup = result.timing.get("claims_unsupported", "?")
-            _debug(f"[CITE] Attribution: {_attr_timing} claims checked, {_attr_unsup} unsupported")
-        except Exception as e:
-            _debug(f"[CITE] Claim attribution verification skipped: {e}")
-    else:
-        _debug("[CITE] Claim attribution skipped: citations were heuristically injected")
+    # Deterministic citation injection: map each uncited sentence to its
+    # best-matching retrieved chunk via word overlap.  No LLM calls — this
+    # is purely driven by retrieval metadata.  Every chunk comes from the
+    # knowledge base with a known document_id, so the mapping is reliable.
+    injected = RAGPipeline._inject_missing_citations(
+        explanation, result.retrieval.snippets[:15]
+    )
+    _debug(f"[CITE] After injection preview: {injected[:200]!r}")
 
-    _debug(f"[CITE] Final explanation preview: {(result.answer.explanation or '')[:200]!r}")
-    return result
+    # Extract all cited ref_ids from the final text and merge with
+    # the LLM's original ref_id list for the Sources footer.
+    from kohakurag.pipeline import humanize_ref_id as _humanize
+    raw_cited = re.findall(r"\[([a-z][a-z0-9_]*\d{4}[a-z]?)\]", injected)
+    humanized_cited = re.findall(r"\[([A-Z][A-Za-z ]+(?:et al\.)?, \d{4}(?:\s*\[S2\])?)\]", injected)
+
+    # Build reverse map: humanized label → raw ref_id
+    label_to_rid: dict[str, str] = {}
+    valid_doc_ids: set[str] = set()
+    for s in result.retrieval.snippets:
+        doc_id = (s.metadata or {}).get("document_id", "")
+        if doc_id:
+            label_to_rid[_humanize(doc_id)] = doc_id
+            # Also map without [S2] suffix
+            label = _humanize(doc_id)
+            bare = label.removesuffix(" [S2]")
+            if bare != label:
+                label_to_rid[bare] = doc_id
+            valid_doc_ids.add(doc_id)
+
+    merged_ids: list[str] = list(result.answer.ref_id or [])
+    for rid in raw_cited:
+        if rid not in merged_ids and rid in valid_doc_ids:
+            merged_ids.append(rid)
+    for label in humanized_cited:
+        rid = label_to_rid.get(label, "")
+        if rid and rid not in merged_ids and rid in valid_doc_ids:
+            merged_ids.append(rid)
+
+    _debug(f"[CITE] Final ref_ids: {merged_ids}")
+
+    # Build updated result with injected citations
+    from kohakurag.pipeline import StructuredAnswer, StructuredAnswerResult
+    updated_answer = StructuredAnswer(
+        answer=result.answer.answer,
+        answer_value=result.answer.answer_value,
+        ref_id=merged_ids,
+        explanation=injected,
+        ref_url=result.answer.ref_url,
+        supporting_materials=result.answer.supporting_materials,
+    )
+    return StructuredAnswerResult(
+        answer=updated_answer,
+        retrieval=result.retrieval,
+        raw_response=result.raw_response,
+        prompt=result.prompt,
+        timing=result.timing,
+    )
 
 
 def run_ensemble_parallel_query(
