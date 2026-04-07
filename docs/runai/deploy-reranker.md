@@ -49,11 +49,11 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 **Arguments** (copy-paste this entire block):
 
 ```
--c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn sentence-transformers && python3 scripts/reranker_server.py"
+-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn sentence-transformers && python3 rag_app/scripts/reranker_server.py"
 ```
 
 > **Same pattern as the embedding server.** Downloads the repo tarball,
-> installs dependencies, and runs `scripts/reranker_server.py` which
+> installs dependencies, and runs `rag_app/scripts/reranker_server.py` which
 > includes the writable HF cache overlay for read-only PVC mounts.
 
 **Environment variables:**
@@ -213,12 +213,12 @@ runai submit wattbot-reranker \
   --port 8082 \
   --command -- /bin/bash -c \
     'pip install uv && \
-     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz \
+     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz \
        | tar xz -C /tmp && \
-     mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && \
+     mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && \
      cd /tmp/KohakuRAG_UI && \
      uv pip install --system fastapi uvicorn sentence-transformers && \
-     python3 scripts/reranker_server.py'
+     python3 rag_app/scripts/reranker_server.py'
 ```
 
 ## Updated architecture

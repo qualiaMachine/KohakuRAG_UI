@@ -176,7 +176,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 # Energy measurement — runs on a GPU node so NVML should be available
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# hardware_metrics.py lives in the top-level scripts/ directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 from hardware_metrics import NVMLEnergyCounter
 
 # ---------------------------------------------------------------------------

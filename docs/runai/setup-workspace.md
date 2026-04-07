@@ -223,8 +223,8 @@ source .venv/bin/activate
 python --version   # verify venv is active
 
 # Install vendored packages (order matters: KohakuVault before KohakuRAG)
-uv pip install -e vendor/KohakuVault
-uv pip install -e vendor/KohakuRAG
+uv pip install -e rag_app/vendor/KohakuVault
+uv pip install -e rag_app/vendor/KohakuRAG
 
 # Install remaining dependencies
 uv pip install -r local_requirements.txt
@@ -290,7 +290,7 @@ if [ -f /wattbot-data/embeddings/wattbot_jinav4.db ]; then
     echo "Index already exists: $(du -h /wattbot-data/embeddings/wattbot_jinav4.db | cut -f1)"
 else
     echo "Building vector index (takes a few minutes)..."
-    cd vendor/KohakuRAG
+    cd rag_app/vendor/KohakuRAG
 
     # Phase 1: Text index (fetch PDFs, parse to JSON, embed sentences)
     kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
@@ -326,7 +326,7 @@ import os, sys
 
 REPO = "/home/jovyan/work/KohakuRAG_UI"
 os.chdir(REPO)
-sys.path.insert(0, f"{REPO}/vendor/KohakuRAG/src")
+sys.path.insert(0, f"{REPO}/rag_app/vendor/KohakuRAG/src")
 # HF_HOME and HF_HUB_OFFLINE are already set via workspace env vars (step 0a).
 # Models load from /models/.cache/huggingface/ — no downloads allowed.
 
@@ -376,7 +376,7 @@ Inference jobs.
 cd /home/jovyan/work/KohakuRAG_UI
 source .venv/bin/activate
 
-streamlit run app.py \
+streamlit run rag_app/app.py \
     --server.port=8501 \
     --server.address=0.0.0.0 \
     --server.headless=true
@@ -434,8 +434,8 @@ cd KohakuRAG_UI
 source .venv/bin/activate 2>/dev/null || true
 
 # Reinstall vendored packages (venv may already exist from prior setup)
-uv pip install -e vendor/KohakuVault
-uv pip install -e vendor/KohakuRAG
+uv pip install -e rag_app/vendor/KohakuVault
+uv pip install -e rag_app/vendor/KohakuRAG
 uv pip install -r local_requirements.txt
 
 # Clear old corpus and index so the indexer re-downloads all PDFs
@@ -449,7 +449,7 @@ ln -s /wattbot-data/corpus     data/corpus
 ln -s /wattbot-data/pdfs       data/pdfs
 
 # Build text index (downloads PDFs, parses to JSON, creates embeddings)
-cd vendor/KohakuRAG
+cd rag_app/vendor/KohakuRAG
 kogine run scripts/wattbot_build_index.py --config configs/jinav4/index.py
 
 # Extract figures with VLM verification (use store_images.py config for no VLM)
@@ -473,8 +473,8 @@ picks up the new database.
 **How to add papers to the corpus:**
 
 1. **Using the helper script** (recommended):
-   - Edit `scripts/add_papers.py` — add entries to the `NEW_PAPERS` list
-   - Run `python scripts/add_papers.py` to preview, then `--apply` to write
+   - Edit `rag_app/scripts/add_papers.py` — add entries to the `NEW_PAPERS` list
+   - Run `python rag_app/scripts/add_papers.py` to preview, then `--apply` to write
    - Commit and push, then rebuild on `wattbot-setup` as above
 
 2. **Manually editing `data/metadata.csv`:**

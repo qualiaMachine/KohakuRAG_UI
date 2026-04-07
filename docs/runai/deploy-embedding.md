@@ -13,8 +13,8 @@ of lightweight Python packages need to be added at startup.
 > larger and adds no benefit here.
 
 > **IMPORTANT:** The embedding server only needs `kohakurag/embeddings.py`
-> (pure Python). Do NOT pip-install `vendor/KohakuVault` or
-> `vendor/KohakuRAG` — the KohakuRAG package `__init__.py` imports
+> (pure Python). Do NOT pip-install `rag_app/vendor/KohakuVault` or
+> `rag_app/vendor/KohakuRAG` — the KohakuRAG package `__init__.py` imports
 > kohakuvault (a Rust extension) which triggers a slow Rust/maturin
 > build that will fail in most container images. The
 > `embedding_server.py` script loads `embeddings.py` directly via
@@ -56,10 +56,10 @@ tarball and installs dependencies at startup.
 | Field | Value |
 |-------|-------|
 | **Command** | `bash` |
-| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate huggingface_hub peft && python3 scripts/embedding_server.py"` |
+| **Arguments** | `-c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn httpx numpy sentence-transformers 'transformers>=4.42,<5' accelerate huggingface_hub peft && python3 rag_app/scripts/embedding_server.py"` |
 | **Working directory** | *(leave empty)* |
 
-> **Using a different branch?** Replace `claude/rag-poweredge-setup-wM2Fz`
+> **Using a different branch?** Replace `claude/ocr-vlm-application-hqgf2`
 > in the URL and the `mv` target with your branch name. GitHub converts
 > `/` → `-` in tarball directory names:
 > ```
@@ -166,7 +166,7 @@ mv /tmp/KohakuRAG_UI-<your-branch> /tmp/KohakuRAG_UI && \
 cd /tmp/KohakuRAG_UI && \
 uv pip install --system fastapi uvicorn httpx numpy \
   sentence-transformers 'transformers>=4.42,<5' accelerate && \
-python3 scripts/embedding_server.py
+python3 rag_app/scripts/embedding_server.py
 ```
 
 Expected output: `[embedding_server] Model loaded in Xs. Serving on 0.0.0.0:8080`
@@ -207,13 +207,13 @@ runai submit wattbot-embedding \
   --port 8080 \
   --command -- /bin/bash -c \
     "pip install uv && \
-     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/rag-poweredge-setup-wM2Fz.tar.gz \
+     curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz \
        | tar xz -C /tmp && \
-     mv /tmp/KohakuRAG_UI-claude-rag-poweredge-setup-wM2Fz /tmp/KohakuRAG_UI && \
+     mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && \
      cd /tmp/KohakuRAG_UI && \
      uv pip install --system fastapi uvicorn httpx numpy \
        sentence-transformers 'transformers>=4.42,<5' accelerate && \
-     python3 scripts/embedding_server.py"
+     python3 rag_app/scripts/embedding_server.py"
 ```
 
 > **Note on the vLLM image:**

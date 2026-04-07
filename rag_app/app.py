@@ -46,8 +46,9 @@ logger = logging.getLogger(__name__)
 # Path setup
 # ---------------------------------------------------------------------------
 _repo_root = Path(__file__).resolve().parent
+_top_root = _repo_root.parent  # top-level repo directory
 sys.path.insert(0, str(_repo_root / "vendor" / "KohakuRAG" / "src"))
-sys.path.insert(0, str(_repo_root / "scripts"))
+sys.path.insert(0, str(_top_root / "scripts"))
 
 from kohakurag import RAGPipeline, LLMQueryPlanner, SimpleQueryPlanner
 from kohakurag.datastore import KVaultNodeStore, ImageStore

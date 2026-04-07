@@ -34,7 +34,7 @@ The cluster has three storage areas:
 │   │   ├── embeddings -> /wattbot-data/embeddings  # symlink
 │   │   ├── corpus -> /wattbot-data/corpus          # symlink
 │   │   └── pdfs -> /wattbot-data/pdfs              # symlink
-│   ├── vendor/KohakuRAG/                   # RAG library
+│   ├── rag_app/vendor/KohakuRAG/                   # RAG library
 │   └── scripts/
 │       └── embedding_server.py             # query-time embedding server
 └── .cache/
@@ -235,10 +235,10 @@ You can still run everything locally for development:
 
 ```bash
 # Default — local GPU models
-streamlit run app.py
+streamlit run rag_app/app.py
 
 # Test remote mode against local services:
-# Terminal 1: python scripts/embedding_server.py
+# Terminal 1: python rag_app/scripts/embedding_server.py
 # Terminal 2: python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct
-# Terminal 3: RAG_MODE=remote streamlit run app.py
+# Terminal 3: RAG_MODE=remote streamlit run rag_app/app.py
 ```
