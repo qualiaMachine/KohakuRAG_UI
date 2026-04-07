@@ -816,7 +816,7 @@ Context:
 Return STRICT JSON with the following keys, in this order:
 - explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
-- answer_value         (the numeric or categorical value; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438", "Water consumption", "1"; or "is_blank")
+- answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
 JSON Answer:
@@ -839,7 +839,7 @@ Context:
 Return STRICT JSON with the following keys, in this order:
 - explanation          (1-3 sentences that directly answer the question. Cite ALL supporting sources in [Author et al., Year] format from the Source labels, e.g. "According to [Wu et al., 2021] and [Luccioni et al., 2025], ...". Do NOT use vague phrases like "the context states" or "the passage mentions". When citing specific metrics, add a brief real-world comparison in parentheses where applicable.)
 - answer               (short natural-language response, e.g. "1438 lbs", "Water consumption", "TRUE")
-- answer_value         (the numeric or categorical value; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438", "Water consumption", "1"; or "is_blank")
+- answer_value         (the numeric or categorical value WITH units; use a range if the sources report different values, e.g. "0.8–3,500 MWh", "1438 lbs", "Water consumption", "1"; or "is_blank")
 - confidence           ("high" if the context clearly supports the answer, "low" if this is a best guess)
 - supporting_materials (verbatim quote, table reference, or figure reference from the cited document; or "is_blank")
 
@@ -886,7 +886,7 @@ Context:
 Return STRICT JSON with the following keys:
 - explanation          (your multi-paragraph answer with inline [Author et al., Year] citations on EVERY factual sentence)
 - answer               (one-sentence summary of the key finding)
-- answer_value         (the key numeric or categorical value; use a range if sources report different values, e.g. "0.8–3,500 MWh"; or "is_blank")
+- answer_value         (the key numeric or categorical value WITH units; use a range if sources report different values, e.g. "0.8–3,500 MWh"; or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -962,7 +962,7 @@ in parentheses so non-expert readers can grasp the scale. Use only these trusted
 Return STRICT JSON with the following keys:
 - explanation          (your improved multi-paragraph answer with inline [Author et al., Year] citations)
 - answer               (one-sentence summary of the key finding)
-- answer_value         (the key numeric or categorical value; use a range if sources report different values, e.g. "0.8–3,500 MWh"; or "is_blank")
+- answer_value         (the key numeric or categorical value WITH units; use a range if sources report different values, e.g. "0.8–3,500 MWh"; or "is_blank")
 - supporting_materials (key quotes or data points that support the answer, or "is_blank")
 
 JSON Answer:
@@ -1609,7 +1609,17 @@ def _run_qa_sync(
                     )
             except Exception as exc:
                 last_exc = exc
-                _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
+                error_str = str(exc).lower()
+                is_context_overflow = (
+                    "maximum context length" in error_str
+                    or "context_length_exceeded" in error_str
+                )
+                if is_context_overflow:
+                    # Retry with fewer chunks to fit within model context window
+                    top_k = max(top_k // 2, 3)
+                    _debug(f"Context overflow — retrying with top_k={top_k}")
+                else:
+                    _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
                 if attempt < max_retries:
                     time.sleep(1)  # brief pause before retry
             finally:
@@ -2619,8 +2629,8 @@ def _linkify_citations(
         if url:
             return f"[{label}]({url})"
         if label != inner:
-            # No URL but we can humanize — keep in brackets (not parens)
-            return f"[{label}]"
+            # No URL — strip the citation entirely (unlinked citations are noise)
+            return ""
 
         # Case 2: already-humanized "Author et al., Year" — resolve via reverse map
         rid = humanized_to_rid.get(inner)
@@ -2628,7 +2638,7 @@ def _linkify_citations(
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
             if url:
                 return f"[{inner}]({url})"
-            return f"[{inner}]"
+            return ""  # No URL — strip
 
         return match.group(0)
 
@@ -2670,6 +2680,7 @@ def _linkify_citations(
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
             if url:
                 return f"[{inner}]({url})"
+            return ""  # No URL — strip
         return full
 
     text = re.sub(
