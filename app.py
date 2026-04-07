@@ -862,11 +862,12 @@ Your task is to write a comprehensive, multi-paragraph answer that synthesizes i
 from the provided sources, similar to a literature review. Follow these rules:
 
 1. Write 3-6 paragraphs that thoroughly address the question from multiple angles.
-2. EVERY sentence that states a fact, number, or claim MUST have an inline citation in \
-square brackets immediately after, using the Source label from the context header. \
+2. EVERY sentence that states a fact, number, or claim MUST end with an inline citation in \
+[square brackets] immediately before the period, using the Source label from the context header. \
 Example: "Training GPT-3 consumed approximately 1,287 MWh of energy [Luccioni et al., 2025]." \
-Do NOT write any factual claim without a citation.
-3. Do NOT use numeric citations like [1], [2], [5] — always use the Source labels.
+WRONG: "...1,287 MWh of energy Luccioni et al., 2025." (missing brackets!) \
+Do NOT write any factual claim without a [bracketed] citation.
+3. Do NOT use numeric citations like [1], [2], [5] — always use the Source labels in [brackets].
 4. Include specific numbers, statistics, and quantitative findings when available in context. \
 For key metrics, add a brief real-world comparison in parentheses so non-experts can grasp \
 the scale (e.g., "3,500 MWh (enough to power ~3,500 US homes for a month)").
