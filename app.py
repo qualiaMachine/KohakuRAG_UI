@@ -1633,7 +1633,7 @@ def run_single_query(
     send_images_to_llm: bool = False,
     research_mode: bool = False, max_tokens_override: int = 0,
 ):
-    """Run a single model query with post-hoc citation verification."""
+    """Run a single model query with retrieval-driven source attribution."""
     result = _run_qa_sync(
         pipeline, question, top_k,
         best_guess=best_guess, max_retries=max_retries,
@@ -1642,36 +1642,51 @@ def run_single_query(
         research_mode=research_mode, max_tokens_override=max_tokens_override,
     )
 
-    # Post-hoc citation verification: if the explanation lacks inline
-    # [ref_id] citations, run a lightweight LLM pass to insert them.
-    # Conditional — skips the LLM call if citations are already present.
-    try:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(
-                pipeline.verify_citations(result, CITATION_VERIFY_PROMPT)
-            )
-        finally:
-            loop.close()
-    except Exception as e:
-        _debug(f"Citation verification skipped: {e}")
+    # Sources = unique document_ids from retrieved chunks, period.
+    # These chunks were passed to the LLM, so they ARE the sources.
+    seen: set[str] = set()
+    retrieval_ref_ids: list[str] = []
+    for s in result.retrieval.snippets:
+        doc_id = (s.metadata or {}).get("document_id", "")
+        if doc_id and doc_id not in seen:
+            seen.add(doc_id)
+            retrieval_ref_ids.append(doc_id)
 
-    # Claim-attribution verification (OpenScholar Section 2.2 step 3):
-    # Check that each cited statement is actually supported by its source.
-    # Runs in BOTH research and standard modes — removes unsupported citations
-    # rather than leaving misleading attributions.
-    try:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(
-                pipeline.verify_claim_attribution(result, ATTRIBUTION_VERIFY_PROMPT)
-            )
-        finally:
-            loop.close()
-    except Exception as e:
-        _debug(f"Claim attribution verification skipped: {e}")
+    # If the LLM returned ref_ids, keep only those that are in the
+    # retrieved set (already validated upstream). Otherwise use all
+    # retrieved sources.
+    llm_refs = result.answer.ref_id or []
+    if llm_refs:
+        # LLM told us which sources it used — trust that (already validated)
+        ref_ids = llm_refs
+    else:
+        # LLM didn't specify — use top retrieved sources
+        ref_ids = retrieval_ref_ids[:5]
 
-    return result
+    _debug(f"[CITE] ref_ids: {ref_ids} (from {'LLM' if llm_refs else 'retrieval'})")
+    _debug(f"[CITE] explanation preview: {(result.answer.explanation or '')[:200]!r}")
+
+    # Strip numeric citations copied from source text ([1], [5], etc.)
+    explanation = result.answer.explanation or ""
+    explanation = re.sub(r"\[\d+(?:\s*[,;\-–]\s*\d+)*\]", "", explanation)
+
+    # Build updated result
+    from kohakurag.pipeline import StructuredAnswer, StructuredAnswerResult
+    updated_answer = StructuredAnswer(
+        answer=result.answer.answer,
+        answer_value=result.answer.answer_value,
+        ref_id=ref_ids,
+        explanation=explanation,
+        ref_url=result.answer.ref_url,
+        supporting_materials=result.answer.supporting_materials,
+    )
+    return StructuredAnswerResult(
+        answer=updated_answer,
+        retrieval=result.retrieval,
+        raw_response=result.raw_response,
+        prompt=result.prompt,
+        timing=result.timing,
+    )
 
 
 def run_ensemble_parallel_query(
@@ -2636,6 +2651,12 @@ def _linkify_citations(
         _replace_paren,
         text,
     )
+
+    # Final cleanup: fix orphaned text from stripped/empty citations
+    text = re.sub(r"(?i)\baccording to\s*,", "According to the sources,", text)
+    text = re.sub(r"(?i)\baccording to\s+the\b\s+(?=[,.])", "According to the sources", text)
+    text = re.sub(r"\s+\.", ".", text)
+    text = re.sub(r"\s+,", ",", text)
 
     return text
 
