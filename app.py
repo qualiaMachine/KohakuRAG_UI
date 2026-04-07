@@ -2884,18 +2884,9 @@ def _display_single_result(
     else:
         _debug(f"Retrieval: {total_snippet_count} snippets (no Semantic Scholar results)")
 
-    # Fallback: if the LLM answered but didn't cite sources, infer from top snippets
+    # ref_ids are already set by run_query_with_verification:
+    # LLM-provided (validated) or fallback from retrieved chunks.
     effective_ref_ids = _clean_ref_ids(answer.ref_id)
-    if not effective_ref_ids and answer.explanation and answer.explanation != "is_blank":
-        # Extract unique doc_ids from the top retrieved snippets
-        seen = set()
-        for s in result.retrieval.snippets[:5]:
-            doc_id = (s.metadata or {}).get("document_id", "")
-            if doc_id and doc_id not in seen:
-                seen.add(doc_id)
-                effective_ref_ids.append(doc_id)
-        if effective_ref_ids:
-            _debug(f"No ref_ids from LLM; inferred {len(effective_ref_ids)} from top snippets: {effective_ref_ids}")
 
     details = {
         "timing": timing,
