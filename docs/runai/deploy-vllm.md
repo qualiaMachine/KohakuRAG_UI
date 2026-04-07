@@ -145,15 +145,42 @@ pipeline are unchanged.
 
 ## GPU VRAM and quantization
 
-The current deployment uses **bitsandbytes** quantization, which reduces
-memory enough to fit an 8B model in 80% of a GPU. This is the recommended
-setup for fractional GPU allocation.
+**Rule of thumb:** if the model fits in GPU memory unquantized (BF16/FP16),
+run it unquantized — you get better quality AND faster inference (no
+dequantization overhead on every forward pass). Only quantize when the
+model doesn't fit.
 
-| GPU VRAM | Flag | Notes |
-|----------|------|-------|
-| 80 GB (A100) | `--quantization bitsandbytes --load-format bitsandbytes` | Current setup, 80% fraction |
-| 40 GB (A6000) | `--quantization bitsandbytes --load-format bitsandbytes` | |
-| 24 GB (L4/4090) | `--quantization bitsandbytes --load-format bitsandbytes --max-model-len 4096` | |
+| Model size (BF16) | 24 GB GPU | 40 GB GPU | 80 GB GPU | 96 GB GPU |
+|--------------------|-----------|-----------|-----------|-----------|
+| 7–8B (~16 GB)      | Quantize  | ✅ No quant | ✅ No quant | ✅ No quant |
+| 14B (~28 GB)       | Quantize  | Quantize  | ✅ No quant | ✅ No quant |
+| 32B (~64 GB)       | Quantize  | Quantize  | ✅ No quant | ✅ No quant |
+| 72B (~144 GB)      | 2 GPUs    | 2 GPUs    | Quantize  | Quantize  |
+| 72B (2 GPUs)       | —         | ✅ No quant | ✅ No quant | ✅ No quant |
+
+### Quantization methods (when you need to quantize)
+
+| Method | Flag | Speed | Quality | Notes |
+|--------|------|-------|---------|-------|
+| **AWQ** | `--quantization awq` | ⚡ Fast | Good | Pre-quantized weights, best speed/quality tradeoff. Use `awq_marlin` kernel for extra speed. Requires a `-AWQ` model variant (e.g., `Qwen2.5-72B-Instruct-AWQ`). |
+| **GPTQ** | `--quantization gptq_marlin` | ⚡ Fast | Good | Similar to AWQ. Use `gptq_marlin` kernel (plain `gptq` is buggy in vLLM). Requires a `-GPTQ` model variant. |
+| **BitsAndBytes** | `--quantization bitsandbytes --load-format bitsandbytes` | 🐢 Slow | OK | Quantizes on-the-fly from any model (no special variant needed). Much slower inference than AWQ/GPTQ due to runtime dequantization. Only use when no AWQ/GPTQ variant exists. |
+| **FP8** | `--quantization fp8` | ⚡⚡ Fastest | Best | 8-bit, minimal quality loss. Requires Hopper GPUs (H100) or Ada (L4/4090). |
+
+**Decision tree:**
+1. Model fits unquantized? → `--dtype auto` (no quantization flags)
+2. AWQ variant available? → `--quantization awq` (or `awq_marlin`)
+3. GPTQ variant available? → `--quantization gptq_marlin`
+4. Neither? → `--quantization bitsandbytes --load-format bitsandbytes` (last resort)
+
+### Multi-GPU (tensor parallelism)
+
+If a model doesn't fit on one GPU, split it across multiple:
+```
+Qwen/Qwen2.5-72B-Instruct --dtype auto --tensor-parallel-size 2
+```
+Request 2 GPUs in the RunAI workload config. Each GPU handles half the
+computation, giving ~2x inference speed vs single-GPU quantized.
 
 ## Model arguments reference
 
@@ -161,55 +188,79 @@ Copy-paste the **Arguments** field for each model. Remember to also update
 the Streamlit job's `VLLM_MODEL` env var to match, and download the model
 to the shared PVC first (see [Managing Models](managing-models.md)).
 
-### Qwen3-30B-A3B (GPTQ 4-bit — official pre-quantized, MoE)
+### Qwen 2.5 32B (unquantized — recommended default)
+
+```
+Qwen/Qwen2.5-32B-Instruct --dtype auto
+```
+
+> Dense 32B model in BF16 (~64 GB). Fits on a single 80/96 GB GPU
+> without quantization. Best speed/quality balance for RAG with
+> inline citations. No quantization overhead = faster than quantized 72B.
+
+### Qwen 2.5 72B (unquantized, 2 GPUs)
+
+```
+Qwen/Qwen2.5-72B-Instruct --dtype auto --tensor-parallel-size 2
+```
+
+> Best quality. Requires 2 GPUs (~72 GB per GPU). Fastest 72B option
+> since no quantization overhead.
+
+### Qwen 2.5 72B (AWQ 4-bit, 1 GPU)
+
+```
+Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq --dtype auto
+```
+
+> Fits on a single GPU (~40 GB VRAM at 4-bit). Slower than unquantized
+> 2-GPU but only needs 1 GPU. Use `awq_marlin` for extra speed if
+> supported by your vLLM version.
+
+### Qwen 2.5 72B (BitsAndBytes 4-bit, 1 GPU — slow)
+
+```
+Qwen/Qwen2.5-72B-Instruct --quantization bitsandbytes --load-format bitsandbytes --dtype auto
+```
+
+> Last resort for 72B on 1 GPU. Significantly slower inference than AWQ.
+> Only use if you can't get the AWQ variant.
+
+### OpenScholar 8B (unquantized — recommended)
+
+```
+OpenSciLM/Llama-3.1_OpenScholar-8B --dtype auto
+```
+
+> Only ~16 GB in BF16. No reason to quantize on any modern GPU.
+> Faster and better quality than bitsandbytes-quantized.
+
+### OpenScholar 8B (BitsAndBytes — legacy, not recommended)
+
+```
+OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype auto
+```
+
+> Only needed if running on a very small GPU (<24 GB) or sharing with
+> other workloads at fractional allocation.
+
+### Qwen 2.5 7B (unquantized)
+
+```
+Qwen/Qwen2.5-7B-Instruct --dtype auto
+```
+
+> Smallest model (~14 GB). Fast inference, fits anywhere.
+
+### Qwen3-30B-A3B (GPTQ 4-bit, MoE)
 
 ```
 Qwen/Qwen3-30B-A3B-GPTQ-Int4 --quantization gptq_marlin --dtype half
 ```
 
 > Mixture-of-Experts: 30B total params, ~3B active per token. Faster
-> inference than the dense 32B at similar VRAM cost (~18 GB at 4-bit).
-> Uses `gptq_marlin` for faster inference (vLLM warns the plain `gptq`
-> kernel is buggy).
-
-### Qwen 2.5 72B (AWQ 4-bit — official pre-quantized)
-
-```
-Qwen/Qwen2.5-72B-Instruct-AWQ --quantization awq_marlin --dtype half
-```
-
-> Largest dense model we run. Needs a full GPU (~39 GB VRAM at 4-bit).
-> No fractional GPU sharing — requires 100% of an 80 GB A100.
-> Uses `awq_marlin` for faster inference.
-
-### Qwen3-32B (AWQ 4-bit — official pre-quantized)
-
-```
-Qwen/Qwen3-32B-AWQ --quantization awq_marlin --dtype half
-```
-
-> Dense 32B model. Needs a full GPU (~20 GB VRAM at 4-bit). Strong
-> reasoning; rivals Llama 3.1 70B on many benchmarks at half the memory.
-> Uses `awq_marlin` for faster inference.
-
-### OpenScholar 8B (BitsAndBytes — no pre-quantized version available)
-
-```
-OpenSciLM/Llama-3.1_OpenScholar-8B --quantization bitsandbytes --load-format bitsandbytes --dtype half
-```
-
-> OpenScholar has no official AWQ/GPTQ release, so we fall back to
-> BitsAndBytes for 4-bit quantization. This requires `--load-format
-> bitsandbytes` in addition to `--quantization`.
-
-### Qwen 2.5 7B (BitsAndBytes)
-
-```
-Qwen/Qwen2.5-7B-Instruct --quantization bitsandbytes --load-format bitsandbytes --dtype auto
-```
-
-> Original default model. Smallest footprint (~6 GB at 4-bit), fits
-> easily in a fractional GPU allocation.
+> inference than dense 32B at similar VRAM cost (~18 GB at 4-bit).
+> Uses `gptq_marlin` for faster inference.
 
 ---
 
