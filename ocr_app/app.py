@@ -94,7 +94,7 @@ def _format_elapsed(ms: float) -> str:
 
 def _render_result(text: str, fmt: str):
     """Render OCR result based on the output format."""
-    if fmt in ("json", "financial", "key_values"):
+    if fmt in ("json", "award", "budget", "terms", "key_values"):
         st.code(text, language="json")
     elif fmt in ("markdown", "table"):
         st.markdown(text)
@@ -122,11 +122,13 @@ with st.sidebar:
 
     # Output format
     FORMAT_OPTIONS = {
-        "financial": "Financial Data (structured JSON)",
+        "award": "Award Notice (structured JSON)",
+        "budget": "Budget / Financial (structured JSON)",
+        "terms": "Terms & Conditions (structured JSON)",
         "table": "Tables (Markdown)",
         "key_values": "Key-Value Pairs (JSON)",
         "markdown": "Markdown",
-        "json": "JSON",
+        "json": "JSON (generic)",
         "text": "Plain Text",
     }
     output_format = st.selectbox(
@@ -167,7 +169,8 @@ with st.sidebar:
 # Main content
 # ---------------------------------------------------------------------------
 st.title("Document OCR")
-st.markdown("Upload images or PDFs to extract text using a Vision Language Model.")
+st.markdown("Upload grant award notices, budgets, terms & conditions, or other "
+            "research admin documents to extract structured data using a Vision Language Model.")
 
 # File upload
 uploaded_files = st.file_uploader(
@@ -250,7 +253,8 @@ for uploaded_file in uploaded_files:
             all_text = result.get("text", "") or "\n\n---\n\n".join(
                 r["text"] for r in result.get("results", [])
             )
-            ext = {"json": "json", "financial": "json", "key_values": "json",
+            ext = {"json": "json", "award": "json", "budget": "json",
+                   "terms": "json", "key_values": "json",
                    "markdown": "md", "table": "md"}.get(output_format, "txt")
             mime = "application/json" if ext == "json" else "text/plain"
             st.download_button(

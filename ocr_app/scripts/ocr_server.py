@@ -194,19 +194,100 @@ async def _run_ocr(image: Image.Image, prompt: str, max_tokens: int) -> str:
 # ---------------------------------------------------------------------------
 
 class OutputFormat(str, Enum):
-    text = "text"
+    award = "award"
+    budget = "budget"
+    terms = "terms"
+    table = "table"
+    key_values = "key_values"
     markdown = "markdown"
     json = "json"
-    table = "table"
-    financial = "financial"
-    key_values = "key_values"
+    text = "text"
 
 
 PROMPTS = {
-    OutputFormat.text: (
-        "Extract all text from this image exactly as it appears. "
-        "Preserve the original reading order, line breaks, and structure. "
-        "Output only the extracted text, nothing else."
+    OutputFormat.award: (
+        "Extract all information from this grant award notice / notice of award. "
+        "This is a research and sponsored programs document.\n\n"
+        "Return a JSON object with these fields (omit any that are not present):\n"
+        '  "document_type": type of document (e.g. "Notice of Award", "Award Letter", "Subaward Agreement"),\n'
+        '  "award_number": grant/award/contract number,\n'
+        '  "sponsor": funding agency or organization,\n'
+        '  "pi": principal investigator name(s),\n'
+        '  "co_pis": array of co-PI names if listed,\n'
+        '  "institution": awardee institution/organization,\n'
+        '  "department": department or unit,\n'
+        '  "project_title": title of the funded project,\n'
+        '  "award_amount": total award amount (preserve exact formatting),\n'
+        '  "current_period_amount": current period funding if shown,\n'
+        '  "project_start": project/budget period start date,\n'
+        '  "project_end": project/budget period end date,\n'
+        '  "budget_periods": array of {period, start, end, amount} if shown,\n'
+        '  "fa_rate": F&A / indirect cost rate and base if shown,\n'
+        '  "cfda_number": CFDA number if shown,\n'
+        '  "award_type": e.g. "New", "Continuation", "Supplement", "No-Cost Extension",\n'
+        '  "special_conditions": array of any special terms or conditions,\n'
+        '  "contacts": array of {role, name, email, phone} for program officers or admin contacts,\n'
+        '  "additional_fields": object with any other labeled fields not covered above\n\n'
+        "Preserve ALL dollar amounts, dates, and reference numbers exactly as printed. "
+        "Output only valid JSON."
+    ),
+    OutputFormat.budget: (
+        "Extract the budget information from this research grant document. "
+        "This may be a budget page, budget justification, or financial summary "
+        "from a grant award, proposal, or sponsored program.\n\n"
+        "Return a JSON object with:\n"
+        '  "award_number": grant/award number if shown,\n'
+        '  "budget_period": period or fiscal year if shown,\n'
+        '  "categories": array of objects, each with:\n'
+        '    "category": budget category (e.g. "Senior Personnel", "Fringe Benefits", '
+        '"Equipment", "Travel", "Participant Support", "Other Direct Costs", "Indirect Costs"),\n'
+        '    "items": array of {description, amount} line items,\n'
+        '    "subtotal": category subtotal if shown\n'
+        '  "total_direct": total direct costs,\n'
+        '  "fa_rate": F&A / indirect cost rate,\n'
+        '  "fa_base": F&A base (MTDC, TDC, etc.),\n'
+        '  "total_indirect": total indirect/F&A costs,\n'
+        '  "total": total project costs,\n'
+        '  "cost_sharing": cost sharing amount if any,\n'
+        '  "notes": any footnotes or annotations\n\n'
+        "CRITICAL: Preserve ALL dollar amounts exactly as printed — do not "
+        "round, drop commas, or reformat. Output only valid JSON."
+    ),
+    OutputFormat.terms: (
+        "Extract the terms and conditions from this research and sponsored "
+        "programs document. This may be award terms, RSP policies, compliance "
+        "requirements, subaward terms, or similar.\n\n"
+        "Return a JSON object with:\n"
+        '  "document_title": title of the document,\n'
+        '  "effective_date": effective date if shown,\n'
+        '  "sections": array of objects, each with:\n'
+        '    "number": section number if present,\n'
+        '    "title": section heading,\n'
+        '    "text": full text of the section,\n'
+        '    "subsections": array of {number, title, text} if nested\n'
+        '  "definitions": object of defined terms if present,\n'
+        '  "references": array of referenced regulations, OMB circulars, CFR citations\n\n'
+        "Preserve exact wording — do not paraphrase or summarize. "
+        "Include all regulatory citations (2 CFR 200, etc.) exactly. "
+        "Output only valid JSON."
+    ),
+    OutputFormat.table: (
+        "Extract the table(s) from this image. Return each table as a "
+        "Markdown table with proper column alignment. If there are multiple "
+        "tables, separate them with a blank line. "
+        "Preserve ALL numeric values exactly — do not round, truncate, or "
+        "reformat numbers. Include currency symbols, percentages, and units. "
+        "Output only the table(s)."
+    ),
+    OutputFormat.key_values: (
+        "Extract all labeled data points from this image as key-value pairs. "
+        "Look for field labels, line items, metrics, reference numbers, dates, "
+        "names, and their corresponding values. "
+        "Return a JSON object where keys are the field/label names and "
+        "values are their corresponding values.\n\n"
+        "Preserve ALL values exactly as printed — do not round or reformat. "
+        "Include units, currency symbols, and percentages. "
+        "For nested sections, use nested objects. Output only valid JSON."
     ),
     OutputFormat.markdown: (
         "Extract all text from this image and format it as clean Markdown. "
@@ -219,40 +300,10 @@ PROMPTS = {
         "For forms, use field names as keys and field values as values. "
         "For documents, use sections as keys. Output only valid JSON."
     ),
-    OutputFormat.table: (
-        "Extract the table(s) from this image. Return each table as a "
-        "Markdown table with proper column alignment. If there are multiple "
-        "tables, separate them with a blank line. "
-        "Preserve ALL numeric values exactly — do not round, truncate, or "
-        "reformat numbers. Include currency symbols, percentages, and units. "
-        "Output only the table(s)."
-    ),
-    OutputFormat.financial: (
-        "Extract all financial data from this image. This may be a financial "
-        "statement, earnings report, balance sheet, income statement, cash flow "
-        "statement, invoice, or similar financial document.\n\n"
-        "Return a JSON object with these fields:\n"
-        '  "title": document/table title if visible,\n'
-        '  "period": reporting period or date if shown,\n'
-        '  "currency": currency used (e.g. "USD", "EUR") if indicated,\n'
-        '  "tables": array of objects, each with:\n'
-        '    "name": table/section heading,\n'
-        '    "headers": column headers as array,\n'
-        '    "rows": array of arrays with cell values\n'
-        '  "notes": any footnotes or annotations\n\n'
-        "CRITICAL: Preserve ALL numeric values exactly as printed — do not "
-        "round, truncate, drop trailing zeros, or omit parentheses for "
-        "negative numbers. Include dollar signs, commas, percentages, and "
-        "units exactly as shown. Output only valid JSON."
-    ),
-    OutputFormat.key_values: (
-        "Extract all labeled data points from this image as key-value pairs. "
-        "Look for field labels, line items, metrics, KPIs, and their values. "
-        "Return a JSON object where keys are the field/metric names and "
-        "values are their corresponding values.\n\n"
-        "Preserve ALL numeric values exactly — do not round or reformat. "
-        "Include units, currency symbols, and percentages. "
-        "For nested sections, use nested objects. Output only valid JSON."
+    OutputFormat.text: (
+        "Extract all text from this image exactly as it appears. "
+        "Preserve the original reading order, line breaks, and structure. "
+        "Output only the extracted text, nothing else."
     ),
 }
 

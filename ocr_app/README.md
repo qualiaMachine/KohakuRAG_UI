@@ -1,6 +1,6 @@
-# VLM OCR Application
+# VLM OCR — Research & Sponsored Programs
 
-Document OCR powered by **Qwen2.5-VL-7B**, a state-of-the-art Vision Language Model. Replaces traditional OCR (Tesseract) with a VLM that understands document structure, tables, handwriting, and 90+ languages.
+Document OCR for grant award notices, budgets, terms & conditions, and other research administration documents. Powered by **Qwen2.5-VL-7B**, a state-of-the-art Vision Language Model that replaces traditional OCR (Tesseract) with structured understanding of complex document layouts.
 
 ## Why VLMs over Tesseract?
 
@@ -139,18 +139,20 @@ See the full command in `ocr_app/deploy/runai_jobs.yaml` (Option B section).
 
 ## Output Formats
 
-| Format | Use case | Example |
-|--------|----------|---------|
-| `financial` | Financial statements, earnings reports | Balance sheets, P&L, cash flow |
-| `table` | Tabular data with exact numbers | Spreadsheets, data tables |
-| `key_values` | Labeled metrics and KPIs | Dashboards, summary pages |
-| `markdown` | Structured documents | Reports with headings and sections |
-| `json` | Forms and structured data | Invoices, applications |
-| `text` | Plain text extraction | Letters, articles, memos |
+| Format | Use case | Output |
+|--------|----------|--------|
+| `award` | Grant award notices, NOAs, subaward agreements | Structured JSON (PI, award #, amounts, dates, F&A rate, conditions) |
+| `budget` | Budget pages, financial summaries, cost proposals | Structured JSON (categories, line items, direct/indirect costs) |
+| `terms` | Award terms, RSP policies, compliance docs | Structured JSON (sections, regulatory citations, definitions) |
+| `table` | Any tabular data | Markdown tables with exact numbers |
+| `key_values` | Forms, labeled fields, summary pages | Flat JSON key-value pairs |
+| `markdown` | General documents | Formatted Markdown |
+| `json` | Generic structured extraction | JSON |
+| `text` | Plain text | Raw text |
 
-The `financial` and `table` formats are tuned for numeric precision — they
-preserve exact values, currency symbols, commas, parentheses for negatives,
-trailing zeros, and percentages as printed.
+The `award`, `budget`, and `table` formats are tuned for exact numeric
+preservation — dollar amounts, F&A rates, CFDA numbers, and dates are
+extracted exactly as printed.
 
 ## API Endpoints
 
