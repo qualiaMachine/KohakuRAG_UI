@@ -1609,7 +1609,17 @@ def _run_qa_sync(
                     )
             except Exception as exc:
                 last_exc = exc
-                _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
+                error_str = str(exc).lower()
+                is_context_overflow = (
+                    "maximum context length" in error_str
+                    or "context_length_exceeded" in error_str
+                )
+                if is_context_overflow:
+                    # Retry with fewer chunks to fit within model context window
+                    top_k = max(top_k // 2, 3)
+                    _debug(f"Context overflow — retrying with top_k={top_k}")
+                else:
+                    _debug(f"Attempt {attempt + 1}/{max_retries + 1} failed: {exc}")
                 if attempt < max_retries:
                     time.sleep(1)  # brief pause before retry
             finally:
@@ -2619,8 +2629,8 @@ def _linkify_citations(
         if url:
             return f"[{label}]({url})"
         if label != inner:
-            # No URL but we can humanize — keep in brackets (not parens)
-            return f"[{label}]"
+            # No URL — strip the citation entirely (unlinked citations are noise)
+            return ""
 
         # Case 2: already-humanized "Author et al., Year" — resolve via reverse map
         rid = humanized_to_rid.get(inner)
@@ -2628,7 +2638,7 @@ def _linkify_citations(
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
             if url:
                 return f"[{inner}]({url})"
-            return f"[{inner}]"
+            return ""  # No URL — strip
 
         return match.group(0)
 
@@ -2670,6 +2680,7 @@ def _linkify_citations(
             url = METADATA_URLS.get(rid) or answer_urls.get(rid)
             if url:
                 return f"[{inner}]({url})"
+            return ""  # No URL — strip
         return full
 
     text = re.sub(
