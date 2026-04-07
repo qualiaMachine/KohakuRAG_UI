@@ -2747,6 +2747,10 @@ def _display_retrieved_images(image_nodes, image_store=None):
             if not source_url:
                 source_url = METADATA_URLS.get(doc_id, "")
 
+            img_bytes = None
+            if storage_key and image_store:
+                img_bytes = image_store._sync_get(storage_key)
+
             images.append({
                 "bytes": img_bytes,
                 "short_label": f"{short_label} p.{page}",
