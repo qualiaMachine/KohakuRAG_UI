@@ -16,74 +16,51 @@ Before deploying any workloads, set up the storage.
 
 ## Input documents — `ocr-documents`
 
-This is where your PDFs and TIFFs live.
+This is where your PDFs and TIFFs live. The batch script reads from a
+mounted directory — how that directory gets populated depends on your
+infrastructure.
 
-### Option A: Data already on cluster storage (NFS, Ceph, etc.)
+### PoC (5 sample docs)
 
-If the imaging data is already on a shared filesystem accessible from the
-cluster, create a Data Volume pointing directly to it:
+Skip the PVC entirely. Upload files directly to the setup workspace
+(Step 2) via Jupyter's file upload button. Use the workspace's local
+storage at `/home/jovyan/sample_docs/`.
+
+### Production
+
+The ideal setup is a **direct mount** — the cluster admin creates a
+PersistentVolume backed by the source storage (NFS, CIFS/SMB). No copy
+needed. The batch workspace reads files over the network from their
+original location.
+
+Ask your cluster admin:
+
+> "Can you create a PV pointing to the imaging data share
+> (e.g. `nfs-server:/imaging_archive`)? We need read-only access from
+> our RunAI project."
+
+Once the PV exists, create a Data Volume in the RunAI UI:
 
 1. Go to **Data & Storage** > **Data Volumes** > **New Data Volume**
 2. **Scope:** Your project
-3. **PVC name:** Use an existing PVC if the data is already on one, or
-   create a new one backed by the existing storage class
+3. **PVC name:** Use the existing PVC backed by the NFS mount
 4. **Data volume name:** `ocr-documents`
 5. **Mount path:** `/data/documents`
 
-### Option B: Upload data via a workspace
+If a direct mount isn't possible (data lives on a completely disconnected
+system), you'll need to copy the data onto a cluster PVC. Options include
+pulling from inside a workspace (`curl`, `wget`, `rclone` for S3) or
+having the data team push to a staging location the cluster can access.
 
-If you need to copy data onto the cluster:
+### Ongoing ingestion (~10K docs/month)
 
-1. Create a Data Volume called `ocr-documents` (new empty PVC — size it
-   for your data)
-2. Create a temporary **Workspace**:
+With a direct NFS mount, new documents appear automatically as the source
+system writes them. The batch script's `--resume` flag means you can
+re-run against the same input directory — it skips already-processed files
+and only extracts the new ones.
 
-| Field | Value |
-|-------|-------|
-| **Name** | `ocr-data-upload` |
-| **Image** | `nvcr.io/nvidia/pytorch:25.02-py3` |
-| **GPU** | `0` |
-| **CPU** | `2` |
-| **Memory** | `4Gi` |
-| **Data volume** | `ocr-documents` → `/data/documents` (read-write) |
-| **Tool** | Jupyter → port 8888 |
-
-3. Open a terminal in the workspace and transfer files:
-
-```bash
-# From your local machine / data server:
-rsync -avP /path/to/imaging_data/ user@<workspace-host>:/data/documents/
-
-# Or from inside the workspace, pull from a file server:
-rsync -avP user@fileserver:/imaging_archive/ /data/documents/
-
-# Or use rclone for S3/cloud sources:
-pip install rclone
-rclone copy s3://bucket/path /data/documents/ --progress
-```
-
-> **Tip for large transfers:** `rsync` with `--progress` and `--partial`
-> handles interruptions gracefully. For faster transfers, run multiple
-> rsync jobs for different subdirectories in parallel.
-
-4. Verify:
-
-```bash
-find /data/documents -type f | wc -l
-du -sh /data/documents
-
-# Check file types
-find /data/documents -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head
-```
-
-5. **Stop the upload workspace** once done.
-
-### Option C: PoC with a few sample docs
-
-For testing with 5 sample documents, skip the PVC entirely. Just upload
-files directly to the setup workspace (Step 2) via Jupyter's file upload
-button or `scp`. Use the workspace's local storage at
-`/home/jovyan/sample_docs/`.
+For non-mounted setups, set up a periodic sync (cron job, scheduled
+rsync, or rclone) to keep the cluster PVC in sync with the source.
 
 ---
 
