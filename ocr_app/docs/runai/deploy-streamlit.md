@@ -1,77 +1,194 @@
-# Deploy Streamlit App (`ocr-app`) — Optional
+# Deploy Streamlit App (`ocr-app`)
 
-> **Step 4** in the [deployment guide](README.md). This step is optional —
-> only needed for interactive PoC demos.
+> **Step 2** in the [deployment guide](README.md). Comes after
+> [Deploy vLLM Server](deploy-vllm.md) (Step 1).
 
-Browser-based UI for uploading individual documents and previewing
-extracted results. Requires the extraction server (`ocr-extract`)
-running as well.
+Browser-based UI for uploading documents and previewing extracted results.
+Drag-and-drop your files, pick an output format, and see structured JSON
+immediately. Good starting point for the PoC — no CLI needed.
+
+> **How it works:** The Streamlit app talks to the extraction server
+> (`ocr-extract`), which does text extraction locally and routes LLM/VLM
+> requests to the vLLM server. You need both `ocr-extract` and `ocr-app`
+> running.
 
 ---
 
-## Deploy the extraction server first
+## Step 2a: Deploy the extraction server (`ocr-extract`)
 
-The Streamlit UI talks to the FastAPI extraction server, not directly to
-vLLM.
+The Streamlit UI talks to this FastAPI server, which handles file
+processing and routes to vLLM. CPU-only — no GPU needed.
+
+In the RunAI UI: **Workloads** > **New Workload** > **Inference**
+
+### Basic settings
 
 | Field | Value |
 |-------|-------|
-| **Workload type** | Inference |
-| **Inference type** | Custom |
-| **Name** | `ocr-extract` |
-| **Image** | `vllm/vllm-openai:latest` |
+| **Cluster** | `doit-ai-cluster` |
+| **Project** | Your project |
+| **Inference type** | **Custom** |
+| **Inference name** | `ocr-extract` |
+
+### Environment image
+
+| Field | Value |
+|-------|-------|
+| **Image** | Custom image |
+| **Image URL** | `vllm/vllm-openai:latest` |
+| **Image pull** | Pull the image only if it's not already present on the host |
+
+> **Why the vLLM image for a CPU-only server?** It has Python 3 and pip
+> pre-installed. We just need a Python environment — the GPU/CUDA parts
+> of the image go unused.
+
+### Serving endpoint
+
+| Field | Value |
+|-------|-------|
+| **Protocol** | HTTP |
 | **Container port** | `8090` |
+
+### Runtime settings
+
+| Field | Value |
+|-------|-------|
 | **Command** | `bash` |
 | **Arguments** | See below |
-| **GPU** | `0` (none — CPU only) |
-| **CPU** | `2` |
-| **Memory** | `4Gi` |
+| **Working directory** | *(leave empty)* |
 
-### Extraction server arguments (copy-paste)
+#### Arguments (copy-paste)
 
 ```
 -c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn python-multipart httpx pymupdf Pillow && python3 ocr_app/scripts/ocr_server.py"
 ```
 
-### Extraction server environment variables
+**Environment variables:**
 
-| Variable | Value |
-|----------|-------|
+| Name | Value |
+|------|-------|
 | `LLM_BASE_URL` | `http://ocr-vllm.runai-<project>.svc.cluster.local/v1` |
 | `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
 | `OCR_PORT` | `8090` |
 
----
-
-## Deploy the Streamlit UI
+### Compute resources
 
 | Field | Value |
 |-------|-------|
-| **Workload type** | Workspace |
-| **Name** | `ocr-app` |
-| **Image** | `nvcr.io/nvidia/pytorch:25.02-py3` |
-| **Tool** | Custom URL → `streamlit` → port `8501` |
+| **GPU devices** | `0` (none — CPU only) |
+| **CPU request** | `2` |
+| **CPU memory request** | `4Gi` |
+
+### Data & storage
+
+No data volumes needed — files are uploaded via HTTP from the Streamlit
+app, not read from a PVC.
+
+---
+
+## Step 2b: Deploy the Streamlit UI (`ocr-app`)
+
+In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
+
+### Basic settings
+
+| Field | Value |
+|-------|-------|
+| **Cluster** | `doit-ai-cluster` |
+| **Project** | Your project |
+| **Workspace name** | `ocr-app` |
+
+### Environment image
+
+| Field | Value |
+|-------|-------|
+| **Image** | Custom image |
+| **Image URL** | `nvcr.io/nvidia/pytorch:25.02-py3` |
+| **Image pull** | Pull the image only if it's not already present on the host |
+
+### Tools
+
+| Field | Value |
+|-------|-------|
+| **Tool type** | Custom URL |
+| **Tool name** | `streamlit` |
+| **Port** | `8501` |
+
+### Runtime settings
+
+| Field | Value |
+|-------|-------|
 | **Command** | `bash` |
 | **Arguments** | See below |
-| **GPU** | `0` (none) |
-| **CPU** | `1` |
-| **Memory** | `2Gi` |
+| **Working directory** | *(leave empty)* |
 
-### Streamlit arguments (copy-paste)
+#### Arguments (copy-paste)
 
 ```
 -c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system streamlit httpx Pillow python-dotenv && python -m streamlit run ocr_app/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --server.baseUrlPath=$STREAMLIT_BASE_PATH"
 ```
 
-### Streamlit environment variables
+**Environment variables:**
 
-| Variable | Value |
-|----------|-------|
+| Name | Value |
+|------|-------|
 | `OCR_SERVICE_URL` | `http://ocr-extract.runai-<project>.svc.cluster.local` |
-| `STREAMLIT_BASE_PATH` | `/<project>/<workspace-name>/proxy/8501` |
+| `STREAMLIT_BASE_PATH` | `/<project>/ocr-app/proxy/8501` |
 
-## Access URL
+> **Replace `<project>`** with your actual project name. Example:
+> `STREAMLIT_BASE_PATH=/jupyter-endemann01/ocr-app/proxy/8501`
+
+### Compute resources
+
+| Field | Value |
+|-------|-------|
+| **GPU devices** | `0` (none) |
+| **CPU request** | `1` |
+| **CPU memory request** | `2Gi` |
+
+### Data & storage
+
+No data volumes needed.
+
+---
+
+## Access the app
+
+Once both `ocr-extract` and `ocr-app` are running, open the Streamlit
+URL:
 
 ```
 https://<cluster-host>/<project>/ocr-app/proxy/8501/
 ```
+
+Click the workspace name in the RunAI UI → click the **streamlit** tool
+link.
+
+---
+
+## Using the app for PoC
+
+1. **Upload your sample docs** — drag and drop PDFs/TIFFs into the file
+   uploader
+2. **Pick an output format** from the sidebar:
+   - `award` for grant award notices
+   - `budget` for budget pages
+   - `terms` for terms & conditions
+   - `key_values` for general forms
+   - `text` to see raw extraction
+3. **Click "Extract"** — results appear per page with timing info
+4. **Download results** — click the download button to save the JSON
+
+The sidebar shows whether the server is connected and which model is
+running. Each page result shows whether it used text extraction (digital)
+or VLM OCR (scanned).
+
+---
+
+## Expected startup time
+
+- **`ocr-extract`** — ~2-3 min (image pull + pip install + server start)
+- **`ocr-app`** — ~2-3 min (image pull + pip install + Streamlit start)
+
+Both are CPU-only, so startup is limited by image pull and pip install,
+not model loading.

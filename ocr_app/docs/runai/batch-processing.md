@@ -6,36 +6,75 @@
 Production workspace for processing large document collections. Mounts
 the document PVC and runs the batch script against vLLM.
 
+> **Prerequisite:** You've already verified the pipeline works on sample
+> docs in the setup workspace (Step 2). If you haven't, do that first.
+
 ---
 
-## RunAI UI Settings
+In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
+
+## Basic settings
 
 | Field | Value |
 |-------|-------|
-| **Workload type** | Workspace |
-| **Name** | `ocr-batch` |
-| **Image** | `nvcr.io/nvidia/pytorch:25.02-py3` |
-| **Tool** | Jupyter → port `8888` |
+| **Cluster** | `doit-ai-cluster` |
+| **Project** | Your project |
+| **Workspace name** | `ocr-batch` |
+
+## Environment image
+
+| Field | Value |
+|-------|-------|
+| **Image** | Custom image |
+| **Image URL** | `nvcr.io/nvidia/pytorch:25.02-py3` |
+| **Image pull** | Pull the image only if it's not already present on the host |
+
+## Tools
+
+| Field | Value |
+|-------|-------|
+| **Tool type** | Jupyter |
+| **Port** | `8888` |
+
+## Runtime settings
+
+| Field | Value |
+|-------|-------|
 | **Command** | `bash` |
 | **Arguments** | See below |
-| **GPU** | `0` (none — all GPU work is in ocr-vllm) |
-| **CPU** | `4` |
-| **Memory** | `8Gi` |
-| **Data volumes** | `ocr-documents` → `/data/documents` (read-only) |
-| | `ocr-extracted` → `/data/extracted` (read-write) |
+| **Working directory** | *(leave empty)* |
 
-## Arguments (copy-paste)
+### Arguments (copy-paste)
 
 ```
 -c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system httpx pymupdf Pillow && jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
 ```
 
-## Environment Variables
+**Environment variables:**
 
-| Variable | Value |
-|----------|-------|
+| Name | Value |
+|------|-------|
 | `LLM_BASE_URL` | `http://ocr-vllm.runai-<project>.svc.cluster.local/v1` |
 | `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
+
+## Compute resources
+
+| Field | Value |
+|-------|-------|
+| **GPU devices** | `0` (none — all GPU work is in ocr-vllm) |
+| **CPU request** | `4` |
+| **CPU memory request** | `8Gi` |
+
+> **Why more CPU/memory than the setup workspace?** The batch script runs
+> concurrent async requests and handles PDF rendering (PyMuPDF) for
+> scanned pages. 4 CPUs + 8Gi gives headroom for `--concurrency 4-8`.
+
+## Data & storage
+
+| Data volume name | Container path |
+|------------------|----------------|
+| `ocr-documents` | `/data/documents` |
+| `ocr-extracted` | `/data/extracted` |
 
 ---
 
@@ -52,7 +91,11 @@ python ocr_app/scripts/batch_extract.py \
     --output-dir /data/extracted \
     --format award \
     --concurrency 4
+```
 
+### Other examples
+
+```bash
 # Process only TIFFs
 python ocr_app/scripts/batch_extract.py \
     --input-dir /data/documents \
@@ -61,17 +104,26 @@ python ocr_app/scripts/batch_extract.py \
     --extensions .tiff .tif \
     --concurrency 8
 
-# Resume after failure
+# Resume after failure or interruption
 python ocr_app/scripts/batch_extract.py \
     --input-dir /data/documents \
     --output-dir /data/extracted \
     --format award \
     --resume
+
+# Process a specific subdirectory
+python ocr_app/scripts/batch_extract.py \
+    --input-dir /data/documents/2024 \
+    --output-dir /data/extracted/2024 \
+    --format award \
+    --concurrency 4
 ```
 
-## Monitoring progress
+---
 
-The batch script prints per-file progress:
+## Understanding the output
+
+### Progress logging
 
 ```
 [batch] Found 45000 files, 0 already completed, 45000 to process
@@ -81,24 +133,14 @@ The batch script prints per-file progress:
 [3/45000] OK scanned_agreement.tiff (1p, 0d/1s, 8.2s) -> scanned_agreement.json
 ```
 
-`3d/0s` = 3 digital pages, 0 scanned. Digital pages are much faster since
-they skip VLM entirely.
+- **`3p`** = 3 pages total
+- **`3d/0s`** = 3 digital pages, 0 scanned (text extraction used)
+- **`0d/1s`** = 0 digital, 1 scanned (VLM OCR used)
+- Digital pages are ~10x faster than scanned pages
 
-## Tuning concurrency
+### Output files
 
-| `--concurrency` | Best for |
-|-----------------|----------|
-| `2-4` | Default. Safe for single vLLM instance. |
-| `8-16` | If vLLM is on a large GPU (A100 80GB) with headroom. |
-| `1` | Debugging. Sequential, easy to read logs. |
-
-vLLM handles batching internally, so higher concurrency doesn't always
-mean more throughput — it depends on GPU memory and model size. Start at
-4 and increase if vLLM's GPU utilization is below 80%.
-
-## Output format
-
-One JSON file per input document, preserving subdirectory structure:
+One JSON per input document, preserving subdirectory structure:
 
 ```
 /data/extracted/
@@ -109,22 +151,53 @@ One JSON file per input document, preserving subdirectory structure:
     └── doc3.json
 ```
 
-Each JSON contains:
+### Resume state
 
-```json
-{
-  "source_file": "/data/documents/subdir_a/doc1.pdf",
-  "format": "award",
-  "total_pages": 3,
-  "digital_pages": 3,
-  "scanned_pages": 0,
-  "pages": [
-    {
-      "page": 1,
-      "text": "{\"document_type\": \"Notice of Award\", ...}",
-      "method": "text_extraction",
-      "elapsed_ms": 1250.5
-    }
-  ]
-}
+The batch script tracks completed files in `<output-dir>/.batch_state`.
+When you re-run with `--resume`, it skips files already listed there.
+This means:
+
+- Safe to interrupt and resume (Ctrl+C, workspace restart, etc.)
+- Safe to re-run against the same input directory — only new files get
+  processed
+- To start completely fresh, delete `.batch_state`:
+  `rm /data/extracted/.batch_state`
+
+---
+
+## Tuning concurrency
+
+| `--concurrency` | Best for |
+|-----------------|----------|
+| `2-4` | Default. Safe for single vLLM instance on any GPU. |
+| `8-16` | If vLLM is on a large GPU (A100 80GB) with headroom. |
+| `1` | Debugging. Sequential, easy to read logs. |
+
+vLLM handles batching internally via continuous batching, so higher
+concurrency doesn't always mean more throughput — it depends on GPU
+memory and model size. Start at 4 and increase if vLLM's GPU utilization
+is below 80%.
+
+> **How to check GPU utilization:** From any workspace with the shared
+> models PVC mounted, run `nvidia-smi`. Or check the RunAI UI's GPU
+> utilization metrics for the `ocr-vllm` job.
+
+---
+
+## Ongoing ingestion (~10K docs/month)
+
+If your input PVC is a direct mount to the source storage (NFS), new
+documents appear automatically. Re-run the batch script with `--resume`:
+
+```bash
+python ocr_app/scripts/batch_extract.py \
+    --input-dir /data/documents \
+    --output-dir /data/extracted \
+    --format award \
+    --concurrency 4 \
+    --resume
 ```
+
+It skips all previously processed files and only extracts the new ones.
+You can run this on a schedule (monthly, weekly, daily) depending on
+your intake volume.

@@ -57,20 +57,25 @@ UI are optional — useful for interactive demos.
 
 Follow these docs in order:
 
-0. **[Setup Data Volumes](setup-data-volumes.md)** — Create PVCs for input documents and output JSONs, upload data if needed
+0. **[Setup Data Volumes](setup-data-volumes.md)** — Create PVCs for input documents, output JSONs, and models *(skip for PoC — just drag-and-drop files in the Streamlit app)*
 1. **[Deploy vLLM Server](deploy-vllm.md)** — Qwen2.5-VL-7B for text parsing + VLM OCR
-2. **[Setup & Test Workspace](setup-workspace.md)** — Verify pipeline on sample docs before batch runs
-3. **[Batch Processing](batch-processing.md)** — Production batch workspace for large-scale runs
-4. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Interactive UI for PoC demos
+2. **[Deploy Streamlit App](deploy-streamlit.md)** — Interactive UI for uploading docs and previewing results *(recommended starting point for PoC)*
+3. **[Setup & Test Workspace](setup-workspace.md)** — Jupyter workspace for CLI-based testing *(alternative to Streamlit)*
+4. **[Batch Processing](batch-processing.md)** — Production workspace for large-scale runs
 
 All steps use the **RunAI web UI only** — no CLI tools required.
 
-### Deployment Order
+### PoC path (5 sample docs)
 
-0. **Data volumes** — create PVCs, upload sample docs (one-time)
-1. **`ocr-vllm`** — start the GPU inference server (~2-5 min to load)
-2. **`ocr-setup`** — verify pipeline works on sample docs, then stop
-3. **`ocr-batch`** — production runs against full document collection
+1. Deploy `ocr-vllm` (Step 1) — GPU inference
+2. Deploy `ocr-extract` + `ocr-app` (Step 2) — CPU, Streamlit UI
+3. Drag-and-drop your 5 PDFs into the app, pick a format, see results
+
+### Production path (10K+ docs/month)
+
+0. Setup data volumes (Step 0) — PVCs for input/output
+1. Deploy `ocr-vllm` (Step 1) — GPU inference
+4. Deploy `ocr-batch` (Step 4) — batch workspace with `--resume`
 
 ---
 
