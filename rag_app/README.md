@@ -20,84 +20,38 @@ Retrieval-augmented generation over research paper corpora. Streamlit chat UI ba
 
 All 4 services fit on ~1 GPU via fractional allocation. Reranker is optional.
 
-## Quick Start
-
-```bash
-# 1. Start vLLM (GPU)
-vllm serve Qwen/Qwen2.5-7B-Instruct --dtype bfloat16
-
-# 2. Start embedding server (GPU)
-python rag_app/scripts/embedding_server.py
-
-# 3. Start Streamlit UI (CPU)
-pip install -r rag_app/requirements_remote.txt
-RAG_MODE=remote streamlit run rag_app/app.py
-```
-
 ## RunAI Deployment
 
-See `rag_app/deploy/runai_jobs.yaml` for complete RunAI job definitions, or follow the step-by-step guides below.
+Full deployment guide: **[docs/runai/README.md](docs/runai/README.md)**
 
-## Documentation Index
+Follow these docs in order:
 
-### Setup & Deployment
+0. [Setup Shared Models PVC](docs/runai/setup-shared-models.md) *(admin, one-time)*
+1. [Setup Workspace](docs/runai/setup-workspace.md) — clone repo, build vector index
+2. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — LLM inference with Qwen 7B
+3. [Deploy Embedding Server](docs/runai/deploy-embedding.md) — Jina V4 query encoding
+4. [Deploy Reranker Server](docs/runai/deploy-reranker.md) *(optional)*
+5. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) — browser UI
 
-| Doc | Description |
-|-----|-------------|
-| [RunAI Overview](docs/runai/README.md) | Architecture overview for RunAI deployment |
-| [Setup Shared Models](docs/runai/setup-shared-models.md) | Download models to shared PVC |
-| [Setup Workspace](docs/runai/setup-workspace.md) | Initialize a RunAI workspace |
-| [Deploy vLLM](docs/runai/deploy-vllm.md) | Deploy the LLM inference server |
-| [Deploy Embedding](docs/runai/deploy-embedding.md) | Deploy the Jina V4 embedding server |
-| [Deploy Reranker](docs/runai/deploy-reranker.md) | Deploy the cross-encoder reranker (optional) |
-| [Deploy Streamlit](docs/runai/deploy-streamlit.md) | Deploy the Streamlit UI workspace |
-| [Setup PowerEdge](docs/Setup_PowerEdge.md) | On-premises PowerEdge setup (non-RunAI) |
-
-### Architecture & Usage
-
-| Doc | Description |
-|-----|-------------|
-| [Pipeline Architecture](docs/Pipeline_Architecture.md) | RAG pipeline technical details |
-| [Streamlit App Guide](docs/Streamlit_App_Guide.md) | UI features, sidebar controls, modes |
-| [OpenScholar Integration](docs/Explore_OpenScholar_Integration.md) | Science-tuned LLM integration |
-
-### Benchmarks
-
-| Doc | Description |
-|-----|-------------|
-| [Benchmark Report](docs/Benchmark_Report.md) | Results across models and hardware |
-| [Benchmarking Guide](docs/Benchmarking_Guide.md) | How to run your own benchmarks |
-
-### Troubleshooting
-
-| Doc | Description |
-|-----|-------------|
-| [RunAI Troubleshooting](docs/runai/troubleshooting.md) | Common RunAI deployment issues |
-| [RunAI Reference](docs/runai/reference.md) | Architecture rationale, data sharing |
-| [Dependency Fixes](docs/Dep_fixes.md) | Known dependency issues and fixes |
+Additional: [Troubleshooting](docs/runai/troubleshooting.md) | [Managing Models](docs/runai/managing-models.md) | [Reference](docs/runai/reference.md)
 
 ## Key Files
 
 ```
 rag_app/
-├── app.py                          # Streamlit chat UI (3000+ lines)
+├── app.py                          # Streamlit chat UI
 ├── pages/1_Corpus.py               # Corpus exploration page
 ├── vendor/
-│   ├── KohakuRAG/                  # RAG engine (pipeline, embeddings, LLM, vision)
-│   └── KohakuVault/                # Rust+PyO3 SQLite KV store with vectors
+│   ├── KohakuRAG/                  # RAG engine
+│   └── KohakuVault/                # Rust+PyO3 SQLite vector store
 ├── scripts/
 │   ├── embedding_server.py         # FastAPI Jina V4 server
 │   ├── reranker_server.py          # FastAPI cross-encoder server
-│   ├── add_papers.py               # Corpus management
-│   ├── run_app.sh / start_app.sh   # Launch helpers
+│   └── add_papers.py               # Corpus management
 ├── deploy/
-│   └── runai_jobs.yaml             # RunAI deployment configs
-├── data/
-│   ├── corpus/                     # Document chunks
-│   ├── embeddings/                 # Vector databases
-│   └── metadata.csv                # Paper metadata
-├── artifacts/plots/                # PowerEdge benchmark plots
+│   └── runai_jobs.yaml             # RunAI job configs
+├── data/                           # Corpus, embeddings, metadata
+├── docs/runai/                     # Deployment guides (10 docs)
 ├── requirements_local.txt          # GPU/local inference deps
-├── requirements_remote.txt         # Remote client deps (minimal)
-└── docs/                           # App-specific documentation
+└── requirements_remote.txt         # Remote client deps (minimal)
 ```

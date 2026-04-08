@@ -121,19 +121,17 @@ curl -X POST http://localhost:8090/extract/pdf \
 
 ## RunAI / PowerEdge Deployment
 
-**Full step-by-step guide:** [docs/deploy-runai.md](docs/deploy-runai.md)
+Full deployment guide: **[docs/runai/README.md](docs/runai/README.md)**
 
-Covers vLLM setup, extraction server, Streamlit UI, batch workspace,
-data volume setup, GPU sizing, troubleshooting.
+Follow these docs in order:
 
-### Summary
+0. [Setup Data Volumes](docs/runai/setup-data-volumes.md) — PVCs for input docs, output JSONs, models
+1. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — Qwen2.5-VL-7B for text parsing + VLM OCR
+2. [Setup & Test Workspace](docs/runai/setup-workspace.md) — Verify pipeline on sample docs
+3. [Batch Processing](docs/runai/batch-processing.md) — Production batch workspace
+4. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) *(optional)* — Interactive UI for PoC demos
 
-| Workload | Type | GPU | Purpose |
-|----------|------|-----|---------|
-| `ocr-vllm` | Inference | 0.80 | Qwen2.5-VL-7B (text parsing + VLM OCR) |
-| `ocr-extract` | Inference | 0 | Extraction server (optional, for API/UI) |
-| `ocr-app` | Workspace | 0 | Streamlit UI (optional, for PoC demos) |
-| `ocr-batch` | Workspace | 0 | Batch processing (for production runs) |
+Additional: [Troubleshooting](docs/runai/troubleshooting.md)
 
 ## Batch Processing
 
@@ -155,7 +153,7 @@ Features:
 - Preserves subdirectory structure in output
 - Per-file progress logging with throughput stats
 
-See [docs/deploy-runai.md](docs/deploy-runai.md) for the batch workspace setup.
+See [docs/runai/batch-processing.md](docs/runai/batch-processing.md) for the batch workspace setup.
 
 ## Configuration
 
@@ -188,14 +186,6 @@ For high-volume batch processing:
 - Consider a text-only LLM (e.g. Qwen2.5-7B-Instruct, smaller/faster) for the
   text parsing path, with a separate VLM endpoint only for scans
 
-## Documentation
-
-| Doc | Description |
-|-----|-------------|
-| [README.md](README.md) | This file — overview, quick start, API |
-| [docs/deploy-runai.md](docs/deploy-runai.md) | Full RunAI deployment guide (vLLM, extraction server, batch workspace, troubleshooting) |
-| [deploy/runai_jobs.yaml](deploy/runai_jobs.yaml) | RunAI job configs (copy-paste reference) |
-
 ## Key Files
 
 ```
@@ -206,8 +196,14 @@ ocr_app/
 │   └── batch_extract.py            # Batch processing script
 ├── deploy/
 │   └── runai_jobs.yaml             # RunAI job configs
-├── docs/
-│   └── deploy-runai.md             # Step-by-step RunAI deployment guide
+├── docs/runai/                     # RunAI deployment guides
+│   ├── README.md                   #   Overview + deployment order
+│   ├── setup-data-volumes.md       #   PVC setup + data upload
+│   ├── deploy-vllm.md             #   vLLM server (GPU)
+│   ├── setup-workspace.md          #   Setup & test workspace
+│   ├── batch-processing.md         #   Production batch runs
+│   ├── deploy-streamlit.md         #   Streamlit UI (optional)
+│   └── troubleshooting.md          #   Common issues
 ├── requirements_server.txt         # Server deps (lightweight, no GPU)
 ├── requirements_ui.txt             # Streamlit UI deps
 ├── .env.example                    # Environment variable template
