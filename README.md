@@ -1,49 +1,98 @@
 # RunAI / PowerEdge Applications
 
-A collection of GPU-accelerated applications deployed on RunAI (Kubernetes) with Dell PowerEdge infrastructure. Each app follows the same deployment pattern: lightweight CPU containers for UI/orchestration, with GPU work offloaded to vLLM or Ollama.
+GPU-accelerated applications for UW-Madison research computing, deployed on
+RunAI with Dell PowerEdge infrastructure. Built for DoIT and the research
+community — production-ready patterns for running open-source AI models on
+local GPU clusters instead of cloud APIs.
 
 ## Applications
 
 ### [Document Extraction (`ocr_app/`)](ocr_app/README.md)
 
-Structured data extraction from grant award notices, budgets, terms & conditions, and other research admin documents. Hybrid pipeline: digital PDFs are processed via text extraction + LLM parsing (instant, no GPU); scanned pages and TIFFs fall back to VLM OCR (Qwen2.5-VL).
+Structured data extraction from research admin documents — grant award
+notices, budgets, terms & conditions, subaward agreements. Processes
+DoIT's imaging archive (20M+ documents, TIFF and PDF) into structured JSON
+for downstream systematic analysis.
+
+- **Hybrid pipeline:** digital PDFs get instant text extraction; scanned
+  pages fall back to VLM OCR (Qwen2.5-VL-7B)
+- **Batch mode:** async concurrent processing with resume support for
+  large-scale runs
+- **Interactive mode:** Streamlit UI for PoC demos and format exploration
+- Outputs structured JSON (award details, budget line items, regulatory
+  citations, key-value pairs, tables)
+
+**Status:** PoC — testing on sample documents from DoIT imaging service.
 
 ### [RAG Chat (`rag_app/`)](rag_app/README.md)
 
-WattBot RAG — retrieval-augmented generation over research paper corpora. Streamlit chat UI backed by vLLM, Jina V4 embeddings, and optional cross-encoder reranking. Supports multiple knowledge bases and fractional GPU allocation across 4 services on a single GPU.
+WattBot — retrieval-augmented generation over research paper corpora.
+Chat interface for querying scientific literature with citations. 2025
+WattBot Challenge winner.
 
-## Shared Utilities
+- **4 services on 1 GPU:** vLLM (LLM), Jina V4 (embeddings),
+  cross-encoder (reranker), Streamlit (UI) via fractional GPU allocation
+- Multiple knowledge bases, hybrid search (vector + BM25)
+- Supports Qwen, Llama, OpenScholar models
 
-### `scripts/`
-Infrastructure utilities used across apps:
-- `hardware_metrics.py` — GPU/energy profiling (VRAM, power, energy per request)
-- `provision_shared_models.py` — Download models to shared PVC
-- `setup_poweredge_pod.sh` — PowerEdge pod initialization
+**Status:** Deployed on RunAI, documented end-to-end.
 
-## Deployment Pattern
+## Infrastructure
 
-All apps follow the same RunAI deployment pattern:
+### What's here
+
+Each app includes:
+- `deploy/runai_jobs.yaml` — RunAI job configs with copy-paste arguments
+- `docs/` — Step-by-step deployment guides (data volume setup, model
+  provisioning, workspace config, troubleshooting)
+- Requirements files for CPU and GPU components
+
+### Deployment pattern
+
+All apps use the same approach:
 
 ```
 ┌──────────────────┐
-│   Streamlit UI   │  Workspace (CPU, port 8501)
-│   or FastAPI     │  App code pulled at runtime via curl|tar
+│   App (CPU)      │  Workspace — code pulled from GitHub at startup
+│   Streamlit /    │  via curl|tar + uv pip install
+│   FastAPI / CLI  │
 └────────┬─────────┘
-         │ HTTP (internal cluster DNS)
+         │ HTTP (cluster-internal DNS)
          ▼
 ┌──────────────────┐
-│  vLLM / Ollama   │  Inference workload (GPU, fractional)
-│  Model serving   │  Models loaded from shared PVC
+│  vLLM / Ollama   │  Inference workload — GPU, fractional allocation
+│  Model serving   │  Weights loaded from shared PVC
 └──────────────────┘
 ```
 
-- **No Docker builds required** for app code — base images provide the runtime environment (Python, CUDA, deps), app code is pulled from GitHub at container start
-- **Fractional GPU allocation** — multiple services share a single GPU
-- **Shared model PVC** — models downloaded once, mounted read-only across jobs
-- **FQDN for service URLs** — `workload.runai-project.svc.cluster.local` (Knative requirement)
+- **No Docker builds** — stock images (`vllm/vllm-openai`,
+  `nvcr.io/nvidia/pytorch`) with deps installed at startup
+- **Fractional GPU** — multiple services share one physical GPU
+- **Shared model PVC** — download once, mount read-only everywhere
+- **Knative DNS** — services addressed via FQDN
+  (`workload.runai-project.svc.cluster.local`)
 
-## Quick Start
+### Shared utilities (`scripts/`)
 
-1. Pick an app and follow its README
-2. Each app has its own `docs/` with deployment guides, setup steps, and troubleshooting
-3. Deploy via RunAI UI using the configs in each app's `deploy/` directory
+| Script | Purpose |
+|--------|---------|
+| `hardware_metrics.py` | GPU/energy profiling — VRAM, power draw, energy per request |
+| `provision_shared_models.py` | Download HuggingFace models to shared PVC |
+| `setup_poweredge_pod.sh` | PowerEdge pod initialization |
+
+## Getting Started
+
+1. **Pick an app** and read its README
+2. **Set up a shared models PVC** — see
+   [rag_app/docs/runai/setup-shared-models.md](rag_app/docs/runai/setup-shared-models.md)
+   (same PVC works for all apps)
+3. **Follow the app's deployment guide** in its `docs/` directory
+4. **Deploy via RunAI UI** using the configs in the app's `deploy/` directory
+
+## Team
+
+- **Chris Endemann** — Research Supervisor
+- **Blaise Enuh** — Local deployment
+- **Nils Matteson** — AWS Bedrock integration
+
+Built at the University of Wisconsin-Madison.
