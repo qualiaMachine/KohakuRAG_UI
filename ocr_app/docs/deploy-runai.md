@@ -39,7 +39,7 @@ Only `ocr-vllm` uses GPU. Everything else is CPU-only.
 
 - **Shared models PVC** with `Qwen/Qwen2.5-VL-7B-Instruct` downloaded.
   If you've already set this up for WattBot, the same PVC works — just
-  add the Qwen VL model. See [setup-shared-models.md](../../docs/runai/setup-shared-models.md).
+  add the Qwen VL model. See [setup-shared-models.md](../../rag_app/docs/runai/setup-shared-models.md).
 
 ### Download Qwen2.5-VL-7B to shared PVC
 
@@ -373,7 +373,7 @@ find /data/documents -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head
 If you already have the WattBot shared models PVC with Qwen models on it,
 reuse it. Just make sure `Qwen/Qwen2.5-VL-7B-Instruct` is downloaded.
 
-If not, see [setup-shared-models.md](../../docs/runai/setup-shared-models.md).
+If not, see [setup-shared-models.md](../../rag_app/docs/runai/setup-shared-models.md).
 
 ---
 

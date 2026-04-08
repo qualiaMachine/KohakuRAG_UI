@@ -12,13 +12,10 @@ Structured data extraction from grant award notices, budgets, terms & conditions
 
 WattBot RAG — retrieval-augmented generation over research paper corpora. Streamlit chat UI backed by vLLM, Jina V4 embeddings, and optional cross-encoder reranking. Supports multiple knowledge bases and fractional GPU allocation across 4 services on a single GPU.
 
-## Shared Infrastructure
-
-### `docs/runai/`
-RunAI deployment guides — architecture overview, vLLM deployment, embedding/reranker servers, Streamlit workspaces, shared model PVC setup, troubleshooting.
+## Shared Utilities
 
 ### `scripts/`
-Shared infrastructure utilities:
+Infrastructure utilities used across apps:
 - `hardware_metrics.py` — GPU/energy profiling (VRAM, power, energy per request)
 - `provision_shared_models.py` — Download models to shared PVC
 - `setup_poweredge_pod.sh` — PowerEdge pod initialization
@@ -47,6 +44,6 @@ All apps follow the same RunAI deployment pattern:
 
 ## Quick Start
 
-1. Set up a shared model PVC: see `docs/runai/setup-shared-models.md`
-2. Pick an app and follow its README
-3. Deploy via RunAI UI or CLI using the configs in each app's `deploy/` directory
+1. Pick an app and follow its README
+2. Each app has its own `docs/` with deployment guides, setup steps, and troubleshooting
+3. Deploy via RunAI UI using the configs in each app's `deploy/` directory

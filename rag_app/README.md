@@ -44,13 +44,13 @@ See `rag_app/deploy/runai_jobs.yaml` for complete RunAI job definitions, or foll
 
 | Doc | Description |
 |-----|-------------|
-| [RunAI Overview](../docs/runai/README.md) | Architecture overview for RunAI deployment |
-| [Setup Shared Models](../docs/runai/setup-shared-models.md) | Download models to shared PVC |
-| [Setup Workspace](../docs/runai/setup-workspace.md) | Initialize a RunAI workspace |
-| [Deploy vLLM](../docs/runai/deploy-vllm.md) | Deploy the LLM inference server |
-| [Deploy Embedding](../docs/runai/deploy-embedding.md) | Deploy the Jina V4 embedding server |
-| [Deploy Reranker](../docs/runai/deploy-reranker.md) | Deploy the cross-encoder reranker (optional) |
-| [Deploy Streamlit](../docs/runai/deploy-streamlit.md) | Deploy the Streamlit UI workspace |
+| [RunAI Overview](docs/runai/README.md) | Architecture overview for RunAI deployment |
+| [Setup Shared Models](docs/runai/setup-shared-models.md) | Download models to shared PVC |
+| [Setup Workspace](docs/runai/setup-workspace.md) | Initialize a RunAI workspace |
+| [Deploy vLLM](docs/runai/deploy-vllm.md) | Deploy the LLM inference server |
+| [Deploy Embedding](docs/runai/deploy-embedding.md) | Deploy the Jina V4 embedding server |
+| [Deploy Reranker](docs/runai/deploy-reranker.md) | Deploy the cross-encoder reranker (optional) |
+| [Deploy Streamlit](docs/runai/deploy-streamlit.md) | Deploy the Streamlit UI workspace |
 | [Setup PowerEdge](docs/Setup_PowerEdge.md) | On-premises PowerEdge setup (non-RunAI) |
 
 ### Architecture & Usage
@@ -72,8 +72,8 @@ See `rag_app/deploy/runai_jobs.yaml` for complete RunAI job definitions, or foll
 
 | Doc | Description |
 |-----|-------------|
-| [RunAI Troubleshooting](../docs/runai/troubleshooting.md) | Common RunAI deployment issues |
-| [RunAI Reference](../docs/runai/reference.md) | Architecture rationale, data sharing |
+| [RunAI Troubleshooting](docs/runai/troubleshooting.md) | Common RunAI deployment issues |
+| [RunAI Reference](docs/runai/reference.md) | Architecture rationale, data sharing |
 | [Dependency Fixes](docs/Dep_fixes.md) | Known dependency issues and fixes |
 
 ## Key Files
