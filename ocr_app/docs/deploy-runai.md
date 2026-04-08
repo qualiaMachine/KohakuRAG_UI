@@ -283,45 +283,217 @@ mean more throughput — it depends on GPU memory and model size. Start at
 
 ---
 
-## Data Volume Setup
+## Step 0: Data Volume Setup
 
-You need two PVCs for batch processing:
+Before deploying any workloads, set up the storage. You need three volumes:
 
-### Input documents PVC
+### Cluster storage layout
 
-Mount wherever DoIT's imaging data lives. If the documents are already on
-a shared filesystem, create a Data Volume pointing to it.
+| Path | Type | Access | Size | Purpose |
+|------|------|--------|------|---------|
+| `/models/` | Shared models PVC | RO (reuse from WattBot) | varies | Qwen2.5-VL-7B weights |
+| `/data/documents/` | Input documents PVC | RO for batch jobs | 14+ TB | Source PDFs and TIFFs from PeopleSoft |
+| `/data/extracted/` | Output PVC | RW for batch jobs | ~200 GB | Extracted JSON files |
+
+### 0a. Input documents — `ocr-documents`
+
+This is where the 14TB of TIFFs and PDFs live. Two options depending on
+where the data currently is:
+
+**Option A: Data already on cluster storage (NFS, Ceph, etc.)**
+
+If DoIT's imaging data is already on a shared filesystem accessible from
+the cluster, create a Data Volume pointing directly to it:
+
+1. Go to **Data & Storage** > **Data Volumes** > **New Data Volume**
+2. **Scope:** Your project
+3. **PVC name:** Use an existing PVC if the data is already on one, or
+   create a new one backed by the existing storage class
+4. **Data volume name:** `ocr-documents`
+5. **Mount path:** `/data/documents`
+
+**Option B: Upload data via a workspace**
+
+If you need to copy data onto the cluster:
+
+1. Create a Data Volume called `ocr-documents` (same as above, but with
+   a new empty PVC — size it for your data, e.g. 15Ti)
+2. Create a temporary **Workspace** with:
+   - **Name:** `ocr-data-upload`
+   - **Image:** `nvcr.io/nvidia/pytorch:25.02-py3`
+   - **GPU:** 0
+   - **CPU:** 2
+   - **Memory:** 4Gi
+   - **Data volume:** `ocr-documents` → `/data/documents` (read-write)
+   - **Tool:** Jupyter → port 8888
+3. Open a terminal in the workspace and use `rsync`, `scp`, or `rclone`:
+
+```bash
+# From your local machine / data server:
+rsync -avP /path/to/imaging_data/ user@<workspace-host>:/data/documents/
+
+# Or from inside the workspace, pull from a file server:
+rsync -avP user@fileserver:/imaging_archive/ /data/documents/
+
+# Or use rclone for S3/cloud sources:
+pip install rclone
+rclone copy s3://doit-imaging-bucket /data/documents/ --progress
+```
+
+> **Tip for 14TB:** `rsync` with `--progress` and `--partial` handles
+> interruptions gracefully. For faster transfers, consider running
+> multiple rsync jobs for different subdirectories in parallel.
+
+4. Verify the data is there:
+
+```bash
+# Check file count and size
+find /data/documents -type f | wc -l
+du -sh /data/documents
+
+# Check file types
+find /data/documents -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head
+```
+
+5. **Stop the upload workspace** once done — you don't need it at runtime.
+
+### 0b. Output storage — `ocr-extracted`
+
+1. Go to **Data & Storage** > **Data Volumes** > **New Data Volume**
+2. Configure:
+   - **Scope:** Your project
+   - **PVC name:** `ocr-extracted` (creates a new PVC)
+   - **Data volume name:** `ocr-extracted`
+   - **Size:** 100Gi to start (JSON output is ~1-5% of input size —
+     14TB of docs → ~100-700GB of JSON, depending on doc length)
+3. Mount path: `/data/extracted`
+
+### 0c. Shared models PVC
+
+If you already have the WattBot shared models PVC with Qwen models on it,
+reuse it. Just make sure `Qwen/Qwen2.5-VL-7B-Instruct` is downloaded.
+
+If not, see [setup-shared-models.md](../../docs/runai/setup-shared-models.md).
+
+---
+
+## Step 0.5: Setup & Test Workspace (`ocr-setup`)
+
+A one-time workspace to verify the pipeline works before committing to a
+batch run. Similar to `wattbot-setup` — use it to test on a handful of
+docs, then stop it.
+
+### RunAI UI Settings
 
 | Field | Value |
 |-------|-------|
-| **Name** | `document-store` |
-| **Mount path** | `/data/documents` |
-| **Access** | Read-only is fine |
+| **Workload type** | Workspace |
+| **Name** | `ocr-setup` |
+| **Image** | `nvcr.io/nvidia/pytorch:25.02-py3` |
+| **Tool** | Jupyter → port `8888` |
+| **Command** | `bash` |
+| **Arguments** | See below |
+| **GPU** | `0` (none) |
+| **CPU** | `2` |
+| **Memory** | `4Gi` |
+| **Data volumes** | `ocr-documents` → `/data/documents` (read-only) |
+| | `ocr-extracted` → `/data/extracted` (read-write) |
 
-### Output PVC
+### Arguments (copy-paste)
 
-For the extracted JSON files. Size depends on your corpus — JSON output is
-typically 1-5% of input size (text is small compared to images/PDFs).
+```
+-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system httpx pymupdf Pillow && jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+```
 
-| Field | Value |
-|-------|-------|
-| **Name** | `extraction-output` |
-| **Mount path** | `/data/extracted` |
-| **Access** | Read-write |
-| **Size** | Start with 100Gi, expand as needed |
+### Environment Variables
+
+| Variable | Value |
+|----------|-------|
+| `LLM_BASE_URL` | `http://ocr-vllm.runai-<project>.svc.cluster.local/v1` |
+| `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
+
+### Verification checklist
+
+Open a terminal in the Jupyter workspace and run through these:
+
+**1. Check the data volumes mounted correctly:**
+
+```bash
+# Input documents
+ls /data/documents/ | head -20
+find /data/documents -type f | wc -l
+du -sh /data/documents
+
+# Output directory (should be empty)
+ls /data/extracted/
+```
+
+**2. Check vLLM is reachable:**
+
+```bash
+curl http://ocr-vllm.runai-<project>.svc.cluster.local/v1/models
+# Expected: {"data": [{"id": "Qwen/Qwen2.5-VL-7B-Instruct", ...}]}
+```
+
+**3. Test the extraction on a single document:**
+
+```bash
+cd /tmp/KohakuRAG_UI
+
+# Pick a sample document
+ls /data/documents/ | head -5
+
+# Run batch on just one file
+python ocr_app/scripts/batch_extract.py \
+    --input-dir /data/documents \
+    --output-dir /data/extracted/test \
+    --format award \
+    --concurrency 1 \
+    --extensions .pdf
+
+# Check the output
+cat /data/extracted/test/*.json | python -m json.tool | head -50
+```
+
+**4. Validate the JSON output makes sense:**
+
+```python
+import json
+from pathlib import Path
+
+# Load the first output
+out = next(Path("/data/extracted/test").glob("*.json"))
+data = json.loads(out.read_text())
+
+print(f"File: {data['source_file']}")
+print(f"Pages: {data['total_pages']} ({data['digital_pages']}d/{data['scanned_pages']}s)")
+for page in data['pages']:
+    print(f"  Page {page['page']}: {page['method']} ({page['elapsed_ms']}ms)")
+    # Print first 200 chars of extracted text
+    print(f"    {page['text'][:200]}...")
+```
+
+**5. If everything looks good, clean up the test output:**
+
+```bash
+rm -rf /data/extracted/test
+```
+
+**6. Stop the setup workspace** — you don't need it for production runs.
+   The batch workspace (Step 4) handles actual processing.
 
 ---
 
 ## Deployment Order
 
-1. **Shared models PVC** — download Qwen2.5-VL-7B (one-time, ~15GB)
-2. **`ocr-vllm`** — start the GPU inference server (~2-5 min to load)
-3. Then either:
-   - **`ocr-extract`** + **`ocr-app`** for interactive PoC demos
-   - **`ocr-batch`** for production batch runs
-
-The vLLM server is shared — both the extraction server and batch script
-talk to the same endpoint.
+1. **Data volumes** — create `ocr-documents` and `ocr-extracted` PVCs (Step 0)
+2. **Upload data** — if needed, use a temporary workspace to rsync/scp data (Step 0a)
+3. **Shared models PVC** — ensure Qwen2.5-VL-7B is downloaded (Step 0c)
+4. **`ocr-vllm`** — start the GPU inference server (Step 1, ~2-5 min to load)
+5. **`ocr-setup`** — verify pipeline works on sample docs (Step 0.5)
+6. Then either:
+   - **`ocr-extract`** + **`ocr-app`** for interactive PoC demos (Steps 2-3)
+   - **`ocr-batch`** for production batch runs (Step 4)
 
 ---
 
