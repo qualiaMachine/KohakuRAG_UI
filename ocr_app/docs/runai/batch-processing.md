@@ -1,7 +1,7 @@
 # Batch Processing Workspace (`ocr-batch`)
 
-> **Step 3** in the [deployment guide](README.md). Comes after
-> [Setup & Test Workspace](setup-workspace.md) (Step 2).
+> **Step 4** in the [deployment guide](README.md). Comes after
+> [Deploy vLLM Server](deploy-vllm.md) (Step 3).
 
 Production workspace for processing large document collections. Mounts
 the document PVC and runs the batch script against vLLM.

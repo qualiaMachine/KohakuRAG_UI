@@ -58,9 +58,9 @@ UI are optional — useful for interactive demos.
 Follow these docs in order:
 
 0. **[Setup Data Volumes](setup-data-volumes.md)** — Download model to shared PVC, create output volume
-1. **[Deploy vLLM Server](deploy-vllm.md)** — Qwen2.5-VL-7B for text parsing + VLM OCR
-2. **[Setup & Test Workspace](setup-workspace.md)** — Experiment with pipeline in notebook, iterate on prompts/formats
-3. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Polished demo UI
+1. **[Setup & Test Workspace](setup-workspace.md)** — Experiment with pipeline in notebook, iterate on prompts/formats, test Streamlit locally
+2. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Deploy as its own workload for persistent demo UI
+3. **[Deploy vLLM Server](deploy-vllm.md)** — Persistent Qwen2.5-VL-7B inference endpoint
 4. **[Batch Processing](batch-processing.md)** — Production workspace for large-scale runs
 
 All steps use the **RunAI web UI only** — no CLI tools required.
@@ -68,15 +68,14 @@ All steps use the **RunAI web UI only** — no CLI tools required.
 ### PoC path (5 sample docs)
 
 0. Download model to shared PVC (Step 0)
-1. Deploy `qwen2-5--vl--7b--instruct` (Step 1) — GPU inference
-2. Setup & test workspace (Step 2) — upload docs, run test notebook
-3. Optionally deploy Streamlit app (Step 3) for a nicer demo UI
+1. Setup workspace (Step 1) — upload docs, run test notebook, launch Streamlit from workspace
+2. Optionally deploy Streamlit as its own workload (Step 2)
 
 ### Production path (10K+ docs/month)
 
 0. Setup data volumes (Step 0) — PVCs for input/output
-1. Deploy `qwen2-5--vl--7b--instruct` (Step 1) — GPU inference
-2. Setup & test workspace (Step 2) — verify with notebook
+1. Setup workspace (Step 1) — verify pipeline with notebook
+3. Deploy `qwen2-5--vl--7b--instruct` as persistent endpoint (Step 3)
 4. Deploy `ocr-batch` (Step 4) — batch workspace with `--resume`
 
 ---

@@ -1,7 +1,7 @@
 # Setup & Test Workspace (`ocr-setup`)
 
-> **Step 2** in the [deployment guide](README.md). Comes after
-> [Deploy vLLM Server](deploy-vllm.md) (Step 1).
+> **Step 1** in the [deployment guide](README.md). Comes after
+> [Setup Data Volumes](setup-data-volumes.md) (Step 0).
 
 ## What this workspace does
 
@@ -225,11 +225,47 @@ python ocr_app/scripts/batch_extract.py \
     --concurrency 1
 ```
 
-### 6. Done — stop the workspace
+### 6. Test the Streamlit app (optional)
 
-Once you're satisfied with the output, **stop the workspace** from the
-RunAI UI. You can always restart it later to test new formats or
-different document types.
+You can run both the extraction server and Streamlit UI directly from
+this workspace to test the full interactive experience before deploying
+them as separate workloads.
 
-For production batch runs, proceed to
-[Batch Processing](batch-processing.md) (Step 3).
+Open **two terminals** in Jupyter:
+
+**Terminal 1 — start the extraction server:**
+
+```bash
+cd /tmp/KohakuRAG_UI
+pip install fastapi uvicorn python-multipart
+python ocr_app/scripts/ocr_server.py
+```
+
+**Terminal 2 — start Streamlit:**
+
+```bash
+cd /tmp/KohakuRAG_UI
+pip install streamlit python-dotenv
+OCR_SERVICE_URL=http://localhost:8090 \
+  streamlit run ocr_app/app.py \
+    --server.port=8501 \
+    --server.address=0.0.0.0 \
+    --server.headless=true
+```
+
+Access the app at the workspace proxy URL:
+`https://<cluster-host>/<project>/ocr-setup/proxy/8501/`
+
+> **Note:** For this to work, your workspace needs a **Custom URL** tool
+> configured for port 8501 (in addition to Jupyter on 8888). If you didn't
+> set that up when creating the workspace, you can add it by editing the
+> workspace config in the RunAI UI, or just use the notebook approach
+> instead.
+
+### 7. Done — stop or keep iterating
+
+Once you're satisfied with the output, either:
+- **Stop the workspace** — restart later to test new formats or doc types
+- **Deploy the Streamlit app** as a proper workload (Step 3) for a
+  persistent demo
+- **Move to batch processing** (Step 4) for production runs

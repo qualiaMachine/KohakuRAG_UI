@@ -1,7 +1,8 @@
 # Deploy the vLLM Server (`qwen2-5--vl--7b--instruct`)
 
-> **Step 1** in the [deployment guide](README.md). Comes after
-> [Setup Data Volumes](setup-data-volumes.md) (Step 0).
+> **Step 3** in the [deployment guide](README.md). Deploy this when
+> you're ready for a persistent inference endpoint (after iterating
+> in the setup workspace).
 
 Uses the official `vllm/vllm-openai` image. Serves Qwen2.5-VL-7B for
 both text parsing (digital PDFs) and VLM OCR (scans/TIFFs) — one model

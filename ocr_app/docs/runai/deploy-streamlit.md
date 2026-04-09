@@ -1,7 +1,8 @@
 # Deploy Streamlit App (`ocr-app`)
 
-> **Step 2** in the [deployment guide](README.md). Comes after
-> [Deploy vLLM Server](deploy-vllm.md) (Step 1).
+> **Step 2** *(optional)* in the [deployment guide](README.md). Comes
+> after [Setup & Test Workspace](setup-workspace.md) (Step 1). You can
+> also test Streamlit directly from the setup workspace first.
 
 Browser-based UI for uploading documents and previewing extracted results.
 Drag-and-drop your files, pick an output format, and see structured JSON

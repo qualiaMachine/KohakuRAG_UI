@@ -34,9 +34,9 @@ Full deployment guide: **[docs/runai/README.md](docs/runai/README.md)**
 Follow these docs in order:
 
 0. [Setup Data Volumes](docs/runai/setup-data-volumes.md) — download model to shared PVC, create output volume
-1. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — Qwen2.5-VL-7B inference endpoint
-2. [Setup & Test Workspace](docs/runai/setup-workspace.md) — experiment with pipeline in notebook, iterate on prompts/formats
-3. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) *(optional)* — polished demo UI
+1. [Setup & Test Workspace](docs/runai/setup-workspace.md) — experiment with pipeline in notebook, iterate on prompts/formats
+2. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) *(optional)* — polished demo UI, test from workspace first
+3. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — persistent Qwen2.5-VL-7B inference endpoint
 4. [Batch Processing](docs/runai/batch-processing.md) — production workspace for large-scale runs
 
 Additional: [Troubleshooting](docs/runai/troubleshooting.md)
@@ -44,15 +44,14 @@ Additional: [Troubleshooting](docs/runai/troubleshooting.md)
 ### PoC (5 sample docs)
 
 0. Download model to shared PVC (Step 0)
-1. Deploy vLLM (Step 1)
-2. Setup & test workspace (Step 2) — upload docs, run test notebook
-3. Optionally deploy Streamlit app (Step 3) for a nicer demo UI
+1. Setup workspace (Step 1) — upload docs, run test notebook, launch Streamlit from workspace
+2. Optionally deploy Streamlit as its own workload (Step 2)
 
 ### Production (10K+ docs/month)
 
 0. Setup data volumes (Step 0)
-1. Deploy vLLM (Step 1)
-2. Setup & test workspace (Step 2) — verify with notebook
+1. Setup workspace (Step 1) — verify pipeline with notebook
+3. Deploy vLLM as persistent endpoint (Step 3)
 4. Batch processing workspace (Step 4) — `--resume` for incremental runs
 
 ## Output Formats
