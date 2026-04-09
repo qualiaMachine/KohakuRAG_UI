@@ -59,12 +59,21 @@ Add Jupyter for browser access:
 
 ## Runtime settings
 
-Leave **Command** and **Arguments** empty. The NGC PyTorch image starts
-Jupyter automatically — overriding the command breaks the RunAI proxy
-URL (you'll get a 404).
+| Field | Value |
+|-------|-------|
+| **Command** | *(leave empty)* |
+| **Arguments** | See below |
+| **Working directory** | *(leave empty)* |
 
-You'll install dependencies from the Jupyter terminal after the
-workspace starts (see below).
+### Arguments (copy-paste)
+
+```
+-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv"
+```
+
+> **No `jupyter lab` at the end.** The NGC PyTorch image starts Jupyter
+> automatically with the correct base URL for RunAI's proxy. Adding a
+> manual `jupyter lab` command breaks the proxy routing (404 errors).
 
 **Environment variables:**
 
