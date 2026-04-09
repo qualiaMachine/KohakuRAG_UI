@@ -137,59 +137,24 @@ Once the job reaches `Running` status, click the workspace name in the
 RunAI UI → click the **Jupyter** tool link. This opens Jupyter Lab in
 your browser.
 
-Open a **Terminal** from Jupyter Lab's launcher.
-
----
-
 ## Using the workspace
 
-### 1. Start vLLM
+1. **Upload sample docs** to `/ocr/` using Jupyter's file upload button
+2. **Open the test notebook** at `repo/ocr_app/notebooks/test_extraction_pipeline.ipynb`
+3. **Work through it cell by cell** — everything runs from the notebook:
 
-Open a **terminal** in Jupyter and start the vLLM server:
+| Step | What it does |
+|------|-------------|
+| 1 | Checks GPU and shared models PVC |
+| 2 | Starts vLLM as a background process, polls until ready |
+| 3 | Lists uploaded docs, you pick one |
+| 4 | Checks which pages are digital vs scanned |
+| 5 | Runs extraction on a single page (auto-picks text or VLM path) |
+| 6 | Displays the JSON output |
+| 7 | Alternative prompts to try (award, budget, terms, key_values, text) |
+| 8 | Processes all pages and saves results to `/ocr/` |
+| 9 | Launches extraction server + Streamlit app for interactive testing |
+| 10 | Cleanup — stops all processes |
 
-```bash
-python -m vllm.entrypoints.openai.api_server \
-    --model Qwen/Qwen2.5-VL-7B-Instruct \
-    --dtype auto \
-    --max-model-len 8192 \
-    --limit-mm-per-prompt image=1
-```
-
-Wait for `Uvicorn running on http://0.0.0.0:8000` (~1-2 min).
-Leave this terminal running.
-
-### 2. Upload sample docs
-
-Upload your sample PDFs/TIFFs directly to `/ocr/` using Jupyter's file
-upload button (up arrow icon in the file browser).
-
-### 3. Open the test notebook
-
-Open `repo/ocr_app/notebooks/test_extraction_pipeline.ipynb` and work
-through it cell by cell. The notebook:
-
-1. Verifies GPU and vLLM are working
-2. Checks shared models PVC
-3. Loads your uploaded document
-4. Checks which pages are digital vs scanned
-5. Runs extraction (text path or VLM path)
-6. Displays the JSON output
-7. Lets you try different prompts (award, budget, terms, key_values, text)
-8. Processes all pages and saves the result to `/ocr/`
-
-Iterate on the prompts until the JSON has the fields you need.
-
-### 4. Test the Streamlit app
-
-With vLLM still running in terminal 1, open a **second terminal**:
-
-```bash
-cd /tmp/KohakuRAG_UI
-LLM_BASE_URL=http://localhost:8000/v1 python ocr_app/scripts/ocr_server.py &
-OCR_SERVICE_URL=http://localhost:8090 streamlit run ocr_app/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
-```
-
-Access at: `https://<cluster-host>/<project>/ocr-setup/proxy/8501/`
-
-> **Requires a Custom URL tool** on port 8501 (in addition to Jupyter on
-> 8888). Add it when creating the workspace.
+> **Streamlit test (step 9)** requires a Custom URL tool on port 8501
+> configured in the workspace (in addition to Jupyter on 8888).
