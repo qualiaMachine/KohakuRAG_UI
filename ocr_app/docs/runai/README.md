@@ -57,24 +57,26 @@ UI are optional — useful for interactive demos.
 
 Follow these docs in order:
 
-0. **[Setup Data Volumes](setup-data-volumes.md)** — Create PVCs for input documents, output JSONs, and models *(skip for PoC — just drag-and-drop files in the Streamlit app)*
+0. **[Setup Data Volumes](setup-data-volumes.md)** — Download model to shared PVC, create output volume
 1. **[Deploy vLLM Server](deploy-vllm.md)** — Qwen2.5-VL-7B for text parsing + VLM OCR
-2. **[Deploy Streamlit App](deploy-streamlit.md)** — Interactive UI for uploading docs and previewing results *(recommended starting point for PoC)*
-3. **[Setup & Test Workspace](setup-workspace.md)** — Jupyter workspace for CLI-based testing *(alternative to Streamlit)*
+2. **[Setup & Test Workspace](setup-workspace.md)** — Jupyter workspace with test notebook
+3. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Interactive UI for PoC demos
 4. **[Batch Processing](batch-processing.md)** — Production workspace for large-scale runs
 
 All steps use the **RunAI web UI only** — no CLI tools required.
 
 ### PoC path (5 sample docs)
 
+0. Download model to shared PVC (Step 0)
 1. Deploy `qwen2-5--vl--7b--instruct` (Step 1) — GPU inference
-2. Deploy `ocr-extract` + `ocr-app` (Step 2) — CPU, Streamlit UI
-3. Drag-and-drop your 5 PDFs into the app, pick a format, see results
+2. Setup & test workspace (Step 2) — upload docs, run test notebook
+3. Optionally deploy Streamlit app (Step 3) for a nicer demo UI
 
 ### Production path (10K+ docs/month)
 
 0. Setup data volumes (Step 0) — PVCs for input/output
 1. Deploy `qwen2-5--vl--7b--instruct` (Step 1) — GPU inference
+2. Setup & test workspace (Step 2) — verify with notebook
 4. Deploy `ocr-batch` (Step 4) — batch workspace with `--resume`
 
 ---

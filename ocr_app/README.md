@@ -35,23 +35,24 @@ Follow these docs in order:
 
 0. [Setup Data Volumes](docs/runai/setup-data-volumes.md) — download model to shared PVC, create output volume
 1. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — Qwen2.5-VL-7B inference endpoint
-2. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) — interactive UI for PoC *(drag-and-drop your docs)*
-3. [Setup & Test Workspace](docs/runai/setup-workspace.md) — Jupyter workspace with test notebook
+2. [Setup & Test Workspace](docs/runai/setup-workspace.md) — Jupyter workspace with test notebook
+3. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) — interactive UI for PoC *(drag-and-drop your docs)*
 4. [Batch Processing](docs/runai/batch-processing.md) — production workspace for large-scale runs
 
 Additional: [Troubleshooting](docs/runai/troubleshooting.md)
 
 ### PoC (5 sample docs)
 
-1. Download model to shared PVC (Step 0)
-2. Deploy vLLM (Step 1)
-3. Deploy Streamlit app (Step 2) — drag-and-drop your PDFs, see results
+0. Download model to shared PVC (Step 0)
+1. Deploy vLLM (Step 1)
+2. Setup & test workspace (Step 2) — upload docs, run test notebook
+3. Optionally deploy Streamlit app (Step 3) for a nicer demo UI
 
 ### Production (10K+ docs/month)
 
 0. Setup data volumes (Step 0)
 1. Deploy vLLM (Step 1)
-3. Setup & test workspace (Step 3) — verify with notebook
+2. Setup & test workspace (Step 2) — verify with notebook
 4. Batch processing workspace (Step 4) — `--resume` for incremental runs
 
 ## Output Formats
