@@ -8,16 +8,16 @@
 `ocr-setup` is your **experimentation workspace** — this is where you
 iterate on the extraction pipeline before deploying anything else:
 
-1. Upload sample documents and inspect them
-2. Walk through the pipeline step-by-step in a notebook (text extraction,
-   page rendering, LLM calls, JSON output)
-3. Experiment with different output formats and prompts
-4. Validate that the JSON output has the fields you need
-5. Run the batch script on your sample docs once you're happy
+1. Start vLLM locally (loads model from shared PVC)
+2. Upload sample documents
+3. Walk through the test notebook cell by cell — connect to vLLM, extract
+   text, render scanned pages, send to LLM, inspect JSON output
+4. Experiment with different output formats and prompts
+5. Test the Streamlit app from this workspace (optional)
 
-The notebook calls vLLM directly — no extraction server or Streamlit app
-needed at this stage. You're working directly with the pipeline code so
-you can see and tweak everything.
+The notebook calls vLLM running locally in this workspace — no separate
+inference deployment needed at this stage. You're working directly with
+the pipeline code so you can see and tweak everything.
 
 A **test notebook** is included at
 `/tmp/KohakuRAG_UI/ocr_app/notebooks/test_extraction_pipeline.ipynb` —
