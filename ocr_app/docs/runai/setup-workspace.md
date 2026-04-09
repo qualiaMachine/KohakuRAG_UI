@@ -102,21 +102,32 @@ Add Jupyter for browser access:
 
 ## Data & storage
 
-Attach the shared models PVC so vLLM can load model weights:
+Two storage items:
+
+**1. Data Volume** — shared models PVC so vLLM can load model weights:
+
+Click **+ Data Volume**:
 
 | Data volume name | Container path |
 |------------------|----------------|
 | `shared-models` | `/models` |
 
-**For PoC (5 sample docs):** That's it — upload docs directly via
-Jupyter's file upload button after the workspace starts.
+**2. Volume** — persistent local storage for your docs, notebooks, and output:
 
-**For production testing:** Also attach the document and output volumes:
+Click **+ Volume**:
 
-| Data volume name | Container path |
-|------------------|----------------|
-| `ocr-documents` | `/data/documents` |
-| `ocr-extracted` | `/data/extracted` |
+| Field | Value |
+|-------|-------|
+| **Storage class** | `local-path` |
+| **Access mode** | *(leave default)* |
+| **Claim size** | `1` GB (increase if processing many docs) |
+| **Volume mode** | Filesystem |
+| **Container path** | `/ocr` |
+| **Volume persistency** | Persistent |
+
+This gives you `/ocr` as a persistent directory — upload sample docs
+here, save notebooks here, store extraction output here. Survives
+workspace restarts.
 
 ---
 
