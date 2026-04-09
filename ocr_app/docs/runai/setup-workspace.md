@@ -141,10 +141,11 @@ Open a **Terminal** from Jupyter Lab's launcher.
 
 ---
 
-## Step 1: Start vLLM
+## Using the workspace
 
-Open a terminal in Jupyter and start the vLLM server. It loads the model
-from the shared PVC:
+### 1. Start vLLM
+
+Open a **terminal** in Jupyter and start the vLLM server:
 
 ```bash
 python -m vllm.entrypoints.openai.api_server \
@@ -154,70 +155,26 @@ python -m vllm.entrypoints.openai.api_server \
     --limit-mm-per-prompt image=1
 ```
 
-Wait for it to print `Uvicorn running on http://0.0.0.0:8000`. This
-takes 1-2 minutes (model loading + CUDA kernel compilation).
-
+Wait for `Uvicorn running on http://0.0.0.0:8000` (~1-2 min).
 Leave this terminal running.
 
----
+### 2. Upload sample docs
 
-## Step 2: Upload sample docs
+Upload your sample PDFs/TIFFs directly to `/ocr/` using Jupyter's file
+upload button (up arrow icon in the file browser).
 
-Use Jupyter's file upload button (up arrow icon in the file browser) to
-upload your sample PDFs/TIFFs.
+### 3. Open the test notebook
 
----
+Open `repo/ocr_app/notebooks/test_extraction_pipeline.ipynb` and work
+through it cell by cell. The notebook:
 
-## Step 3: Open the test notebook
+1. Verifies GPU and vLLM are working
+2. Checks shared models PVC
+3. Loads your uploaded document
+4. Checks which pages are digital vs scanned
+5. Runs extraction (text path or VLM path)
+6. Displays the JSON output
+7. Lets you try different prompts (award, budget, terms, key_values, text)
+8. Processes all pages and saves the result to `/ocr/`
 
-Navigate to `/tmp/KohakuRAG_UI/ocr_app/notebooks/test_extraction_pipeline.ipynb`
-in Jupyter's file browser and open it.
-
-The notebook walks through the full pipeline cell by cell:
-
-1. **Connect to vLLM** — verify the local server is responding
-2. **Load a sample document** — set the path to your uploaded file
-3. **Check digital vs scanned** — see which pages have extractable text
-4. **Digital path** — extract text with PyMuPDF, send to LLM for parsing
-5. **Scanned path** — render page as image, send to VLM for OCR
-6. **Inspect the JSON** — parse and validate the structured output
-7. **Try different formats** — swap prompts (award, budget, key_values, etc.)
-
-Work through the notebook iteratively — tweak prompts, try different
-formats, until the JSON output has the fields you need.
-
----
-
-## Step 4: Test the Streamlit app (optional)
-
-Once the pipeline is working in the notebook, you can test the full
-Streamlit experience from this same workspace.
-
-Open a **second terminal** in Jupyter (keep vLLM running in the first):
-
-```bash
-cd /tmp/KohakuRAG_UI
-OCR_SERVICE_URL=http://localhost:8090 \
-  python ocr_app/scripts/ocr_server.py &
-streamlit run ocr_app/app.py \
-    --server.port=8501 \
-    --server.address=0.0.0.0 \
-    --server.headless=true
-```
-
-Access the app at the workspace proxy URL:
-`https://<cluster-host>/<project>/ocr-setup/proxy/8501/`
-
-> **Note:** For this to work, your workspace needs a **Custom URL** tool
-> configured for port 8501 (in addition to Jupyter on 8888). Add it when
-> creating the workspace, or edit the workspace config in the RunAI UI.
-
----
-
-## Next steps
-
-Once you're satisfied with the output:
-- **Deploy the Streamlit app** as its own workload (Step 2) for a persistent demo
-- **Deploy vLLM** as a persistent inference endpoint (Step 3)
-- **Move to batch processing** (Step 4) for production runs
-- Or just keep iterating in this workspace
+Iterate on the prompts until the JSON has the fields you need.
