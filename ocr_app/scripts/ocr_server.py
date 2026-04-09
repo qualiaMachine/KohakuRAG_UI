@@ -390,12 +390,12 @@ async def lifespan(app: FastAPI):
 
     if USE_LOCAL_MODEL:
         import torch
-        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+        from transformers import AutoProcessor, AutoModelForImageTextToText
 
         model_name = VLM_MODEL
         print(f"[ocr_server] LOCAL MODE — loading {model_name} with transformers...", flush=True)
         _local_processor = AutoProcessor.from_pretrained(model_name)
-        _local_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        _local_model = AutoModelForImageTextToText.from_pretrained(
             model_name, torch_dtype=torch.bfloat16, device_map="auto",
         )
         LLM_MODEL = model_name
