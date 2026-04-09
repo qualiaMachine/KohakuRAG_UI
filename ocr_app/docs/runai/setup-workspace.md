@@ -68,7 +68,7 @@ Add Jupyter for browser access:
 ### Arguments (copy-paste)
 
 ```
--c "pip install --no-cache-dir transformers huggingface_hub accelerate httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv; curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI; jupyter-lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME} --ServerApp.token='' --ServerApp.allow_origin='*' --notebook-dir=/ocr"
+-c "pip install --no-cache-dir transformers huggingface_hub accelerate httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv; curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && ln -sf /tmp/KohakuRAG_UI /ocr/repo; jupyter-lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME} --ServerApp.token='' --ServerApp.allow_origin='*' --notebook-dir=/ocr"
 ```
 
 > **`--ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME}`** is
