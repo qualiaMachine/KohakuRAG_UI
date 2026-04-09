@@ -59,8 +59,8 @@ Follow these docs in order:
 
 0. **[Setup Data Volumes](setup-data-volumes.md)** — Download model to shared PVC, create output volume
 1. **[Deploy vLLM Server](deploy-vllm.md)** — Qwen2.5-VL-7B for text parsing + VLM OCR
-2. **[Setup & Test Workspace](setup-workspace.md)** — Jupyter workspace with test notebook
-3. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Interactive UI for PoC demos
+2. **[Setup & Test Workspace](setup-workspace.md)** — Experiment with pipeline in notebook, iterate on prompts/formats
+3. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Polished demo UI
 4. **[Batch Processing](batch-processing.md)** — Production workspace for large-scale runs
 
 All steps use the **RunAI web UI only** — no CLI tools required.

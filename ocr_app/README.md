@@ -35,8 +35,8 @@ Follow these docs in order:
 
 0. [Setup Data Volumes](docs/runai/setup-data-volumes.md) — download model to shared PVC, create output volume
 1. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — Qwen2.5-VL-7B inference endpoint
-2. [Setup & Test Workspace](docs/runai/setup-workspace.md) — Jupyter workspace with test notebook
-3. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) — interactive UI for PoC *(drag-and-drop your docs)*
+2. [Setup & Test Workspace](docs/runai/setup-workspace.md) — experiment with pipeline in notebook, iterate on prompts/formats
+3. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) *(optional)* — polished demo UI
 4. [Batch Processing](docs/runai/batch-processing.md) — production workspace for large-scale runs
 
 Additional: [Troubleshooting](docs/runai/troubleshooting.md)

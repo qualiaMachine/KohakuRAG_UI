@@ -5,26 +5,33 @@
 
 ## What this workspace does
 
-`ocr-setup` is a **one-time workspace** to verify the extraction pipeline
-works end-to-end before committing to batch runs:
+`ocr-setup` is your **experimentation workspace** — this is where you
+iterate on the extraction pipeline before deploying anything else:
 
-1. Confirms vLLM is reachable from the workspace
-2. Tests extraction on a sample document
-3. Validates the JSON output schema and content
+1. Upload sample documents and inspect them
+2. Walk through the pipeline step-by-step in a notebook (text extraction,
+   page rendering, LLM calls, JSON output)
+3. Experiment with different output formats and prompts
+4. Validate that the JSON output has the fields you need
+5. Run the batch script on your sample docs once you're happy
 
-Once verified, **stop the workspace** — you don't need it at runtime.
-The batch workspace (Step 3) handles production processing.
+The notebook calls vLLM directly — no extraction server or Streamlit app
+needed at this stage. You're working directly with the pipeline code so
+you can see and tweak everything.
 
 A **test notebook** is included at
 `/tmp/KohakuRAG_UI/ocr_app/notebooks/test_extraction_pipeline.ipynb` —
-open it in Jupyter to walk through each pipeline step interactively
-(connect to vLLM, extract text, render scanned pages, send to LLM,
-inspect JSON output).
+this is the recommended starting point.
+
+Once you're satisfied with the output, move on to:
+- **Step 3** (Streamlit app) if you want a polished demo UI
+- **Step 4** (batch processing) for production runs
 
 ## What this workspace does NOT do
 
-- **Does not run production workloads.** Use the batch workspace (Step 3)
-  for that.
+- **Does not deploy any services.** You call vLLM directly from the
+  notebook/script. The extraction server (Step 3) wraps this into an API
+  later.
 - **Does not need GPU.** All GPU work happens in the vLLM server.
 
 ---
