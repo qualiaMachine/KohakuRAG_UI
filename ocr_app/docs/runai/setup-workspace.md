@@ -95,8 +95,6 @@ Add Jupyter for browser access:
 |-------|-------|
 | **GPU devices** | `1` |
 | **GPU fractioning** | Enabled — set to `25%` of device (or more if needed) |
-| **CPU request** | `4` |
-| **CPU memory request** | `8Gi` |
 
 > **Why GPU?** The setup workspace runs the full pipeline locally —
 > including vLLM for model inference. You need GPU to load and run

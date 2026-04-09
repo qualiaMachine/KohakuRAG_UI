@@ -62,12 +62,6 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `0` (none — all GPU work is in qwen2-5--vl--7b--instruct) |
-| **CPU request** | `4` |
-| **CPU memory request** | `8Gi` |
-
-> **Why more CPU/memory than the setup workspace?** The batch script runs
-> concurrent async requests and handles PDF rendering (PyMuPDF) for
-> scanned pages. 4 CPUs + 8Gi gives headroom for `--concurrency 4-8`.
 
 ## Data & storage
 

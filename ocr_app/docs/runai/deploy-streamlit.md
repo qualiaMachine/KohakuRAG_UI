@@ -77,8 +77,6 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `0` (none — CPU only) |
-| **CPU request** | `2` |
-| **CPU memory request** | `4Gi` |
 
 ### Data & storage
 
@@ -144,8 +142,6 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `0` (none) |
-| **CPU request** | `1` |
-| **CPU memory request** | `2Gi` |
 
 ### Data & storage
 
