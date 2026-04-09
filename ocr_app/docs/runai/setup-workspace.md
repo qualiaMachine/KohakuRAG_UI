@@ -132,9 +132,7 @@ Open a **Terminal** from Jupyter Lab's launcher.
 
 ---
 
-## Verification checklist
-
-### 1. Start vLLM locally
+## Step 1: Start vLLM
 
 Open a terminal in Jupyter and start the vLLM server. It loads the model
 from the shared PVC:
@@ -150,127 +148,49 @@ python -m vllm.entrypoints.openai.api_server \
 Wait for it to print `Uvicorn running on http://0.0.0.0:8000`. This
 takes 1-2 minutes (model loading + CUDA kernel compilation).
 
-### 2. Verify vLLM is responding
+Leave this terminal running.
 
-Open a **second terminal** and test:
+---
 
-```bash
-curl http://localhost:8000/v1/models
-```
-
-Expected output:
-```json
-{"data": [{"id": "Qwen/Qwen2.5-VL-7B-Instruct", ...}]}
-```
-
-### 3. Upload sample docs (PoC only)
+## Step 2: Upload sample docs
 
 Use Jupyter's file upload button (up arrow icon in the file browser) to
-upload your sample PDFs. They'll land in `/home/jovyan/` or wherever
-Jupyter's file browser is pointed.
+upload your sample PDFs/TIFFs.
 
-Create a directory for them:
+---
 
-```bash
-mkdir -p /home/jovyan/sample_docs
-# Move uploaded files there
-mv /home/jovyan/*.pdf /home/jovyan/sample_docs/
-ls /home/jovyan/sample_docs/
-```
+## Step 3: Open the test notebook
 
-### 4. Test extraction on a single document
+Navigate to `/tmp/KohakuRAG_UI/ocr_app/notebooks/test_extraction_pipeline.ipynb`
+in Jupyter's file browser and open it.
 
-```bash
-cd /tmp/KohakuRAG_UI
+The notebook walks through the full pipeline cell by cell:
 
-# Run on your sample docs
-python ocr_app/scripts/batch_extract.py \
-    --input-dir /home/jovyan/sample_docs \
-    --output-dir /home/jovyan/extracted \
-    --format award \
-    --concurrency 1
-```
+1. **Connect to vLLM** — verify the local server is responding
+2. **Load a sample document** — set the path to your uploaded file
+3. **Check digital vs scanned** — see which pages have extractable text
+4. **Digital path** — extract text with PyMuPDF, send to LLM for parsing
+5. **Scanned path** — render page as image, send to VLM for OCR
+6. **Inspect the JSON** — parse and validate the structured output
+7. **Try different formats** — swap prompts (award, budget, key_values, etc.)
 
-Expected output:
-```
-[batch] Found 5 files, 0 already completed, 5 to process
-[batch] LLM: Qwen/Qwen2.5-VL-7B-Instruct at http://qwen2-5--vl--7b--instruct.../v1
-[1/5] OK doc1.pdf (3p, 0d/3s, 14.2s) -> doc1.json
-[2/5] OK doc2.pdf (2p, 0d/2s, 9.8s) -> doc2.json
-...
-```
+Work through the notebook iteratively — tweak prompts, try different
+formats, until the JSON output has the fields you need.
 
-The `0d/3s` means 0 digital pages, 3 scanned — confirming VLM OCR is
-being used for your scanned PDFs.
+---
 
-### 5. Inspect the output
+## Step 4: Test the Streamlit app (optional)
 
-```bash
-# Pretty-print the first result
-cat /home/jovyan/extracted/*.json | python -m json.tool | head -80
-```
+Once the pipeline is working in the notebook, you can test the full
+Streamlit experience from this same workspace.
 
-Or in a Jupyter notebook cell:
-
-```python
-import json
-from pathlib import Path
-
-for out in sorted(Path("/home/jovyan/extracted").glob("*.json")):
-    data = json.loads(out.read_text())
-    print(f"\n{'='*60}")
-    print(f"File: {data['source_file']}")
-    print(f"Pages: {data['total_pages']} ({data['digital_pages']}d/{data['scanned_pages']}s)")
-    for page in data['pages']:
-        print(f"  Page {page['page']}: {page['method']} ({page['elapsed_ms']:.0f}ms)")
-        # Show first 300 chars of extracted text
-        print(f"    {page['text'][:300]}...")
-```
-
-### 6. Check if the right fields are being extracted
-
-If the output JSON doesn't have the fields you need, try a different
-format:
-
-```bash
-# More flexible — extracts any key-value pairs it finds
-python ocr_app/scripts/batch_extract.py \
-    --input-dir /home/jovyan/sample_docs \
-    --output-dir /home/jovyan/extracted_kv \
-    --format key_values \
-    --concurrency 1
-
-# Raw text — see exactly what the VLM reads from the image
-python ocr_app/scripts/batch_extract.py \
-    --input-dir /home/jovyan/sample_docs \
-    --output-dir /home/jovyan/extracted_text \
-    --format text \
-    --concurrency 1
-```
-
-### 7. Test the Streamlit app (optional)
-
-You can run both the extraction server and Streamlit UI directly from
-this workspace to test the full interactive experience before deploying
-them as separate workloads.
-
-Open **two terminals** in Jupyter:
-
-**Terminal 1 — start the extraction server:**
+Open a **second terminal** in Jupyter (keep vLLM running in the first):
 
 ```bash
 cd /tmp/KohakuRAG_UI
-pip install fastapi uvicorn python-multipart
-python ocr_app/scripts/ocr_server.py
-```
-
-**Terminal 2 — start Streamlit:**
-
-```bash
-cd /tmp/KohakuRAG_UI
-pip install streamlit python-dotenv
 OCR_SERVICE_URL=http://localhost:8090 \
-  streamlit run ocr_app/app.py \
+  python ocr_app/scripts/ocr_server.py &
+streamlit run ocr_app/app.py \
     --server.port=8501 \
     --server.address=0.0.0.0 \
     --server.headless=true
@@ -280,15 +200,15 @@ Access the app at the workspace proxy URL:
 `https://<cluster-host>/<project>/ocr-setup/proxy/8501/`
 
 > **Note:** For this to work, your workspace needs a **Custom URL** tool
-> configured for port 8501 (in addition to Jupyter on 8888). If you didn't
-> set that up when creating the workspace, you can add it by editing the
-> workspace config in the RunAI UI, or just use the notebook approach
-> instead.
+> configured for port 8501 (in addition to Jupyter on 8888). Add it when
+> creating the workspace, or edit the workspace config in the RunAI UI.
 
-### 8. Done — stop or keep iterating
+---
 
-Once you're satisfied with the output, either:
-- **Stop the workspace** — restart later to test new formats or doc types
-- **Deploy the Streamlit app** as a proper workload (Step 3) for a
-  persistent demo
+## Next steps
+
+Once you're satisfied with the output:
+- **Deploy the Streamlit app** as its own workload (Step 2) for a persistent demo
+- **Deploy vLLM** as a persistent inference endpoint (Step 3)
 - **Move to batch processing** (Step 4) for production runs
+- Or just keep iterating in this workspace
