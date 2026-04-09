@@ -24,15 +24,9 @@ A **test notebook** is included at
 this is the recommended starting point.
 
 Once you're satisfied with the output, move on to:
-- **Step 3** (Streamlit app) if you want a polished demo UI
+- **Step 2** (Streamlit app) if you want a polished demo UI
+- **Step 3** (deploy vLLM) for a persistent inference endpoint
 - **Step 4** (batch processing) for production runs
-
-## What this workspace does NOT do
-
-- **Does not deploy any services.** You call vLLM directly from the
-  notebook/script. The extraction server (Step 3) wraps this into an API
-  later.
-- **Does not need GPU.** All GPU work happens in the vLLM server.
 
 ---
 
@@ -74,38 +68,52 @@ Add Jupyter for browser access:
 ### Arguments (copy-paste)
 
 ```
--c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system httpx pymupdf Pillow && jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+-c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv && jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''"
 ```
 
-> **What this does:** Downloads the repo tarball, installs the lightweight
-> extraction dependencies (no torch/GPU libs), and starts Jupyter Lab.
-> The repo ends up at `/tmp/KohakuRAG_UI`.
+> **What this does:** Downloads the repo tarball, installs all
+> dependencies (extraction server, Streamlit, PDF handling), and starts
+> Jupyter Lab. The repo ends up at `/tmp/KohakuRAG_UI`. vLLM is already
+> installed in the NGC PyTorch image.
 
 **Environment variables:**
 
 | Name | Value |
 |------|-------|
-| `LLM_BASE_URL` | `http://qwen2-5--vl--7b--instruct.runai-<project>.svc.cluster.local/v1` |
+| `HF_HOME` | `/models/.cache/huggingface` |
+| `HF_HUB_CACHE` | `/models/.cache/huggingface` |
+| `HF_HUB_OFFLINE` | `1` |
+| `LLM_BASE_URL` | `http://localhost:8000/v1` |
 | `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
 
-> **Replace `<project>`** with your actual RunAI project name
-> (e.g. `jupyter-endemann01`). The full URL would look like:
-> `http://qwen2-5--vl--7b--instruct.runai-jupyter-endemann01.svc.cluster.local/v1`
+> vLLM runs locally in this workspace, so `LLM_BASE_URL` points to
+> `localhost`. Model weights are loaded from the shared PVC at `/models/`.
 
 ## Compute resources
 
 | Field | Value |
 |-------|-------|
-| **GPU devices** | `0` (none — CPU only) |
-| **CPU request** | `2` |
-| **CPU memory request** | `4Gi` |
+| **GPU devices** | `1` |
+| **GPU fractioning** | Enabled — set to `25%` of device (or more if needed) |
+| **CPU request** | `4` |
+| **CPU memory request** | `8Gi` |
+
+> **Why GPU?** The setup workspace runs the full pipeline locally —
+> including vLLM for model inference. You need GPU to load and run
+> Qwen2.5-VL-7B.
 
 ## Data & storage
 
-**For PoC (5 sample docs):** Skip data volumes. Upload docs directly via
+Attach the shared models PVC so vLLM can load model weights:
+
+| Data volume name | Container path |
+|------------------|----------------|
+| `shared-models` | `/models` |
+
+**For PoC (5 sample docs):** That's it — upload docs directly via
 Jupyter's file upload button after the workspace starts.
 
-**For production testing:** Attach the document and output volumes:
+**For production testing:** Also attach the document and output volumes:
 
 | Data volume name | Container path |
 |------------------|----------------|
@@ -126,10 +134,28 @@ Open a **Terminal** from Jupyter Lab's launcher.
 
 ## Verification checklist
 
-### 1. Check vLLM is reachable
+### 1. Start vLLM locally
+
+Open a terminal in Jupyter and start the vLLM server. It loads the model
+from the shared PVC:
 
 ```bash
-curl $LLM_BASE_URL/models
+python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen2.5-VL-7B-Instruct \
+    --dtype auto \
+    --max-model-len 8192 \
+    --limit-mm-per-prompt image=1
+```
+
+Wait for it to print `Uvicorn running on http://0.0.0.0:8000`. This
+takes 1-2 minutes (model loading + CUDA kernel compilation).
+
+### 2. Verify vLLM is responding
+
+Open a **second terminal** and test:
+
+```bash
+curl http://localhost:8000/v1/models
 ```
 
 Expected output:
@@ -137,13 +163,10 @@ Expected output:
 {"data": [{"id": "Qwen/Qwen2.5-VL-7B-Instruct", ...}]}
 ```
 
-If this fails, the vLLM server isn't ready yet or the URL is wrong.
-See [Troubleshooting](troubleshooting.md).
-
-### 2. Upload sample docs (PoC only)
+### 3. Upload sample docs (PoC only)
 
 Use Jupyter's file upload button (up arrow icon in the file browser) to
-upload your 5 sample PDFs. They'll land in `/home/jovyan/` or wherever
+upload your sample PDFs. They'll land in `/home/jovyan/` or wherever
 Jupyter's file browser is pointed.
 
 Create a directory for them:
@@ -155,7 +178,7 @@ mv /home/jovyan/*.pdf /home/jovyan/sample_docs/
 ls /home/jovyan/sample_docs/
 ```
 
-### 3. Test extraction on a single document
+### 4. Test extraction on a single document
 
 ```bash
 cd /tmp/KohakuRAG_UI
@@ -180,7 +203,7 @@ Expected output:
 The `0d/3s` means 0 digital pages, 3 scanned — confirming VLM OCR is
 being used for your scanned PDFs.
 
-### 4. Inspect the output
+### 5. Inspect the output
 
 ```bash
 # Pretty-print the first result
@@ -204,7 +227,7 @@ for out in sorted(Path("/home/jovyan/extracted").glob("*.json")):
         print(f"    {page['text'][:300]}...")
 ```
 
-### 5. Check if the right fields are being extracted
+### 6. Check if the right fields are being extracted
 
 If the output JSON doesn't have the fields you need, try a different
 format:
@@ -225,7 +248,7 @@ python ocr_app/scripts/batch_extract.py \
     --concurrency 1
 ```
 
-### 6. Test the Streamlit app (optional)
+### 7. Test the Streamlit app (optional)
 
 You can run both the extraction server and Streamlit UI directly from
 this workspace to test the full interactive experience before deploying
@@ -262,7 +285,7 @@ Access the app at the workspace proxy URL:
 > workspace config in the RunAI UI, or just use the notebook approach
 > instead.
 
-### 7. Done — stop or keep iterating
+### 8. Done — stop or keep iterating
 
 Once you're satisfied with the output, either:
 - **Stop the workspace** — restart later to test new formats or doc types
