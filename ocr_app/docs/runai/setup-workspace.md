@@ -178,3 +178,18 @@ through it cell by cell. The notebook:
 8. Processes all pages and saves the result to `/ocr/`
 
 Iterate on the prompts until the JSON has the fields you need.
+
+### 4. Test the Streamlit app
+
+With vLLM still running in terminal 1, open a **second terminal**:
+
+```bash
+cd /tmp/KohakuRAG_UI
+LLM_BASE_URL=http://localhost:8000/v1 python ocr_app/scripts/ocr_server.py &
+OCR_SERVICE_URL=http://localhost:8090 streamlit run ocr_app/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+```
+
+Access at: `https://<cluster-host>/<project>/ocr-setup/proxy/8501/`
+
+> **Requires a Custom URL tool** on port 8501 (in addition to Jupyter on
+> 8888). Add it when creating the workspace.
