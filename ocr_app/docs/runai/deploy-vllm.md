@@ -7,13 +7,6 @@ Uses the official `vllm/vllm-openai` image. Serves Qwen2.5-VL-7B for
 both text parsing (digital PDFs) and VLM OCR (scans/TIFFs) — one model
 handles both paths.
 
-> **Why Qwen2.5-VL and not a text-only model?** A text-only model
-> (e.g. Qwen2.5-7B) would be faster for digital PDFs, but can't handle
-> scanned pages. Qwen2.5-VL is a vision-language model — it accepts both
-> text and images. One server, one model, both paths. If your corpus turns
-> out to be 100% digital, you can swap to a text-only model later for
-> better throughput.
-
 In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 
 ## Basic settings
@@ -24,11 +17,6 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 | **Project** | Your project |
 | **Inference type** | **Custom** |
 | **Inference name** | `ocr-vllm` |
-
-> **Why Custom and not "Model: from Hugging Face"?** The HF inference
-> type is a black box — crashes produce no logs and it's unclear how
-> arguments are passed. Custom gives full control over command,
-> arguments, and logs.
 
 ## Environment image
 
