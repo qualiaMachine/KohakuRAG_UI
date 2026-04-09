@@ -8,20 +8,20 @@ Common issues when deploying the OCR extraction pipeline on RunAI.
 
 - Check GPU memory with `--max-model-len 4096` to reduce KV cache
 - For 24GB GPUs: add `--quantization awq`
-- Check logs: `runai logs qwen2-5-vl-7b-instruct`
+- Check logs: `runai logs qwen2-5--vl--7b--instruct`
 - Qwen2.5-VL-7B needs ~17GB in bfloat16 — if your GPU is smaller,
   quantization is required
 
 ## Extraction server / batch script can't reach vLLM
 
-- Use FQDN: `http://qwen2-5-vl-7b-instruct.runai-<project>.svc.cluster.local/v1`
+- Use FQDN: `http://qwen2-5--vl--7b--instruct.runai-<project>.svc.cluster.local/v1`
 - Do **NOT** include a port number — Knative routes on port 80
-- Test: `curl http://qwen2-5-vl-7b-instruct.runai-<project>.svc.cluster.local/v1/models`
-- If using short names like `qwen2-5-vl-7b-instruct:8000`, you'll get envoy 404
+- Test: `curl http://qwen2-5--vl--7b--instruct.runai-<project>.svc.cluster.local/v1/models`
+- If using short names like `qwen2-5--vl--7b--instruct:8000`, you'll get envoy 404
 
 ## Batch script hangs
 
-- Check vLLM logs for errors: `runai logs qwen2-5-vl-7b-instruct`
+- Check vLLM logs for errors: `runai logs qwen2-5--vl--7b--instruct`
 - Try `--concurrency 1` to isolate the issue
 - Check if vLLM is OOM — reduce concurrency or `--max-model-len`
 - Increase timeout if docs are very long (large scanned pages take longer)

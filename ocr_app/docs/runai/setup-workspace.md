@@ -78,12 +78,12 @@ Add Jupyter for browser access:
 
 | Name | Value |
 |------|-------|
-| `LLM_BASE_URL` | `http://qwen2-5-vl-7b-instruct.runai-<project>.svc.cluster.local/v1` |
+| `LLM_BASE_URL` | `http://qwen2-5--vl--7b--instruct.runai-<project>.svc.cluster.local/v1` |
 | `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
 
 > **Replace `<project>`** with your actual RunAI project name
 > (e.g. `jupyter-endemann01`). The full URL would look like:
-> `http://qwen2-5-vl-7b-instruct.runai-jupyter-endemann01.svc.cluster.local/v1`
+> `http://qwen2-5--vl--7b--instruct.runai-jupyter-endemann01.svc.cluster.local/v1`
 
 ## Compute resources
 
@@ -164,7 +164,7 @@ python ocr_app/scripts/batch_extract.py \
 Expected output:
 ```
 [batch] Found 5 files, 0 already completed, 5 to process
-[batch] LLM: Qwen/Qwen2.5-VL-7B-Instruct at http://qwen2-5-vl-7b-instruct.../v1
+[batch] LLM: Qwen/Qwen2.5-VL-7B-Instruct at http://qwen2-5--vl--7b--instruct.../v1
 [1/5] OK doc1.pdf (3p, 0d/3s, 14.2s) -> doc1.json
 [2/5] OK doc2.pdf (2p, 0d/2s, 9.8s) -> doc2.json
 ...

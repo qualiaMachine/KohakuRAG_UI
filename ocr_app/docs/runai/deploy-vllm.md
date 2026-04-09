@@ -1,4 +1,4 @@
-# Deploy the vLLM Server (`qwen2-5-vl-7b-instruct`)
+# Deploy the vLLM Server (`qwen2-5--vl--7b--instruct`)
 
 > **Step 1** in the [deployment guide](README.md). Comes after
 > [Setup Data Volumes](setup-data-volumes.md) (Step 0).
@@ -19,7 +19,7 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 | **Project** | `jupyter-endemann01` (or your project) |
 | **Template** | Start from scratch |
 | **Inference type** | **Hugging Face** |
-| **Inference name** | `qwen2-5-vl-7b-instruct` |
+| **Inference name** | `qwen2-5--vl--7b--instruct` |
 
 Click **Continue**.
 
@@ -99,7 +99,7 @@ Wait for the job to reach `Running` state (2-5 min), then test from any
 workspace on the cluster:
 
 ```bash
-curl http://qwen2-5-vl-7b-instruct.runai-<project>.svc.cluster.local/v1/models
+curl http://qwen2-5--vl--7b--instruct.runai-<project>.svc.cluster.local/v1/models
 ```
 
 Expected:
