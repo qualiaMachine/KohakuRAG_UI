@@ -5,17 +5,17 @@ Retrieval-augmented generation over research paper corpora. Streamlit chat UI ba
 ## Architecture
 
 ```
-┌─────────────────────┐
-│   Streamlit App     │  (Workspace, CPU only)
-│   Port 8501         │
-└──┬──────┬───────┬───┘
-   │      │       │ HTTP (internal cluster DNS)
-   ▼      ▼       ▼
-┌──────┐ ┌──────┐ ┌──────────┐
-│ vLLM │ │Embed │ │ Reranker │
-│ 8000 │ │ 8080 │ │   8082   │
-│GPU80%│ │GPU10%│ │ GPU 10%  │
-└──────┘ └──────┘ └──────────┘
+  +---------------------+
+  |   Streamlit App     |  (Workspace, CPU only)
+  |   Port 8501         |
+  +--+------+-------+---+
+     |      |       | HTTP (internal cluster DNS)
+     v      v       v
+  +------+ +------+ +----------+
+  | vLLM | |Embed | | Reranker |
+  | 8000 | | 8080 | |   8082   |
+  |GPU80%| |GPU10%| | GPU 10%  |
+  +------+ +------+ +----------+
 ```
 
 All 4 services fit on ~1 GPU via fractional allocation. Reranker is optional.

@@ -52,17 +52,17 @@ Each app includes:
 All apps use the same approach:
 
 ```
-┌──────────────────┐
-│   App (CPU)      │  Workspace — code pulled from GitHub at startup
-│   Streamlit /    │  via curl|tar + uv pip install
-│   FastAPI / CLI  │
-└────────┬─────────┘
-         │ HTTP (cluster-internal DNS)
-         ▼
-┌──────────────────┐
-│  vLLM / Ollama   │  Inference workload — GPU, fractional allocation
-│  Model serving   │  Weights loaded from shared PVC
-└──────────────────┘
+  +------------------+
+  |   App (CPU)      |  Workspace -- code pulled from GitHub at startup
+  |   Streamlit /    |  via curl|tar + uv pip install
+  |   FastAPI / CLI  |
+  +--------+---------+
+           | HTTP (cluster-internal DNS)
+           v
+  +------------------+
+  |  vLLM / Ollama   |  Inference workload -- GPU, fractional allocation
+  |  Model serving   |  Weights loaded from shared PVC
+  +------------------+
 ```
 
 - **No Docker builds** — stock images (`vllm/vllm-openai`,

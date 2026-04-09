@@ -18,20 +18,20 @@ Structured data extraction from grant award notices, budgets, terms & conditions
 ## Architecture
 
 ```
-┌─────────────────────┐
-│   Streamlit UI      │  (CPU, port 8501)
-│   Upload & preview  │
-└──────────┬──────────┘
-           │ HTTP
-           ▼
-┌─────────────────────┐     ┌─────────────────────┐
-│   Extraction Server │────▶│   vLLM / Ollama      │
-│   FastAPI (CPU)     │     │   Qwen2.5-VL-7B     │
-│   Port 8090         │     │   Port 8000 (GPU)    │
-│                     │     │                      │
-│   PDF → text extract│     │   Text → JSON parse  │
-│   TIFF → send image │     │   Image → VLM OCR    │
-└─────────────────────┘     └─────────────────────┘
+  +---------------------+
+  |   Streamlit UI      |  (CPU, port 8501)
+  |   Upload & preview  |
+  +---------+-----------+
+            | HTTP
+            v
+  +---------------------+     +----------------------+
+  |  Extraction Server  |---->|   vLLM / Ollama      |
+  |  FastAPI (CPU)      |     |   Qwen2.5-VL-7B     |
+  |  Port 8090          |     |   Port 8000 (GPU)    |
+  |                     |     |                      |
+  |  PDF: text extract  |     |   Text: JSON parse   |
+  |  TIFF: send image   |     |   Image: VLM OCR     |
+  +---------------------+     +----------------------+
 ```
 
 **Digital PDF path** (fast, most docs): PyMuPDF text extract → LLM parses text → JSON

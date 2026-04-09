@@ -32,19 +32,19 @@ Only `ocr-vllm` uses GPU. Everything else is CPU-only.
 ### Service layout
 
 ```
-                    ┌─────────────────────┐
-                    │   vLLM Server       │
-                    │   Qwen2.5-VL-7B     │
-                    │   Port 8000 (GPU)    │
-                    └──────────▲──────────┘
-                               │ HTTP (cluster DNS)
-              ┌────────────────┼────────────────┐
-              │                │                │
-┌─────────────┴──┐  ┌─────────┴──────┐  ┌──────┴──────────┐
-│  Batch Script  │  │ Extract Server │  │  Streamlit UI   │
-│  (workspace)   │  │ (optional API) │  │  (optional PoC) │
-│  CPU only      │  │ CPU only       │  │  CPU only       │
-└────────────────┘  └────────────────┘  └─────────────────┘
+                    +---------------------+
+                    |   vLLM Server       |
+                    |   Qwen2.5-VL-7B    |
+                    |   Port 8000 (GPU)   |
+                    +---------^-----------+
+                              | HTTP (cluster DNS)
+              +---------------+----------------+
+              |               |                |
+   +----------+---+  +-------+--------+  +----+-----------+
+   | Batch Script |  | Extract Server |  | Streamlit UI   |
+   | (workspace)  |  | (optional API) |  | (optional PoC) |
+   | CPU only     |  | CPU only       |  | CPU only       |
+   +--------------+  +----------------+  +----------------+
 ```
 
 All paths talk to the same vLLM server. The batch script is the primary
