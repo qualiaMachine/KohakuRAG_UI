@@ -59,6 +59,12 @@ echo "[start_app] Installing dependencies..."
 uv pip install --system streamlit openai httpx "numpy<2" python-dotenv
 uv pip install --system vendor/KohakuVault vendor/KohakuRAG
 
+CLUSTER_HOST="${CLUSTER_HOST:-deepthought.doit.wisc.edu}"
+echo ""
+echo "============================================================"
+echo "  App URL: https://${CLUSTER_HOST}${STREAMLIT_BASE_PATH:-/}/"
+echo "============================================================"
+echo ""
 echo "[start_app] Starting Streamlit on port 8501..."
 exec python3 -m streamlit run app.py \
   --server.port=8501 \
