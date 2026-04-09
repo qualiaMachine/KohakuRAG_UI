@@ -503,9 +503,9 @@ async def extract_pdf(
 ):
     """Extract structured data from a PDF.
 
-    Automatically detects digital vs. scanned pages:
-    - Digital pages: text extraction + LLM parsing (fast, no GPU)
-    - Scanned pages: VLM OCR + structuring (slower, needs GPU)
+    All pages are rendered as images and sent to the VLM, which captures
+    layout, tables, signatures, watermarks, and annotations that text
+    extraction alone would miss.
     """
     import fitz  # PyMuPDF
 
@@ -513,11 +513,10 @@ async def extract_pdf(
     total_page_count = _get_pdf_page_count(contents)
     page_indices = _parse_pages(pages, total_page_count)
 
-    # Step 1: Try text extraction on all pages
-    extracted = _extract_pdf_text(contents, page_indices)
-
-    text_prompt = prompt or TEXT_PROMPTS[format]
     vlm_prompt = prompt or VLM_PROMPTS[format]
+
+    # Check text layer for informational logging
+    extracted = _extract_pdf_text(contents, page_indices)
 
     results = []
     digital_count = 0
@@ -527,19 +526,15 @@ async def extract_pdf(
     for page_info in extracted:
         t0 = time.time()
 
+        # All pages go through VLM as images
+        img = _render_pdf_page(contents, page_info["page"])
+        result_text = await _vlm_ocr(img, vlm_prompt, max_tokens)
+        method = "vlm_image"
+
         if page_info["has_text"]:
-            # Digital page — send extracted text to LLM for parsing
             digital_count += 1
-            result_text = await _llm_parse(
-                page_info["text"], text_prompt, max_tokens
-            )
-            method = "text_extraction"
         else:
-            # Scanned page — render to image and use VLM
             scanned_count += 1
-            img = _render_pdf_page(contents, page_info["page"])
-            result_text = await _vlm_ocr(img, vlm_prompt, max_tokens)
-            method = "vlm_ocr"
 
         elapsed_ms = (time.time() - t0) * 1000
 
