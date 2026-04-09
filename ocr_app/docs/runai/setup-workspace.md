@@ -15,6 +15,12 @@ works end-to-end before committing to batch runs:
 Once verified, **stop the workspace** — you don't need it at runtime.
 The batch workspace (Step 3) handles production processing.
 
+A **test notebook** is included at
+`/tmp/KohakuRAG_UI/ocr_app/notebooks/test_extraction_pipeline.ipynb` —
+open it in Jupyter to walk through each pipeline step interactively
+(connect to vLLM, extract text, render scanned pages, send to LLM,
+inspect JSON output).
+
 ## What this workspace does NOT do
 
 - **Does not run production workloads.** Use the batch workspace (Step 3)
