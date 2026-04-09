@@ -68,12 +68,13 @@ Add Jupyter for browser access:
 ### Arguments (copy-paste)
 
 ```
--c "pip install uv && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv"
+-c "pip install --no-cache-dir httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv; curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI; jupyter-lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME} --ServerApp.token='' --ServerApp.allow_origin='*' --notebook-dir=/ocr"
 ```
 
-> **No `jupyter lab` at the end.** The NGC PyTorch image starts Jupyter
-> automatically with the correct base URL for RunAI's proxy. Adding a
-> manual `jupyter lab` command breaks the proxy routing (404 errors).
+> **`--ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME}`** is
+> required so Jupyter's URL matches RunAI's proxy path. Without this
+> you get 404 errors. `--notebook-dir=/ocr` opens Jupyter in the
+> persistent volume where your docs and notebooks live.
 
 **Environment variables:**
 
