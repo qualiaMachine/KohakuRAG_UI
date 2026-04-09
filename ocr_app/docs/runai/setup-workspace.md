@@ -146,7 +146,7 @@ your browser.
 | Step | What it does |
 |------|-------------|
 | 1 | Checks GPU and shared models PVC |
-| 2 | Starts vLLM as a background process, polls until ready |
+| 2 | Loads Qwen2.5-VL-7B directly with transformers |
 | 3 | Lists uploaded docs, you pick one |
 | 4 | Checks which pages are digital vs scanned |
 | 5 | Runs extraction on a single page (auto-picks text or VLM path) |
