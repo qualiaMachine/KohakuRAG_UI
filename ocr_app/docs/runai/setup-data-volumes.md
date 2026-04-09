@@ -76,22 +76,46 @@ rsync, or rclone) to keep the cluster PVC in sync with the source.
 
 ---
 
-## Shared models PVC
+## Shared models PVC — download Qwen2.5-VL-7B
 
-The vLLM server needs `Qwen/Qwen2.5-VL-7B-Instruct` (~15 GB) on a
-shared PVC at `/models/.cache/huggingface`.
+The vLLM server needs `Qwen/Qwen2.5-VL-7B-Instruct` (~15 GB) on the
+shared models PVC at `/models/.cache/huggingface`. If the model isn't
+there yet, you need to download it before deploying the inference job.
 
-**If you already have the WattBot shared models PVC,** reuse it — just
-make sure the VL model is downloaded. From any workspace with write
-access to the PVC:
+**If you already have the WattBot shared models PVC** (`shared-models`),
+reuse it — just add the VL model. If starting fresh, see
+[rag_app/docs/runai/setup-shared-models.md](../../../rag_app/docs/runai/setup-shared-models.md)
+for full PVC creation instructions.
 
-```python
-from huggingface_hub import snapshot_download
-snapshot_download("Qwen/Qwen2.5-VL-7B-Instruct",
-                  cache_dir="/models/.cache/huggingface")
+### Download the model
+
+1. In the RunAI UI, go to **Workloads**
+2. Switch to the **`shared-models`** project (or whichever project owns
+   the PVC with write access)
+3. Find **`update-shared-models`** and **Start** it
+4. Once running, **Connect** > open a terminal
+5. Run:
+
+```bash
+python /models/provision_shared_models.py download Qwen/Qwen2.5-VL-7B-Instruct
 ```
 
-**If starting fresh,** see
-[rag_app/docs/runai/setup-shared-models.md](../../../rag_app/docs/runai/setup-shared-models.md)
-for full PVC setup instructions — the process is the same, just download
-the Qwen VL model instead of (or in addition to) the text-only models.
+This downloads ~15 GB to the PVC. Takes a few minutes depending on
+network speed.
+
+6. Verify the model is there:
+
+```bash
+python /models/provision_shared_models.py list
+# Should show Qwen/Qwen2.5-VL-7B-Instruct in the list
+```
+
+7. **Stop** the `update-shared-models` workspace when done.
+
+> **Don't have access to the `shared-models` project?** Ask the PVC
+> admin to download the model for you, or see
+> [managing-models.md](../../../rag_app/docs/runai/managing-models.md)
+> for alternative approaches.
+
+The model only needs to be downloaded once. All inference jobs mount the
+PVC read-only and load the weights from there.
