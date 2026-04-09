@@ -43,13 +43,21 @@ from pydantic import BaseModel
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
 LLM_MODEL = os.environ.get("LLM_MODEL", "")  # auto-detect if empty
 VLM_BASE_URL = os.environ.get("VLM_BASE_URL", "")  # defaults to LLM_BASE_URL
-VLM_MODEL = os.environ.get("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
+VLM_MODEL = os.environ.get("VLM_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct")
 HOST = os.environ.get("OCR_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OCR_PORT", "8090"))
 
 # Minimum characters of extracted text to consider a page "digital"
 # (vs. a scanned page that happens to have a tiny watermark or header)
 MIN_TEXT_LENGTH = int(os.environ.get("MIN_TEXT_LENGTH", "50"))
+
+# Local model mode: set LLM_BASE_URL=local to load the model directly
+# with transformers instead of calling a vLLM/Ollama endpoint.
+USE_LOCAL_MODEL = LLM_BASE_URL.lower() == "local"
+
+# Globals for local model (populated in lifespan if USE_LOCAL_MODEL)
+_local_model = None
+_local_processor = None
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +78,32 @@ async def _detect_model(base_url: str) -> str:
     return ""
 
 
+def _local_run_vlm(messages: list, max_tokens: int) -> str:
+    """Run inference on the locally loaded model (shared by text + VLM paths)."""
+    import torch
+    from qwen_vl_utils import process_vision_info
+
+    text_input = _local_processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    image_inputs, video_inputs = process_vision_info(messages)
+    inputs = _local_processor(
+        text=[text_input], images=image_inputs, videos=video_inputs,
+        padding=True, return_tensors="pt",
+    ).to(_local_model.device)
+    with torch.no_grad():
+        generated_ids = _local_model.generate(**inputs, max_new_tokens=max_tokens)
+    trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
+    return _local_processor.batch_decode(trimmed, skip_special_tokens=True)[0]
+
+
 async def _llm_parse(text: str, prompt: str, max_tokens: int) -> str:
     """Send extracted text to an LLM for structured parsing."""
     full_prompt = f"{prompt}\n\n---\nDOCUMENT TEXT:\n---\n{text}"
+
+    if USE_LOCAL_MODEL:
+        messages = [{"role": "user", "content": [{"type": "text", "text": full_prompt}]}]
+        return _local_run_vlm(messages, max_tokens)
 
     payload = {
         "model": LLM_MODEL,
@@ -95,6 +126,13 @@ async def _vlm_ocr(image: Image.Image, prompt: str, max_tokens: int) -> str:
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
+
+    if USE_LOCAL_MODEL:
+        messages = [{"role": "user", "content": [
+            {"type": "image", "image": f"data:image/png;base64,{b64}"},
+            {"type": "text", "text": prompt},
+        ]}]
+        return _local_run_vlm(messages, max_tokens)
 
     base_url = VLM_BASE_URL or LLM_BASE_URL
     payload = {
@@ -348,17 +386,34 @@ VLM_PROMPTS = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global LLM_MODEL
-    # Auto-detect model name from endpoint
-    if not LLM_MODEL:
-        LLM_MODEL = await _detect_model(LLM_BASE_URL)
-        if LLM_MODEL:
-            print(f"[ocr_server] Auto-detected LLM model: {LLM_MODEL}", flush=True)
-        else:
-            print(f"[ocr_server] WARNING: Could not detect model at {LLM_BASE_URL}", flush=True)
-    print(f"[ocr_server] LLM: {LLM_MODEL} at {LLM_BASE_URL}", flush=True)
-    vlm_url = VLM_BASE_URL or LLM_BASE_URL
-    print(f"[ocr_server] VLM: {VLM_MODEL} at {vlm_url} (fallback for scans)", flush=True)
+    global LLM_MODEL, _local_model, _local_processor
+
+    if USE_LOCAL_MODEL:
+        import torch
+        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+
+        model_name = VLM_MODEL
+        print(f"[ocr_server] LOCAL MODE — loading {model_name} with transformers...", flush=True)
+        _local_processor = AutoProcessor.from_pretrained(model_name)
+        _local_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_name, torch_dtype=torch.bfloat16, device_map="auto",
+        )
+        LLM_MODEL = model_name
+        print(f"[ocr_server] Model loaded on {_local_model.device}", flush=True)
+        print(f"[ocr_server] Digital pages: text extraction + local LLM parse", flush=True)
+        print(f"[ocr_server] Scanned pages: local VLM OCR", flush=True)
+    else:
+        # Auto-detect model name from endpoint
+        if not LLM_MODEL:
+            LLM_MODEL = await _detect_model(LLM_BASE_URL)
+            if LLM_MODEL:
+                print(f"[ocr_server] Auto-detected LLM model: {LLM_MODEL}", flush=True)
+            else:
+                print(f"[ocr_server] WARNING: Could not detect model at {LLM_BASE_URL}", flush=True)
+        print(f"[ocr_server] LLM: {LLM_MODEL} at {LLM_BASE_URL}", flush=True)
+        vlm_url = VLM_BASE_URL or LLM_BASE_URL
+        print(f"[ocr_server] VLM: {VLM_MODEL} at {vlm_url} (fallback for scans)", flush=True)
+
     print(f"[ocr_server] Min text length for digital detection: {MIN_TEXT_LENGTH}", flush=True)
     yield
 
