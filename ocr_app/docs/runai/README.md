@@ -21,13 +21,13 @@ path to use per page.
 
 | Workload | Type | What it does | GPU | Port |
 |----------|------|-------------|-----|------|
-| **`ocr-vllm`** | Inference | Serves Qwen2.5-VL-7B for text parsing + VLM OCR | 0.80 | 8000 |
+| **`qwen2-5-vl-7b-instruct`** | Inference | Serves Qwen2.5-VL-7B for text parsing + VLM OCR | 0.80 | 8000 |
 | **`ocr-setup`** | Workspace | One-time setup — test pipeline on sample docs | 0 | 8888 |
 | **`ocr-batch`** | Workspace | Production batch processing | 0 | 8888 |
 | **`ocr-extract`** | Inference | *(optional)* FastAPI extraction server for API/UI use | 0 | 8090 |
 | **`ocr-app`** | Workspace | *(optional)* Streamlit UI for PoC demos | 0 | 8501 |
 
-Only `ocr-vllm` uses GPU. Everything else is CPU-only.
+Only `qwen2-5-vl-7b-instruct` uses GPU. Everything else is CPU-only.
 
 ### Service layout
 
@@ -67,14 +67,14 @@ All steps use the **RunAI web UI only** — no CLI tools required.
 
 ### PoC path (5 sample docs)
 
-1. Deploy `ocr-vllm` (Step 1) — GPU inference
+1. Deploy `qwen2-5-vl-7b-instruct` (Step 1) — GPU inference
 2. Deploy `ocr-extract` + `ocr-app` (Step 2) — CPU, Streamlit UI
 3. Drag-and-drop your 5 PDFs into the app, pick a format, see results
 
 ### Production path (10K+ docs/month)
 
 0. Setup data volumes (Step 0) — PVCs for input/output
-1. Deploy `ocr-vllm` (Step 1) — GPU inference
+1. Deploy `qwen2-5-vl-7b-instruct` (Step 1) — GPU inference
 4. Deploy `ocr-batch` (Step 4) — batch workspace with `--resume`
 
 ---

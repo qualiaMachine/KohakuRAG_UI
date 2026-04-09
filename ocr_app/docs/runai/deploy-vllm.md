@@ -1,4 +1,4 @@
-# Deploy the vLLM Server (`ocr-vllm`)
+# Deploy the vLLM Server (`qwen2-5-vl-7b-instruct`)
 
 > **Step 1** in the [deployment guide](README.md). Comes after
 > [Setup Data Volumes](setup-data-volumes.md) (Step 0).

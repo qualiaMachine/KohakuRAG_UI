@@ -30,7 +30,7 @@
 #
 # RunAI UI settings:
 #   Inference type:  Custom
-#   Name:            ocr-vllm
+#   Name:            qwen2-5-vl-7b-instruct
 #   Image:           vllm/vllm-openai:latest
 #   Container port:  8000
 #   Command:         (leave empty — image default)
@@ -44,7 +44,7 @@
 #   Data volume:     shared-models -> /models
 #
 # CLI equivalent:
-#   runai submit ocr-vllm \
+#   runai submit qwen2-5-vl-7b-instruct \
 #     --type inference \
 #     --image vllm/vllm-openai:latest \
 #     --gpu 0.80 \
@@ -87,7 +87,7 @@
 #   Container port:  8090
 #   Command:         bash
 #   Arguments:       -c "pip install uv && curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp && mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI && cd /tmp/KohakuRAG_UI && uv pip install --system fastapi uvicorn python-multipart httpx pymupdf Pillow && python3 ocr_app/scripts/ocr_server.py"
-#   Env:             LLM_BASE_URL=http://ocr-vllm.runai-<project>.svc.cluster.local/v1
+#   Env:             LLM_BASE_URL=http://qwen2-5-vl-7b-instruct.runai-<project>.svc.cluster.local/v1
 #                    VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
 #                    OCR_PORT=8090
 #   GPU:             0 (none — CPU only)
@@ -101,7 +101,7 @@
 #     --gpu 0 \
 #     --cpu 2 \
 #     --memory 4Gi \
-#     --env LLM_BASE_URL=http://ocr-vllm.runai-<project>.svc.cluster.local/v1 \
+#     --env LLM_BASE_URL=http://qwen2-5-vl-7b-instruct.runai-<project>.svc.cluster.local/v1 \
 #     --env VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct \
 #     --env OCR_PORT=8090 \
 #     --port 8090 \
