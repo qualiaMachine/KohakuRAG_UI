@@ -397,6 +397,7 @@ async def lifespan(app: FastAPI):
         _local_processor = AutoProcessor.from_pretrained(model_name)
         _local_model = AutoModelForImageTextToText.from_pretrained(
             model_name, torch_dtype=torch.bfloat16, device_map="auto",
+            attn_implementation="flash_attention_2",
         )
         LLM_MODEL = model_name
         print(f"[ocr_server] Model loaded on {_local_model.device}", flush=True)
