@@ -60,7 +60,7 @@ unless you know what you're doing.
 | 7. Inspect output | Pretty-prints the JSON so you can review quality | instant |
 | 8. Batch process | Processes ALL PDFs in `/ocr/` | ~1 min/page |
 | 9. Compare vs Gemini | Side-by-side comparison with plots | ~5s |
-| 10. Streamlit (optional) | Launches a web UI for interactive extraction | ~3 min startup |
+| 10. Streamlit (optional) | Launches a web UI for interactive extraction (requires Custom URL tool on port 8501 + `STREAMLIT_BASE_PATH` env var — see notebook for details) | ~3 min startup |
 
 ### Switching models
 

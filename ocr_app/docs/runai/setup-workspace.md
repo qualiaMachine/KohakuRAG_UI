@@ -156,5 +156,7 @@ your browser.
 | 9 | Launches extraction server + Streamlit app for interactive testing |
 | 10 | Cleanup — stops all processes |
 
-> **Streamlit test (step 9)** requires a Custom URL tool on port 8501
-> configured in the workspace (in addition to Jupyter on 8888).
+> **Streamlit test (step 10)** requires:
+> 1. A **Custom URL tool on port 8501** in the workspace config
+> 2. Env var `STREAMLIT_BASE_PATH` set to the tool's URL path (check
+>    the RunAI UI — click the tool link, usually `/<project>/<job-name>/url-1`)
