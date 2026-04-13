@@ -9,7 +9,7 @@ models.
 | Item | Where to get it |
 |------|----------------|
 | **Sample PDFs** | Grant award docs, archival scans, or other institutional records |
-| **Gemini reference JSONs** (optional) | From colleague, for comparing VLM output against Gemini |
+| **Gemini reference JSONs** (optional) | For comparing VLM output against Gemini extractions |
 
 > **Note for admins:** Cluster prerequisites (RunAI account, project access,
 > shared-models PVC, GPU allocation, model downloads) are documented in
