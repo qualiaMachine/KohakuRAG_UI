@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Streamlit UI for document extraction.
 
-Upload PDFs, TIFFs, or images to extract structured data.
-- Digital PDFs: text extraction + LLM parsing (fast, no GPU)
-- Scans / TIFFs: VLM OCR + structuring (uses GPU)
+Upload PDFs, TIFFs, or images to extract structured data using a VLM.
+All pages are rendered as images and sent to the model for structured
+JSON extraction matching the grant admin schema.
 
 Launch:
     streamlit run ocr_app/app.py
@@ -13,6 +13,7 @@ Environment variables:
 """
 
 import io
+import json
 import os
 from pathlib import Path
 
@@ -24,6 +25,77 @@ from PIL import Image
 # Configuration
 # ---------------------------------------------------------------------------
 OCR_SERVICE_URL = os.environ.get("OCR_SERVICE_URL", "http://localhost:8090")
+
+# Default extraction prompt — same as notebook batch processing
+DEFAULT_PROMPT = """Role & Objective: You are an expert data extraction assistant specializing in university grant administration documents. Data quality is paramount: do not abbreviate, shorten, or use external assumptions to fill in missing values.
+
+Task: Extract all data from this single document page into the JSON structure below. Do not analyze data.
+
+{
+  "confidence_percentage": <float 0-100>,
+  "confidence_narrative": "<brief note on extraction quality and comprehensiveness>",
+  "has_annotation": <boolean>,
+  "has_watermark": <boolean>,
+  "signature_lines": {
+    "has_signature_line": <boolean>,
+    "has_valid_signature": <boolean>
+  },
+  "document_tags": ["<high-level grant admin tags, e.g. IRB, IACUC, Biosafety>"],
+  "one_sentence_summary": "<one sentence summary>",
+  "document_details": {
+    "application_id": "", "application_type": "", "title": "",
+    "requested_amount": null, "completed_date": "", "sub_document_type": ""
+  },
+  "stakeholders": [
+    {
+      "context_snippet": "<3-5 words near the stakeholder info>",
+      "stakeholder_role": "<Principal Investigator | Co-Investigator | Collaborator | Key Personnel | Grants Administrative Contact | Sponsor Contact | Authorized Organizational Representative | Unknown>",
+      "full_name": "", "first_name": "", "last_name": "",
+      "email": "", "phone": "", "institution": "", "department": "",
+      "position_title": "", "highest_education": "",
+      "raw_stakeholder_text": "<verbatim text block containing stakeholder info>"
+    }
+  ],
+  "addresses": [
+    {
+      "context_snippet": "<3-5 words near the address>",
+      "addressee": "", "care_of": null,
+      "address_line1": "", "address_line2": "",
+      "city": "", "state_province": "", "postal_code": "", "country": "",
+      "stakeholder_type": "<Funding Agency | Grantee Institution | Subrecipient | Principal Investigator | Grants Administrative Contact | Unknown>",
+      "raw_address_text": "<verbatim text block containing the full address>"
+    }
+  ],
+  "tables": [
+    {
+      "table_classification": "<Literal_Grid | Key_Value_Form | Standard_Table>",
+      "table_data": "<see classification rules below>"
+    }
+  ],
+  "narrative_responses": [
+    {
+      "prompt_or_header": "<exact question, section header, or 'General Body Text'>",
+      "verbatim_text": "<complete, unsummarized text with [cite: N] markers>"
+    }
+  ],
+  "other_metadata": {}
+}
+
+PROCESSING RULES:
+- STAKEHOLDER EXTRACTION (CRITICAL): Every grant document has AT LEAST two stakeholders: a funding agency/sponsor AND a recipient institution. ALWAYS extract both. The funding/granting agency (e.g. NSF, NIH, NHPRC, DOE) must be extracted as a stakeholder with role "Sponsor Contact" even if only mentioned in a header, award number prefix, or letterhead. The recipient institution must be extracted as role "Authorized Organizational Representative" or "Unknown". Also extract all individuals mentioned as investigators, collaborators, points of contact, or key personnel.
+- NARRATIVE EXTRACTION (CRITICAL FOR RAG): Extract ALL body text, paragraphs, memos, and application answers VERBATIM to ensure 100% document coverage. If text is part of a Q&A form, include the question in prompt_or_header. For unstructured letter/memo body, use "General Body Text". Do NOT summarize, truncate, or condense.
+- CITATIONS: Add [cite: N] numbered tags after each distinct statement in narrative text, incrementing N from 1.
+- TABLE CLASSIFICATION:
+  * Literal_Grid: irregular tables without clear headers — table_data is a 2D array of strings (list of rows).
+  * Key_Value_Form: label-value pairs (e.g. form cover sheets) — table_data is a single JSON object {label: value}.
+  * Standard_Table: clear column headers — table_data is an array of objects with column headers as keys.
+- SIGNATURES: Do NOT read handwriting. Only note if a signature LINE exists and if a signature is DETECTED.
+- STAKEHOLDER ROLES: Use ONLY the allowed stakeholder_role values listed above. If context does not make the role explicitly clear, use "Unknown". Capture raw_stakeholder_text verbatim.
+- HYPERLINKS: If hyperlinks are provided in the context above, include them in the relevant narrative text or other_metadata. Preserve the exact URL.
+- ADDRESSES: Use ONLY the allowed stakeholder_type values listed above. If unclear, use "Unknown". Place "Care Of"/"Attention" lines ONLY in care_of. Capture raw_address_text verbatim.
+- Preserve ALL dollar amounts, dates, reference numbers exactly as they appear.
+- Missing fields: use null or "" as appropriate. Escape all strings.
+- Output ONLY valid JSON. No markdown fences, no introductory text."""
 
 st.set_page_config(
     page_title="Document Extraction",
@@ -45,29 +117,25 @@ def _check_server() -> dict | None:
         return None
 
 
-def _extract_pdf(file_bytes: bytes, filename: str, fmt: str,
-                 prompt: str | None, max_tokens: int, pages: str | None) -> dict:
+def _extract_pdf(file_bytes: bytes, filename: str,
+                 prompt: str, max_tokens: int, pages: str | None) -> dict:
     files = {"file": (filename, file_bytes)}
-    data = {"format": fmt, "max_tokens": str(max_tokens)}
-    if prompt:
-        data["prompt"] = prompt
+    data = {"format": "json", "max_tokens": str(max_tokens), "prompt": prompt}
     if pages:
         data["pages"] = pages
     resp = httpx.post(
-        f"{OCR_SERVICE_URL}/extract/pdf", files=files, data=data, timeout=300.0,
+        f"{OCR_SERVICE_URL}/extract/pdf", files=files, data=data, timeout=600.0,
     )
     resp.raise_for_status()
     return resp.json()
 
 
-def _extract_image(file_bytes: bytes, filename: str, fmt: str,
-                   prompt: str | None, max_tokens: int) -> dict:
+def _extract_image(file_bytes: bytes, filename: str,
+                   prompt: str, max_tokens: int) -> dict:
     files = {"file": (filename, file_bytes)}
-    data = {"format": fmt, "max_tokens": str(max_tokens)}
-    if prompt:
-        data["prompt"] = prompt
+    data = {"format": "json", "max_tokens": str(max_tokens), "prompt": prompt}
     resp = httpx.post(
-        f"{OCR_SERVICE_URL}/extract/image", files=files, data=data, timeout=120.0,
+        f"{OCR_SERVICE_URL}/extract/image", files=files, data=data, timeout=300.0,
     )
     resp.raise_for_status()
     return resp.json()
@@ -79,61 +147,32 @@ def _format_elapsed(ms: float) -> str:
     return f"{ms / 1000:.1f}s"
 
 
-def _render_result(text: str, fmt: str):
-    if fmt in ("json", "award", "budget", "terms", "key_values"):
-        st.code(text, language="json")
-    elif fmt in ("markdown", "table"):
-        st.markdown(text)
-    else:
-        st.text(text)
-
-
-def _method_badge(method: str) -> str:
-    if method == "text_extraction":
-        return "\u26A1 text extraction + LLM"
-    return "\U0001F50D VLM OCR"
-
-
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.title("\U0001F4C4 Document Extraction")
-    st.caption("Document Processing — Grants, Archives & More")
+    st.caption("Grants, Archives & Institutional Records")
 
     status = _check_server()
     if status and status.get("status") == "ok":
         llm = status.get("llm_model", "unknown")
-        st.success(f"LLM: {llm}")
+        st.success(f"Model: {llm}")
     else:
         st.error(f"Server unreachable at {OCR_SERVICE_URL}")
 
     st.divider()
 
-    FORMAT_OPTIONS = {
-        "award": "Award Notice (structured JSON)",
-        "budget": "Budget / Financial (structured JSON)",
-        "terms": "Terms & Conditions (structured JSON)",
-        "table": "Tables (Markdown)",
-        "key_values": "Key-Value Pairs (JSON)",
-        "markdown": "Markdown",
-        "json": "JSON (generic)",
-        "text": "Plain Text",
-    }
-    output_format = st.selectbox(
-        "Output format",
-        list(FORMAT_OPTIONS.keys()),
-        index=0,
-        format_func=lambda x: FORMAT_OPTIONS[x],
-    )
+    with st.expander("Extraction prompt", expanded=False):
+        extraction_prompt = st.text_area(
+            "Edit prompt (applied to every page)",
+            value=DEFAULT_PROMPT,
+            height=400,
+        )
 
     with st.expander("Advanced options"):
         max_tokens = st.slider(
             "Max output tokens", 256, 8192, 4096, 256,
-        )
-        custom_prompt = st.text_area(
-            "Custom prompt (optional)",
-            placeholder="Override the default extraction prompt...",
         )
         pdf_pages = st.text_input(
             "PDF pages (optional)",
@@ -142,10 +181,7 @@ with st.sidebar:
 
     st.divider()
     st.caption(f"Server: `{OCR_SERVICE_URL}`")
-    st.caption(
-        "Digital PDFs: text extract + LLM (fast)\n\n"
-        "Scans / TIFFs: VLM OCR (GPU)"
-    )
+    st.caption("All pages processed as images via VLM")
 
 # ---------------------------------------------------------------------------
 # Main content
@@ -153,8 +189,8 @@ with st.sidebar:
 st.title("Document Extraction")
 st.markdown(
     "Upload grant award notices, budgets, terms & conditions, archival "
-    "documents, or other institutional records. All pages are processed "
-    "via VLM for structured extraction."
+    "documents, or other institutional records. All pages are rendered "
+    "as images and sent to the VLM for structured JSON extraction."
 )
 
 uploaded_files = st.file_uploader(
@@ -183,12 +219,11 @@ if not run:
 # ---------------------------------------------------------------------------
 # Process files
 # ---------------------------------------------------------------------------
-prompt = custom_prompt.strip() if custom_prompt and custom_prompt.strip() else None
+prompt = extraction_prompt.strip()
 
 for uploaded_file in uploaded_files:
     file_bytes = uploaded_file.getvalue()
     is_pdf = uploaded_file.type == "application/pdf"
-    is_image = not is_pdf
 
     st.divider()
     st.subheader(uploaded_file.name)
@@ -197,34 +232,30 @@ for uploaded_file in uploaded_files:
         try:
             if is_pdf:
                 result = _extract_pdf(
-                    file_bytes, uploaded_file.name, output_format,
+                    file_bytes, uploaded_file.name,
                     prompt, max_tokens, pdf_pages or None,
                 )
 
                 # Summary metrics
                 total_ms = result.get("total_elapsed_ms", 0)
-                digital = result.get("digital_pages", 0)
-                scanned = result.get("scanned_pages", 0)
                 total = result.get("total_pages", 0)
 
-                col_stats = st.columns(4)
+                col_stats = st.columns(3)
                 col_stats[0].metric("Pages", total)
-                col_stats[1].metric("Digital", digital)
-                col_stats[2].metric("Scanned", scanned)
-                col_stats[3].metric("Time", _format_elapsed(total_ms))
+                col_stats[1].metric("Time", _format_elapsed(total_ms))
+                col_stats[2].metric("Avg/page", _format_elapsed(total_ms / max(total, 1)))
 
                 # Per-page results
                 for page_result in result.get("pages", []):
                     page_num = page_result["page"]
-                    method = page_result["method"]
                     elapsed = page_result["elapsed_ms"]
-                    label = f"Page {page_num} \u2014 {_method_badge(method)} ({_format_elapsed(elapsed)})"
+                    label = f"Page {page_num} ({_format_elapsed(elapsed)})"
 
                     with st.expander(label, expanded=(page_num == 1)):
-                        _render_result(page_result["text"], output_format)
+                        st.code(page_result["text"], language="json")
 
-                # Download all pages
-                all_text = "\n\n---\n\n".join(
+                # Combine all pages for download
+                all_text = "\n\n".join(
                     p["text"] for p in result.get("pages", [])
                 )
 
@@ -236,28 +267,32 @@ for uploaded_file in uploaded_files:
                     st.image(img, caption=f"{img.width}x{img.height}", use_container_width=True)
 
                 result = _extract_image(
-                    file_bytes, uploaded_file.name, output_format,
+                    file_bytes, uploaded_file.name,
                     prompt, max_tokens,
                 )
 
                 with col_result:
                     elapsed = result.get("elapsed_ms", 0)
-                    method = result.get("method", "vlm_ocr")
-                    st.caption(f"{_method_badge(method)} \u2014 {_format_elapsed(elapsed)}")
-                    _render_result(result["text"], output_format)
+                    st.caption(f"VLM extraction ({_format_elapsed(elapsed)})")
+                    st.code(result["text"], language="json")
 
                 all_text = result["text"]
 
-            # Download button
-            ext = {"json": "json", "award": "json", "budget": "json",
-                   "terms": "json", "key_values": "json",
-                   "markdown": "md", "table": "md"}.get(output_format, "txt")
-            mime = "application/json" if ext == "json" else "text/plain"
+            # Download buttons
             st.download_button(
-                f"Download {uploaded_file.name} result",
+                f"Download JSON — {uploaded_file.name}",
                 data=all_text,
-                file_name=f"{Path(uploaded_file.name).stem}_extracted.{ext}",
-                mime=mime,
+                file_name=f"{Path(uploaded_file.name).stem}_extracted.json",
+                mime="application/json",
+            )
+
+            # Also offer JSONL format
+            st.download_button(
+                f"Download JSONL — {uploaded_file.name}",
+                data=all_text.replace("\n\n", "\n"),
+                file_name=f"{Path(uploaded_file.name).stem}_extracted.jsonl",
+                mime="application/json",
+                key=f"jsonl_{uploaded_file.name}",
             )
 
         except httpx.HTTPStatusError as e:
