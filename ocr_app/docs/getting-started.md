@@ -95,6 +95,9 @@ GPU otherwise). **Restart the kernel** after changing the model.
 
 - **"Add me to the RunAI project"** — you need project access to create workspaces
 - **"Is `shared-models` available as a data volume in my project?"** — you need the model weights
-- **"Is Qwen3-VL-32B-Instruct downloaded?"** — if not, admin needs to download it (~64 GB)
 - **"Can I get 85% of a GPU?"** — the 32B model needs ~64 GB VRAM
-- **"Can you increase the shared models PVC?"** — if you want to download additional models for comparison
+
+> **Want to try other models?** The default (Qwen3-VL-32B) is already
+> downloaded. If you want to experiment with other models (larger, smaller,
+> or different architectures), let Chris know — he can download additional
+> models to the shared storage.
