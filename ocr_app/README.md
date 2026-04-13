@@ -1,11 +1,11 @@
-# Document Extraction — Research & Sponsored Programs
+# Document Extraction
 
 Structured data extraction from grant award notices, budgets, terms &
-conditions, and other research admin documents. Produces JSON for
-downstream systematic analysis.
+conditions, archival scans, and other institutional documents. Produces
+JSON for downstream systematic analysis.
 
 Hybrid pipeline — digital PDFs are processed instantly via text
-extraction; scanned pages and TIFFs fall back to VLM OCR (Qwen2.5-VL-7B)
+extraction; scanned pages and TIFFs fall back to VLM OCR (Qwen3-VL-32B-Instruct)
 automatically.
 
 ## Architecture
@@ -13,7 +13,7 @@ automatically.
 ```
   +---------------------+     +----------------------+
   |  Extraction Server  |---->|   vLLM               |
-  |  FastAPI (CPU)      |     |   Qwen2.5-VL-7B     |
+  |  FastAPI (CPU)      |     |   Qwen3-VL-32B      |
   |  Port 8090          |     |   Port 8000 (GPU)    |
   |                     |     |                      |
   |  PDF: text extract  |     |   Text: JSON parse   |
@@ -36,7 +36,7 @@ Follow these docs in order:
 0. [Setup Data Volumes](docs/runai/setup-data-volumes.md) — download model to shared PVC, create output volume
 1. [Setup & Test Workspace](docs/runai/setup-workspace.md) — experiment with pipeline in notebook, iterate on prompts/formats
 2. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) *(optional)* — polished demo UI, test from workspace first
-3. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — persistent Qwen2.5-VL-7B inference endpoint
+3. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — persistent Qwen3-VL-32B-Instruct inference endpoint
 4. [Batch Processing](docs/runai/batch-processing.md) — production workspace for large-scale runs
 
 Additional: [Troubleshooting](docs/runai/troubleshooting.md)
@@ -60,7 +60,7 @@ Additional: [Troubleshooting](docs/runai/troubleshooting.md)
 |--------|----------|--------|
 | `award` | Grant award notices, NOAs, subaward agreements | JSON: PI, award #, amounts, dates, F&A rate |
 | `budget` | Budget pages, financial summaries | JSON: categories, line items, costs |
-| `terms` | Award terms, RSP policies, compliance docs | JSON: sections, regulatory citations |
+| `terms` | Award terms, policies, compliance docs | JSON: sections, regulatory citations |
 | `table` | Any tabular data | Markdown tables |
 | `key_values` | Forms, labeled fields | Flat JSON key-value pairs |
 | `text` | Plain text | Raw text |

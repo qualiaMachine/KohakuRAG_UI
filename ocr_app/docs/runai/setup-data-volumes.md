@@ -8,7 +8,7 @@ Before deploying any workloads, set up the storage.
 
 | Path | Type | Access | Size | Purpose |
 |------|------|--------|------|---------|
-| `/models/` | Shared models PVC | RO (reuse from WattBot if available) | varies | Qwen2.5-VL-7B weights |
+| `/models/` | Shared models PVC | RO (reuse from WattBot if available) | varies | Qwen3-VL-32B weights |
 | `/data/documents/` | Input documents PVC | RO for batch jobs | depends on corpus | Source PDFs and TIFFs |
 | `/data/extracted/` | Output PVC | RW for batch jobs | ~1-5% of input | Extracted JSON files |
 
@@ -76,9 +76,9 @@ rsync, or rclone) to keep the cluster PVC in sync with the source.
 
 ---
 
-## Shared models PVC — download Qwen2.5-VL-7B
+## Shared models PVC — download Qwen3-VL-32B
 
-The vLLM server needs `Qwen/Qwen2.5-VL-7B-Instruct` (~15 GB) on the
+The vLLM server needs `Qwen/Qwen3-VL-32B-Instruct` (~64 GB) on the
 shared models PVC at `/models/.cache/huggingface`. If the model isn't
 there yet, you need to download it before deploying the inference job.
 
@@ -97,17 +97,17 @@ for full PVC creation instructions.
 5. Run:
 
 ```bash
-python /models/provision_shared_models.py download Qwen/Qwen2.5-VL-7B-Instruct
+python /models/provision_shared_models.py download Qwen/Qwen3-VL-32B-Instruct
 ```
 
-This downloads ~15 GB to the PVC. Takes a few minutes depending on
+This downloads ~64 GB to the PVC. Takes a few minutes depending on
 network speed.
 
 6. Verify the model is there:
 
 ```bash
 python /models/provision_shared_models.py list
-# Should show Qwen/Qwen2.5-VL-7B-Instruct in the list
+# Should show Qwen/Qwen3-VL-32B-Instruct in the list
 ```
 
 7. **Stop** the `update-shared-models` workspace when done.

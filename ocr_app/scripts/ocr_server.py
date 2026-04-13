@@ -273,8 +273,8 @@ TEXT_PROMPTS = {
         "or reformat. Output only valid JSON."
     ),
     OutputFormat.terms: (
-        "Parse the following document text from research and sponsored programs "
-        "terms & conditions, award terms, RSP policies, or compliance requirements.\n\n"
+        "Parse the following document text from "
+        "terms & conditions, award terms, policies, or compliance requirements.\n\n"
         "Return a JSON object with:\n"
         '  "document_title": title of the document,\n'
         '  "effective_date": effective date if shown,\n'
