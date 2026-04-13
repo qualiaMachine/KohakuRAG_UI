@@ -6,17 +6,16 @@ models.
 
 ## What you need before starting
 
-| Item | Who provides it | How to check |
-|------|----------------|--------------|
-| **RunAI account** | Admin | You can log into the RunAI UI |
-| **Project access** | Admin | You see your project in the RunAI sidebar |
-| **Shared models PVC** (`shared-models`) | Admin | Ask: "Is the shared-models data volume available in my project?" |
-| **VLM model downloaded** | Admin | Ask: "Is `Qwen/Qwen3-VL-32B-Instruct` on the shared models PVC?" |
-| **Sample PDFs** | You | Grant award docs, archival scans, or other institutional records |
-| **Gemini reference JSONs** (optional) | Colleague | For comparing VLM output against Gemini extractions |
+| Item | Where to get it |
+|------|----------------|
+| **Sample PDFs** | Grant award docs, archival scans, or other institutional records |
+| **Gemini reference JSONs** (optional) | From colleague, for comparing VLM output against Gemini |
 
-> **If any of the first 4 items are missing**, contact your admin. You
-> cannot proceed without cluster access and a downloaded model.
+> **Note for admins:** Cluster prerequisites (RunAI account, project access,
+> shared-models PVC, GPU allocation, model downloads) are documented in
+> [setup-data-volumes.md](runai/setup-data-volumes.md) and
+> [setup-workspace.md](runai/setup-workspace.md). These must be set up
+> before users can follow this guide.
 
 ## Step 1: Create the workspace
 
