@@ -1,22 +1,20 @@
 # Deploying OCR Document Extraction on RunAI
 
 Production deployment for extracting structured JSON from institutional
-documents (grant awards, budgets, terms & conditions, archival scans). Uses a hybrid pipeline: instant text extraction for digital PDFs,
-VLM OCR (Qwen3-VL-32B-Instruct) fallback for scans.
+documents (grant awards, budgets, terms & conditions, archival scans).
+All pages are rendered as images and sent to a Vision Language Model
+(Qwen3-VL-32B-Instruct) for structured extraction.
 
 ## Why this architecture?
 
 Traditional OCR pipelines (Tesseract + regex) are brittle — they break on
-layout changes and need per-document-type rules. This pipeline uses an LLM
-to understand document structure semantically:
+layout changes and need per-document-type rules. This pipeline uses a VLM
+to understand document structure visually:
 
-- **Digital PDFs:** PyMuPDF extracts text (instant, no GPU), then the LLM
-  parses it into structured JSON
-- **Scanned PDFs / TIFFs:** Qwen3-VL renders the page and does OCR +
-  structuring in one shot
-
-Both paths produce the same JSON output. The pipeline auto-detects which
-path to use per page.
+- Every page (digital or scanned) is rendered as an image
+- The VLM sees layout, tables, signatures, watermarks, and annotations
+- PDF hyperlinks are extracted from metadata and passed as additional context
+- Produces structured JSON matching the grant admin schema
 
 | Workload | Type | What it does | GPU | Port |
 |----------|------|-------------|-----|------|

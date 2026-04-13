@@ -22,18 +22,18 @@ All 4 services fit on ~1 GPU via fractional allocation. Reranker is optional.
 
 ## RunAI Deployment
 
-Full deployment guide: **[docs/runai/README.md](docs/runai/README.md)**
+Full deployment guide: **[docs/README.md](docs/README.md)**
 
 Follow these docs in order:
 
-0. [Setup Shared Models PVC](docs/runai/setup-shared-models.md) *(admin, one-time)*
-1. [Setup Workspace](docs/runai/setup-workspace.md) — clone repo, build vector index
-2. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — LLM inference with Qwen 7B
-3. [Deploy Embedding Server](docs/runai/deploy-embedding.md) — Jina V4 query encoding
-4. [Deploy Reranker Server](docs/runai/deploy-reranker.md) *(optional)*
-5. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) — browser UI
+0. [Setup Shared Models PVC](docs/setup-shared-models.md) *(admin, one-time)*
+1. [Setup Workspace](docs/setup-workspace.md) — clone repo, build vector index
+2. [Deploy vLLM Server](docs/deploy-vllm.md) — LLM inference with Qwen 7B
+3. [Deploy Embedding Server](docs/deploy-embedding.md) — Jina V4 query encoding
+4. [Deploy Reranker Server](docs/deploy-reranker.md) *(optional)*
+5. [Deploy Streamlit App](docs/deploy-streamlit.md) — browser UI
 
-Additional: [Troubleshooting](docs/runai/troubleshooting.md) | [Managing Models](docs/runai/managing-models.md) | [Reference](docs/runai/reference.md)
+Additional: [Troubleshooting](docs/troubleshooting.md) | [Managing Models](docs/managing-models.md) | [Reference](docs/reference.md)
 
 ## Key Files
 
@@ -51,7 +51,7 @@ rag_app/
 ├── deploy/
 │   └── runai_jobs.yaml             # RunAI job configs
 ├── data/                           # Corpus, embeddings, metadata
-├── docs/runai/                     # Deployment guides (10 docs)
+├── docs/                           # Deployment guides (10 docs)
 ├── requirements_local.txt          # GPU/local inference deps
 └── requirements_remote.txt         # Remote client deps (minimal)
 ```

@@ -132,10 +132,12 @@ In the RunAI UI: **Workloads** > **New Workload** > **Workspace**
 | Name | Value |
 |------|-------|
 | `OCR_SERVICE_URL` | `http://ocr-extract.runai-<project>.svc.cluster.local` |
-| `STREAMLIT_BASE_PATH` | `/<project>/ocr-app/proxy/8501` |
+| `STREAMLIT_BASE_PATH` | `/<project>/ocr-app/url-1` |
 
-> **Replace `<project>`** with your actual project name. Example:
-> `STREAMLIT_BASE_PATH=/jupyter-endemann01/ocr-app/proxy/8501`
+> **Replace `<project>`** with your actual project name. The `url-1`
+> suffix is assigned by RunAI for the first Custom URL tool (after
+> Jupyter). Check the tool link in the RunAI UI to confirm the exact
+> path. Example: `STREAMLIT_BASE_PATH=/jupyter-endemann01/ocr-app/url-1`
 
 ### Compute resources
 
@@ -154,12 +156,16 @@ No data volumes needed.
 Once both `ocr-extract` and `ocr-app` are running, open the Streamlit
 URL:
 
+Click the workspace name in the RunAI UI and click the **streamlit**
+tool link. The URL will be something like:
+
 ```
-https://<cluster-host>/<project>/ocr-app/proxy/8501/
+https://<cluster-host>/<project>/ocr-app/url-1/
 ```
 
-Click the workspace name in the RunAI UI → click the **streamlit** tool
-link.
+> **Note:** The exact path suffix (`url-1`, `url-0`, etc.) is assigned by
+> RunAI based on tool order. Always use the link from the RunAI UI rather
+> than constructing the URL manually.
 
 ---
 

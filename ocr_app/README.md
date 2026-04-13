@@ -4,42 +4,41 @@ Structured data extraction from grant award notices, budgets, terms &
 conditions, archival scans, and other institutional documents. Produces
 JSON for downstream systematic analysis.
 
-Hybrid pipeline — digital PDFs are processed instantly via text
-extraction; scanned pages and TIFFs fall back to VLM OCR (Qwen3-VL-32B-Instruct)
-automatically.
+All pages (digital PDFs, scans, TIFFs) are rendered as images and sent
+to a Vision Language Model (Qwen3-VL-32B-Instruct) for structured
+extraction. This ensures the VLM sees layout, tables, signatures,
+watermarks, and annotations — not just raw text.
 
 ## Architecture
 
 ```
   +---------------------+     +----------------------+
-  |  Extraction Server  |---->|   vLLM               |
-  |  FastAPI (CPU)      |     |   Qwen3-VL-32B      |
+  |  Extraction Server  |---->|   VLM                |
+  |  FastAPI            |     |   Qwen3-VL-32B       |
   |  Port 8090          |     |   Port 8000 (GPU)    |
   |                     |     |                      |
-  |  PDF: text extract  |     |   Text: JSON parse   |
-  |  TIFF: send image   |     |   Image: VLM OCR     |
+  |  PDF: render pages  |     |   All pages: image   |
+  |  TIFF: send image   |     |   -> structured JSON |
   +---------------------+     +----------------------+
 ```
 
-Digital PDF path (fast): PyMuPDF text extract -> LLM parses text -> JSON
-
-Scan / TIFF path (fallback): render page -> VLM OCR + structuring -> JSON
-
-The extraction server is CPU-only. All GPU work happens in vLLM.
+Every page is rendered as an image and sent to the VLM for extraction.
+PDF hyperlinks are extracted from the metadata layer and passed as
+additional context. All GPU work happens in vLLM.
 
 ## RunAI Deployment
 
-Full deployment guide: **[docs/runai/README.md](docs/runai/README.md)**
+Full deployment guide: **[docs/README.md](docs/README.md)**
 
 Follow these docs in order:
 
-0. [Setup Data Volumes](docs/runai/setup-data-volumes.md) — download model to shared PVC, create output volume
-1. [Setup & Test Workspace](docs/runai/setup-workspace.md) — experiment with pipeline in notebook, iterate on prompts/formats
-2. [Deploy Streamlit App](docs/runai/deploy-streamlit.md) *(optional)* — polished demo UI, test from workspace first
-3. [Deploy vLLM Server](docs/runai/deploy-vllm.md) — persistent Qwen3-VL-32B-Instruct inference endpoint
-4. [Batch Processing](docs/runai/batch-processing.md) — production workspace for large-scale runs
+0. [Setup Data Volumes](docs/setup-data-volumes.md) — download model to shared PVC, create output volume
+1. [Setup & Test Workspace](docs/setup-workspace.md) — experiment with pipeline in notebook, iterate on prompts/formats
+2. [Deploy Streamlit App](docs/deploy-streamlit.md) *(optional)* — polished demo UI, test from workspace first
+3. [Deploy vLLM Server](docs/deploy-vllm.md) — persistent Qwen3-VL-32B-Instruct inference endpoint
+4. [Batch Processing](docs/batch-processing.md) — production workspace for large-scale runs
 
-Additional: [Troubleshooting](docs/runai/troubleshooting.md)
+Additional: [Troubleshooting](docs/troubleshooting.md)
 
 ### PoC (5 sample docs)
 
@@ -77,7 +76,7 @@ ocr_app/
 │   └── test_extraction_pipeline.ipynb  # Step-by-step test notebook
 ├── deploy/
 │   └── runai_jobs.yaml             # RunAI job configs
-├── docs/runai/                     # RunAI deployment guides
+├── docs/                           # RunAI deployment guides
 │   ├── README.md                   #   Overview + deployment order
 │   ├── setup-data-volumes.md       #   PVC + model download
 │   ├── deploy-vllm.md             #   vLLM server (GPU)

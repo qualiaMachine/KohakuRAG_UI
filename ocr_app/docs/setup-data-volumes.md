@@ -84,7 +84,7 @@ there yet, you need to download it before deploying the inference job.
 
 **If you already have the WattBot shared models PVC** (`shared-models`),
 reuse it — just add the VL model. If starting fresh, see
-[rag_app/docs/runai/setup-shared-models.md](../../../rag_app/docs/runai/setup-shared-models.md)
+[rag_app/docs/setup-shared-models.md](../../rag_app/docs/setup-shared-models.md)
 for full PVC creation instructions.
 
 ### Download the model
@@ -114,7 +114,7 @@ python /models/provision_shared_models.py list
 
 > **Don't have access to the `shared-models` project?** Ask the PVC
 > admin to download the model for you, or see
-> [managing-models.md](../../../rag_app/docs/runai/managing-models.md)
+> [managing-models.md](../../rag_app/docs/managing-models.md)
 > for alternative approaches.
 
 The model only needs to be downloaded once. All inference jobs mount the
