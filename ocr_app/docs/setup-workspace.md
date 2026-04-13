@@ -57,18 +57,29 @@ Add Jupyter for browser access:
 | **Tool type** | Jupyter |
 | **Port** | `8888` |
 
+*(Optional)* Add a Custom URL tool for Streamlit testing:
+
+| Field | Value |
+|-------|-------|
+| **Tool type** | Custom URL |
+| **Name** | `streamlit` |
+| **Container port** | `8501` |
+
+> Only needed if you want to test the Streamlit UI from this workspace
+> (section 10 of the notebook). Can be added later by editing the workspace.
+
 ## Runtime settings
 
 | Field | Value |
 |-------|-------|
-| **Command** | *(leave empty)* |
+| **Command** | `bash` |
 | **Arguments** | See below |
 | **Working directory** | *(leave empty)* |
 
 ### Arguments (copy-paste)
 
 ```
--c "pip install --no-cache-dir transformers huggingface_hub accelerate httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv qwen-vl-utils; curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp; mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI 2>/dev/null; ln -sf /tmp/KohakuRAG_UI /ocr/repo; jupyter-lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME} --ServerApp.token='' --ServerApp.allow_origin='*' --notebook-dir=/ocr"
+-c "pip install --no-cache-dir transformers huggingface_hub accelerate httpx pymupdf Pillow fastapi uvicorn python-multipart streamlit python-dotenv qwen-vl-utils matplotlib bitsandbytes; curl -sL https://github.com/qualiaMachine/KohakuRAG_UI/archive/refs/heads/claude/ocr-vlm-application-hqgf2.tar.gz | tar xz -C /tmp; mv /tmp/KohakuRAG_UI-claude-ocr-vlm-application-hqgf2 /tmp/KohakuRAG_UI 2>/dev/null; ln -sf /tmp/KohakuRAG_UI /ocr/repo; jupyter-lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME} --ServerApp.token='' --ServerApp.allow_origin='*' --notebook-dir=/ocr"
 ```
 
 > **`--ServerApp.base_url=/${RUNAI_PROJECT}/${RUNAI_JOB_NAME}`** is
@@ -83,18 +94,18 @@ Add Jupyter for browser access:
 | `HF_HOME` | `/models/.cache/huggingface` |
 | `HF_HUB_CACHE` | `/models/.cache/huggingface` |
 | `HF_HUB_OFFLINE` | `1` |
-| `LLM_BASE_URL` | `http://localhost:8000/v1` |
-| `VLM_MODEL` | `Qwen/Qwen3-VL-32B-Instruct` |
+| `STREAMLIT_BASE_PATH` | `/${RUNAI_PROJECT}/${RUNAI_JOB_NAME}/url-1` |
 
-> vLLM runs locally in this workspace, so `LLM_BASE_URL` points to
-> `localhost`. Model weights are loaded from the shared PVC at `/models/`.
+> `HF_*` vars point the model cache to the shared PVC. `STREAMLIT_BASE_PATH`
+> is needed if you test Streamlit from this workspace (section 10 of the
+> notebook). It requires a Custom URL tool on port 8501 — see below.
 
 ## Compute resources
 
 | Field | Value |
 |-------|-------|
 | **GPU devices** | `1` |
-| **GPU fractioning** | Enabled — set to `25%` of device (or more if needed) |
+| **GPU fractioning** | Enabled — set to `85%` of device (32B model needs ~64 GB VRAM) |
 
 > **Why GPU?** The setup workspace runs the full pipeline locally —
 > including vLLM for model inference. You need GPU to load and run
