@@ -401,8 +401,7 @@ async def lifespan(app: FastAPI):
         )
         LLM_MODEL = model_name
         print(f"[ocr_server] Model loaded on {_local_model.device}", flush=True)
-        print(f"[ocr_server] Digital pages: text extraction + local LLM parse", flush=True)
-        print(f"[ocr_server] Scanned pages: local VLM OCR", flush=True)
+        print(f"[ocr_server] All pages rendered as images -> VLM extraction", flush=True)
     else:
         # Auto-detect model name from endpoint
         if not LLM_MODEL:
@@ -423,9 +422,8 @@ app = FastAPI(
     title="Document Extraction Server",
     version="2.0.0",
     description=(
-        "Hybrid document extraction: digital PDF text extraction + LLM parsing, "
-        "with VLM fallback for scans/TIFFs. Outputs structured JSON for "
-        "research and sponsored programs documents."
+        "Document extraction: all pages rendered as images and sent to a VLM "
+        "for structured JSON extraction. Supports PDFs, TIFFs, and images."
     ),
     lifespan=lifespan,
 )
@@ -490,7 +488,7 @@ async def info():
         "vlm_endpoint": VLM_BASE_URL or LLM_BASE_URL,
         "min_text_length": MIN_TEXT_LENGTH,
         "formats": [f.value for f in OutputFormat],
-        "pipeline": "hybrid: text extraction + LLM parse (digital) / VLM OCR (scans)",
+        "pipeline": "all pages rendered as images -> VLM structured extraction",
     }
 
 
