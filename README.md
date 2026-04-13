@@ -91,4 +91,4 @@ All apps use the same approach:
 
 ## Author
 
-- **Chris Endemann** — Research Computing, University of Wisconsin-Madison
+- **Chris Endemann** — Research Cyberinfrastructure, DoIT, UW-Madison
