@@ -89,10 +89,6 @@ All apps use the same approach:
 3. **Follow the app's deployment guide** in its `docs/` directory
 4. **Deploy via RunAI UI** using the configs in the app's `deploy/` directory
 
-## Team
+## Author
 
-- **Chris Endemann** — Research Supervisor
-- **Blaise Enuh** — Local deployment
-- **Nils Matteson** — AWS Bedrock integration
-
-Built at the University of Wisconsin-Madison.
+- **Chris Endemann** — Research Computing, University of Wisconsin-Madison
