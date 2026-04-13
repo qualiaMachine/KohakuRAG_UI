@@ -9,13 +9,13 @@ local GPU clusters instead of cloud APIs.
 
 ### [Document Extraction (`ocr_app/`)](ocr_app/README.md)
 
-Structured data extraction from research admin documents — grant award
-notices, budgets, terms & conditions, subaward agreements. Processes
-DoIT's imaging archive (20M+ documents, TIFF and PDF) into structured JSON
-for downstream systematic analysis.
+Structured data extraction from institutional documents — grant awards,
+budgets, terms & conditions, archival scans, and other records. Processes
+document archives (TIFF and PDF) into structured JSON for downstream
+systematic analysis.
 
 - **Hybrid pipeline:** digital PDFs get instant text extraction; scanned
-  pages fall back to VLM OCR (Qwen2.5-VL-7B)
+  pages fall back to VLM OCR (Qwen3-VL-32B-Instruct)
 - **Batch mode:** async concurrent processing with resume support for
   large-scale runs
 - **Interactive mode:** Streamlit UI for PoC demos and format exploration

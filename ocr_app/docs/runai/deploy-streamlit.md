@@ -68,8 +68,8 @@ In the RunAI UI: **Workloads** > **New Workload** > **Inference**
 
 | Name | Value |
 |------|-------|
-| `LLM_BASE_URL` | `http://qwen2-5--vl--7b--instruct.runai-<project>.svc.cluster.local/v1` |
-| `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
+| `LLM_BASE_URL` | `http://qwen3--vl--32b--instruct.runai-<project>.svc.cluster.local/v1` |
+| `VLM_MODEL` | `Qwen/Qwen3-VL-32B-Instruct` |
 | `OCR_PORT` | `8090` |
 
 ### Compute resources

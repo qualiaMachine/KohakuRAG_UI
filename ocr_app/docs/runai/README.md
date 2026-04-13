@@ -1,9 +1,8 @@
 # Deploying OCR Document Extraction on RunAI
 
-Production deployment for extracting structured JSON from research admin
-documents (grant award notices, budgets, terms & conditions, scanned
-TIFFs). Uses a hybrid pipeline: instant text extraction for digital PDFs,
-VLM OCR (Qwen2.5-VL-7B) fallback for scans.
+Production deployment for extracting structured JSON from institutional
+documents (grant awards, budgets, terms & conditions, archival scans). Uses a hybrid pipeline: instant text extraction for digital PDFs,
+VLM OCR (Qwen3-VL-32B-Instruct) fallback for scans.
 
 ## Why this architecture?
 
@@ -13,7 +12,7 @@ to understand document structure semantically:
 
 - **Digital PDFs:** PyMuPDF extracts text (instant, no GPU), then the LLM
   parses it into structured JSON
-- **Scanned PDFs / TIFFs:** Qwen2.5-VL renders the page and does OCR +
+- **Scanned PDFs / TIFFs:** Qwen3-VL renders the page and does OCR +
   structuring in one shot
 
 Both paths produce the same JSON output. The pipeline auto-detects which
@@ -21,20 +20,20 @@ path to use per page.
 
 | Workload | Type | What it does | GPU | Port |
 |----------|------|-------------|-----|------|
-| **`qwen2-5--vl--7b--instruct`** | Inference | Serves Qwen2.5-VL-7B for text parsing + VLM OCR | 0.80 | 8000 |
+| **`qwen3--vl--32b--instruct`** | Inference | Serves Qwen3-VL-32B-Instruct for text parsing + VLM OCR | 0.80 | 8000 |
 | **`ocr-setup`** | Workspace | One-time setup — test pipeline on sample docs | 0 | 8888 |
 | **`ocr-batch`** | Workspace | Production batch processing | 0 | 8888 |
 | **`ocr-extract`** | Inference | *(optional)* FastAPI extraction server for API/UI use | 0 | 8090 |
 | **`ocr-app`** | Workspace | *(optional)* Streamlit UI for PoC demos | 0 | 8501 |
 
-Only `qwen2-5--vl--7b--instruct` uses GPU. Everything else is CPU-only.
+Only `qwen3--vl--32b--instruct` uses GPU. Everything else is CPU-only.
 
 ### Service layout
 
 ```
                     +---------------------+
                     |   vLLM Server       |
-                    |   Qwen2.5-VL-7B    |
+                    |   Qwen3-VL-32B     |
                     |   Port 8000 (GPU)   |
                     +---------^-----------+
                               | HTTP (cluster DNS)
@@ -60,7 +59,7 @@ Follow these docs in order:
 0. **[Setup Data Volumes](setup-data-volumes.md)** — Download model to shared PVC, create output volume
 1. **[Setup & Test Workspace](setup-workspace.md)** — Experiment with pipeline in notebook, iterate on prompts/formats, test Streamlit locally
 2. **[Deploy Streamlit App](deploy-streamlit.md)** *(optional)* — Deploy as its own workload for persistent demo UI
-3. **[Deploy vLLM Server](deploy-vllm.md)** — Persistent Qwen2.5-VL-7B inference endpoint
+3. **[Deploy vLLM Server](deploy-vllm.md)** — Persistent Qwen3-VL-32B-Instruct inference endpoint
 4. **[Batch Processing](batch-processing.md)** — Production workspace for large-scale runs
 
 All steps use the **RunAI web UI only** — no CLI tools required.
@@ -75,7 +74,7 @@ All steps use the **RunAI web UI only** — no CLI tools required.
 
 0. Setup data volumes (Step 0) — PVCs for input/output
 1. Setup workspace (Step 1) — verify pipeline with notebook
-3. Deploy `qwen2-5--vl--7b--instruct` as persistent endpoint (Step 3)
+3. Deploy `qwen3--vl--32b--instruct` as persistent endpoint (Step 3)
 4. Deploy `ocr-batch` (Step 4) — batch workspace with `--resume`
 
 ---

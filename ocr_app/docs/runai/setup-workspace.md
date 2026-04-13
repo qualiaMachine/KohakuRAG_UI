@@ -84,7 +84,7 @@ Add Jupyter for browser access:
 | `HF_HUB_CACHE` | `/models/.cache/huggingface` |
 | `HF_HUB_OFFLINE` | `1` |
 | `LLM_BASE_URL` | `http://localhost:8000/v1` |
-| `VLM_MODEL` | `Qwen/Qwen2.5-VL-7B-Instruct` |
+| `VLM_MODEL` | `Qwen/Qwen3-VL-32B-Instruct` |
 
 > vLLM runs locally in this workspace, so `LLM_BASE_URL` points to
 > `localhost`. Model weights are loaded from the shared PVC at `/models/`.
@@ -98,7 +98,7 @@ Add Jupyter for browser access:
 
 > **Why GPU?** The setup workspace runs the full pipeline locally —
 > including vLLM for model inference. You need GPU to load and run
-> Qwen2.5-VL-7B.
+> Qwen3-VL-32B.
 
 ## Data & storage
 
@@ -146,10 +146,10 @@ your browser.
 | Step | What it does |
 |------|-------------|
 | 1 | Checks GPU and shared models PVC |
-| 2 | Loads Qwen2.5-VL-7B directly with transformers |
+| 2 | Loads Qwen3-VL-32B directly with transformers |
 | 3 | Lists uploaded docs, you pick one |
-| 4 | Checks which pages are digital vs scanned |
-| 5 | Runs extraction on a single page (auto-picks text or VLM path) |
+| 4 | Renders all pages as images for VLM |
+| 5 | Runs extraction on a single page via VLM |
 | 6 | Displays the JSON output |
 | 7 | Alternative prompts to try (award, budget, terms, key_values, text) |
 | 8 | Processes all pages and saves results to `/ocr/` |

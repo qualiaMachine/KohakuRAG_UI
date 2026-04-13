@@ -99,7 +99,7 @@ def _method_badge(method: str) -> str:
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.title("\U0001F4C4 Document Extraction")
-    st.caption("RSP / Grant Document Processing")
+    st.caption("Document Processing — Grants, Archives & More")
 
     status = _check_server()
     if status and status.get("status") == "ok":
@@ -152,9 +152,9 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 st.title("Document Extraction")
 st.markdown(
-    "Upload grant award notices, budgets, terms & conditions, or other "
-    "research admin documents. Digital PDFs are processed instantly via "
-    "text extraction; scanned pages and TIFFs fall back to VLM OCR."
+    "Upload grant award notices, budgets, terms & conditions, archival "
+    "documents, or other institutional records. All pages are processed "
+    "via VLM for structured extraction."
 )
 
 uploaded_files = st.file_uploader(
